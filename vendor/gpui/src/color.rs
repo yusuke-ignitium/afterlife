@@ -833,7 +833,9 @@ pub fn liquid_glass_styled(
 pub struct ParticleWaveTuning {
     /// Whether the backdrop image dissolve layer is enabled (false skips all image GPU work).
     pub image_enabled: bool,
-    /// Mirror-ball tile size in device pixels (clamped to 3.0..=24.0).
+    /// Whether live Apple Music artwork takes priority over custom backdrop images while playing.
+    pub apple_music_artwork_enabled: bool,
+    /// Mirror-ball tile size in device pixels (clamped to 2.0..=24.0).
     pub tile_size_px: f32,
     /// Duration in seconds that each backdrop image stays intact before disintegrating (0.5..=600.0).
     pub image_hold_secs: f32,
@@ -849,6 +851,7 @@ impl Default for ParticleWaveTuning {
     fn default() -> Self {
         Self {
             image_enabled: false,
+            apple_music_artwork_enabled: true,
             tile_size_px: 6.0,
             image_hold_secs: 10.0,
             image_brightness: 0.40,
@@ -872,6 +875,7 @@ impl ParticleWaveTuning {
         let def = Self::default();
         Self {
             image_enabled: self.image_enabled,
+            apple_music_artwork_enabled: self.apple_music_artwork_enabled,
             tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px),
             image_hold_secs: finite_clamp(self.image_hold_secs, 0.5, 600.0, def.image_hold_secs),
             image_brightness: finite_clamp(self.image_brightness, 0.0, 2.0, def.image_brightness),
@@ -905,6 +909,57 @@ pub fn particle_wave_tuning() -> ParticleWaveTuning {
         .lock()
         .map(|g| *g)
         .unwrap_or_default()
+}
+
+struct OverrideImageState {
+    generation: u64,
+    path: Option<String>,
+}
+
+static OVERRIDE_IMAGE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn particle_wave_override_cell() -> &'static std::sync::Mutex<OverrideImageState> {
+    static CELL: std::sync::OnceLock<std::sync::Mutex<OverrideImageState>> =
+        std::sync::OnceLock::new();
+    CELL.get_or_init(|| {
+        std::sync::Mutex::new(OverrideImageState {
+            generation: 0,
+            path: None,
+        })
+    })
+}
+
+/// Sets or clears a live priority override backdrop image (e.g. currently playing Apple Music artwork).
+pub fn set_particle_wave_override_image(path: Option<String>) {
+    let normalized = path.and_then(|p| {
+        let trimmed = p.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+    if let Ok(mut guard) = particle_wave_override_cell().lock() {
+        if guard.path == normalized {
+            return;
+        }
+        guard.generation = guard.generation.wrapping_add(1).max(1);
+        guard.path = normalized;
+        OVERRIDE_IMAGE_GEN.store(guard.generation, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Returns the lock-free generation counter for the live override backdrop image.
+pub fn particle_wave_override_image_gen() -> u64 {
+    OVERRIDE_IMAGE_GEN.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Returns the current `(generation, Option<path>)` for the live override backdrop image.
+pub fn particle_wave_override_image() -> (u64, Option<String>) {
+    particle_wave_override_cell()
+        .lock()
+        .map(|g| (g.generation, g.path.clone()))
+        .unwrap_or((0, None))
 }
 
 /// Creates a drifting, gently waving fine particle field background rendered on GPU.

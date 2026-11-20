@@ -226,6 +226,31 @@ fn snapshot_backdrop_entry_keys(paths: &[String]) -> Vec<BackdropImageEntryKey> 
         .collect()
 }
 
+fn load_single_backdrop_image(
+    device: &metal::Device,
+    path: &str,
+) -> Option<(metal::Texture, [f32; 3])> {
+    let img = image::open(path).ok()?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let corners_opaque = [
+        rgba.get_pixel(0, 0)[3],
+        rgba.get_pixel(w - 1, 0)[3],
+        rgba.get_pixel(0, h - 1)[3],
+        rgba.get_pixel(w - 1, h - 1)[3],
+    ]
+    .into_iter()
+    .all(|a| a >= 250);
+    let fit_cover = if corners_opaque { 1.0 } else { 0.0 };
+    Some((
+        create_rgba8_texture(device, w, h, rgba.as_raw()),
+        [w as f32, h as f32, fit_cover],
+    ))
+}
+
 fn load_backdrop_images_from_entries(
     device: &metal::Device,
     entries: &[BackdropImageEntryKey],
@@ -233,22 +258,9 @@ fn load_backdrop_images_from_entries(
     let mut textures = Vec::new();
     let mut sizes = Vec::new();
     for (entry, _) in entries {
-        if let Ok(img) = image::open(entry) {
-            let rgba = img.to_rgba8();
-            let (w, h) = rgba.dimensions();
-            if w > 0 && h > 0 {
-                let corners_opaque = [
-                    rgba.get_pixel(0, 0)[3],
-                    rgba.get_pixel(w - 1, 0)[3],
-                    rgba.get_pixel(0, h - 1)[3],
-                    rgba.get_pixel(w - 1, h - 1)[3],
-                ]
-                .into_iter()
-                .all(|a| a >= 250);
-                let fit_cover = if corners_opaque { 1.0 } else { 0.0 };
-                textures.push(create_rgba8_texture(device, w, h, rgba.as_raw()));
-                sizes.push([w as f32, h as f32, fit_cover]);
-            }
+        if let Some((tex, dims)) = load_single_backdrop_image(device, entry) {
+            textures.push(tex);
+            sizes.push(dims);
         }
     }
     (textures, sizes)
@@ -315,6 +327,13 @@ fn inactive_particle_uniforms(
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActiveBackdropSource {
+    None,
+    Override(u64),
+    Custom(usize),
+}
+
 pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
@@ -347,6 +366,10 @@ pub(crate) struct MetalRenderer {
     backdrop_config_path: Option<std::path::PathBuf>,
     backdrop_config_mtime: Option<std::time::SystemTime>,
     backdrop_last_poll: Instant,
+    backdrop_override_seen_gen: u64,
+    backdrop_pending_override: Option<(u64, metal::Texture, [f32; 3])>,
+    backdrop_active_override: Option<(u64, metal::Texture, [f32; 3])>,
+    backdrop_active_source: ActiveBackdropSource,
     backdrop_phase_stage: u8,
     backdrop_phase_elapsed: f32,
     backdrop_phase_last_tick: Instant,
@@ -587,6 +610,10 @@ impl MetalRenderer {
             backdrop_config_path,
             backdrop_config_mtime,
             backdrop_last_poll: Instant::now(),
+            backdrop_override_seen_gen: 0,
+            backdrop_pending_override: None,
+            backdrop_active_override: None,
+            backdrop_active_source: ActiveBackdropSource::None,
             backdrop_phase_stage: 0,
             backdrop_phase_elapsed: 0.0,
             backdrop_phase_last_tick: Instant::now(),
@@ -865,7 +892,9 @@ impl MetalRenderer {
         let compute_dispatched = self.dispatch_particle_tile_scatter(command_buffer, viewport_size);
         if let Some(p) = perf.as_mut() {
             p.compute_scatter_dispatched = compute_dispatched;
-            p.backdrop_images_loaded = self.backdrop_image_textures.len() as u32;
+            p.backdrop_images_loaded = (self.backdrop_image_textures.len()
+                + usize::from(self.backdrop_active_override.is_some()))
+                as u32;
         }
 
         let mut command_encoder = new_command_encoder(
@@ -1691,7 +1720,16 @@ impl MetalRenderer {
         true
     }
 
-    fn release_backdrop_image_resources(&mut self) {
+    fn release_particle_grid_buffer(&mut self) {
+        if self.particle_tile_grid_capacity > 1 {
+            self.particle_tile_grid_capacity = 1;
+            self.particle_tile_grid_buffer = self
+                .device
+                .new_buffer(4, MTLResourceOptions::StorageModePrivate);
+        }
+    }
+
+    fn release_custom_backdrop_images(&mut self) {
         if !self.backdrop_image_textures.is_empty() {
             self.backdrop_image_textures.clear();
             self.backdrop_image_sizes.clear();
@@ -1699,12 +1737,26 @@ impl MetalRenderer {
         if !self.backdrop_loaded_entries.is_empty() {
             self.backdrop_loaded_entries.clear();
         }
-        if self.particle_tile_grid_capacity > 1 {
-            self.particle_tile_grid_capacity = 1;
-            self.particle_tile_grid_buffer = self
-                .device
-                .new_buffer(4, MTLResourceOptions::StorageModePrivate);
+        self.backdrop_images_loaded = false;
+        self.backdrop_config_mtime = None;
+    }
+
+    fn sync_override_image(&mut self, enabled: bool) {
+        if !enabled {
+            self.backdrop_pending_override = None;
+            self.backdrop_override_seen_gen = 0;
+            return;
         }
+        let current_gen = crate::particle_wave_override_image_gen();
+        if current_gen == self.backdrop_override_seen_gen {
+            return;
+        }
+        let (locked_gen, path_opt) = crate::particle_wave_override_image();
+        self.backdrop_override_seen_gen = locked_gen;
+        self.backdrop_pending_override = path_opt.and_then(|path| {
+            load_single_backdrop_image(&self.device, &path)
+                .map(|(tex, dims)| (locked_gen, tex, dims))
+        });
     }
 
     fn sync_backdrop_images(&mut self) {
@@ -1754,25 +1806,208 @@ impl MetalRenderer {
         let tuning = crate::particle_wave_tuning().clamped();
         let tile_size = tuning.tile_size_px;
 
-        if !tuning.image_enabled {
-            if self.backdrop_images_loaded || self.particle_tile_grid_capacity > 1 {
-                self.release_backdrop_image_resources();
-                self.backdrop_images_loaded = false;
-                self.backdrop_config_mtime = None;
+        self.sync_override_image(tuning.apple_music_artwork_enabled);
+
+        if tuning.image_enabled {
+            self.sync_backdrop_images();
+        } else {
+            if self.backdrop_images_loaded {
+                self.release_custom_backdrop_images();
             }
-            self.current_particle_uniforms = inactive_particle_uniforms(time_sec, vw, vh, tuning);
-            return false;
+            if matches!(self.backdrop_active_source, ActiveBackdropSource::Custom(_)) {
+                self.backdrop_active_source = ActiveBackdropSource::None;
+                self.backdrop_phase_stage = 0;
+                self.backdrop_phase_elapsed = 0.0;
+            }
         }
 
-        self.sync_backdrop_images();
+        let custom_count = if tuning.image_enabled {
+            self.backdrop_image_textures.len()
+        } else {
+            0
+        };
+        if custom_count == 0
+            && matches!(self.backdrop_active_source, ActiveBackdropSource::Custom(_))
+        {
+            self.backdrop_active_source = ActiveBackdropSource::None;
+            self.backdrop_phase_stage = 0;
+            self.backdrop_phase_elapsed = 0.0;
+        }
 
-        if self.backdrop_image_textures.is_empty() {
-            if self.particle_tile_grid_capacity > 1 {
-                self.release_backdrop_image_resources();
+        let desired_source = if let Some((pending_gen, _, _)) = self.backdrop_pending_override {
+            ActiveBackdropSource::Override(pending_gen)
+        } else if custom_count > 0 {
+            self.backdrop_image_index %= custom_count;
+            ActiveBackdropSource::Custom(self.backdrop_image_index)
+        } else {
+            ActiveBackdropSource::None
+        };
+
+        if self.backdrop_active_source == ActiveBackdropSource::None {
+            if desired_source == ActiveBackdropSource::None {
+                self.backdrop_active_override = None;
+                self.release_particle_grid_buffer();
+                self.current_particle_uniforms =
+                    inactive_particle_uniforms(time_sec, vw, vh, tuning);
+                return false;
             }
+            match desired_source {
+                ActiveBackdropSource::Override(_) => {
+                    self.backdrop_active_override = self.backdrop_pending_override.clone();
+                    self.backdrop_active_source = desired_source;
+                }
+                ActiveBackdropSource::Custom(idx) => {
+                    self.backdrop_active_override = None;
+                    self.backdrop_active_source = ActiveBackdropSource::Custom(idx);
+                }
+                ActiveBackdropSource::None => {}
+            }
+            self.backdrop_phase_stage = 3;
+            self.backdrop_phase_elapsed = 0.0;
+            self.backdrop_phase_last_tick = Instant::now();
+        }
+
+        let hold_sec = tuning.image_hold_secs;
+        let disintegrate_sec = 6.2_f32;
+        let void_sec = 0.7_f32;
+        let reassemble_sec = 6.2_f32;
+
+        let needs_switch = match (self.backdrop_active_source, desired_source) {
+            (ActiveBackdropSource::Override(cur), ActiveBackdropSource::Override(want)) => {
+                cur != want
+            }
+            (ActiveBackdropSource::Override(_), _) => true,
+            (ActiveBackdropSource::Custom(_), ActiveBackdropSource::Override(_)) => true,
+            (ActiveBackdropSource::Custom(_), ActiveBackdropSource::None) => true,
+            _ => false,
+        };
+
+        if needs_switch {
+            if self.backdrop_phase_stage == 0 {
+                self.backdrop_phase_stage = 1;
+                self.backdrop_phase_elapsed = 0.0;
+            } else if self.backdrop_phase_stage == 3 {
+                let p = (self.backdrop_phase_elapsed / reassemble_sec).clamp(0.0, 1.0);
+                self.backdrop_phase_stage = 1;
+                self.backdrop_phase_elapsed = (1.0 - p) * disintegrate_sec;
+            }
+        }
+
+        let now = Instant::now();
+        let dt = now
+            .saturating_duration_since(self.backdrop_phase_last_tick)
+            .as_secs_f32()
+            .min(0.25);
+        self.backdrop_phase_last_tick = now;
+
+        let stay_in_hold = matches!(self.backdrop_active_source, ActiveBackdropSource::Override(_))
+            && !needs_switch;
+
+        if !(stay_in_hold && self.backdrop_phase_stage == 0) {
+            self.backdrop_phase_elapsed += dt;
+            loop {
+                let stage_dur = match self.backdrop_phase_stage {
+                    0 => hold_sec,
+                    1 => disintegrate_sec,
+                    2 => void_sec,
+                    _ => reassemble_sec,
+                };
+                if self.backdrop_phase_elapsed < stage_dur {
+                    break;
+                }
+                self.backdrop_phase_elapsed -= stage_dur;
+                let prev_stage = self.backdrop_phase_stage;
+                self.backdrop_phase_stage = (self.backdrop_phase_stage + 1) % 4;
+
+                if prev_stage == 1 {
+                    let was_custom =
+                        matches!(self.backdrop_active_source, ActiveBackdropSource::Custom(_));
+                    match desired_source {
+                        ActiveBackdropSource::Override(_) => {
+                            self.backdrop_active_override = self.backdrop_pending_override.clone();
+                            self.backdrop_active_source = desired_source;
+                        }
+                        ActiveBackdropSource::Custom(_) if custom_count > 0 => {
+                            if was_custom {
+                                self.backdrop_image_index =
+                                    (self.backdrop_image_index + 1) % custom_count;
+                            } else {
+                                self.backdrop_image_index %= custom_count;
+                            }
+                            self.backdrop_active_override = None;
+                            self.backdrop_active_source =
+                                ActiveBackdropSource::Custom(self.backdrop_image_index);
+                        }
+                        _ => {
+                            self.backdrop_active_override = None;
+                            self.backdrop_active_source = ActiveBackdropSource::None;
+                            self.backdrop_phase_stage = 0;
+                            self.backdrop_phase_elapsed = 0.0;
+                            self.release_particle_grid_buffer();
+                            self.current_particle_uniforms =
+                                inactive_particle_uniforms(time_sec, vw, vh, tuning);
+                            return false;
+                        }
+                    }
+                } else if prev_stage == 2 {
+                    match desired_source {
+                        ActiveBackdropSource::Override(want_gen) => {
+                            if self.backdrop_active_source
+                                != ActiveBackdropSource::Override(want_gen)
+                            {
+                                self.backdrop_active_override =
+                                    self.backdrop_pending_override.clone();
+                                self.backdrop_active_source =
+                                    ActiveBackdropSource::Override(want_gen);
+                            }
+                        }
+                        ActiveBackdropSource::Custom(_) if custom_count > 0 => {
+                            self.backdrop_image_index %= custom_count;
+                            self.backdrop_active_override = None;
+                            self.backdrop_active_source =
+                                ActiveBackdropSource::Custom(self.backdrop_image_index);
+                        }
+                        _ => {
+                            self.backdrop_active_override = None;
+                            self.backdrop_active_source = ActiveBackdropSource::None;
+                            self.backdrop_phase_stage = 0;
+                            self.backdrop_phase_elapsed = 0.0;
+                            self.release_particle_grid_buffer();
+                            self.current_particle_uniforms =
+                                inactive_particle_uniforms(time_sec, vw, vh, tuning);
+                            return false;
+                        }
+                    }
+                } else if prev_stage == 3 && stay_in_hold {
+                    self.backdrop_phase_elapsed = 0.0;
+                    break;
+                }
+            }
+        }
+
+        let active_tex_and_dims: Option<(&metal::Texture, [f32; 3])> = match self
+            .backdrop_active_source
+        {
+            ActiveBackdropSource::Override(_) => self
+                .backdrop_active_override
+                .as_ref()
+                .map(|(_, tex, dims)| (tex, *dims)),
+            ActiveBackdropSource::Custom(idx) if idx < self.backdrop_image_textures.len() => {
+                Some((
+                    &self.backdrop_image_textures[idx],
+                    self.backdrop_image_sizes[idx],
+                ))
+            }
+            _ => None,
+        };
+
+        let Some((active_tex, dims)) = active_tex_and_dims else {
+            self.backdrop_active_source = ActiveBackdropSource::None;
+            self.backdrop_active_override = None;
+            self.release_particle_grid_buffer();
             self.current_particle_uniforms = inactive_particle_uniforms(time_sec, vw, vh, tuning);
             return false;
-        }
+        };
 
         let grid_w = (vw / tile_size).ceil().max(1.0) as u32;
         let grid_h = (vh / tile_size).ceil().max(1.0) as u32;
@@ -1784,39 +2019,6 @@ impl MetalRenderer {
                 .new_buffer((needed * 4) as u64, MTLResourceOptions::StorageModePrivate);
         }
 
-        let now = Instant::now();
-        let dt = now
-            .saturating_duration_since(self.backdrop_phase_last_tick)
-            .as_secs_f32()
-            .min(0.25);
-        self.backdrop_phase_last_tick = now;
-
-        let hold_sec = tuning.image_hold_secs;
-        let disintegrate_sec = 6.2_f32;
-        let void_sec = 0.7_f32;
-        let reassemble_sec = 6.2_f32;
-
-        let img_count = self.backdrop_image_textures.len();
-        self.backdrop_image_index %= img_count;
-        self.backdrop_phase_elapsed += dt;
-
-        loop {
-            let stage_dur = match self.backdrop_phase_stage {
-                0 => hold_sec,
-                1 => disintegrate_sec,
-                2 => void_sec,
-                _ => reassemble_sec,
-            };
-            if self.backdrop_phase_elapsed < stage_dur {
-                break;
-            }
-            self.backdrop_phase_elapsed -= stage_dur;
-            self.backdrop_phase_stage = (self.backdrop_phase_stage + 1) % 4;
-            if self.backdrop_phase_stage == 2 {
-                self.backdrop_image_index = (self.backdrop_image_index + 1) % img_count;
-            }
-        }
-
         let stage_dur = match self.backdrop_phase_stage {
             0 => hold_sec,
             1 => disintegrate_sec,
@@ -1824,9 +2026,11 @@ impl MetalRenderer {
             _ => reassemble_sec,
         };
         let phase_mode = self.backdrop_phase_stage as f32;
-        let phase_progress = (self.backdrop_phase_elapsed / stage_dur.max(0.001)).clamp(0.0, 1.0);
-        let tex_idx = self.backdrop_image_index;
-        let dims = self.backdrop_image_sizes[tex_idx];
+        let phase_progress = if stay_in_hold && self.backdrop_phase_stage == 0 {
+            0.0
+        } else {
+            (self.backdrop_phase_elapsed / stage_dur.max(0.001)).clamp(0.0, 1.0)
+        };
         let uniforms = ParticleWaveUniforms {
             time_sec,
             has_image: 1.0,
@@ -1867,7 +2071,7 @@ impl MetalRenderer {
             mem::size_of::<ParticleWaveUniforms>() as u64,
             &uniforms as *const ParticleWaveUniforms as *const _,
         );
-        compute.set_texture(0, Some(&self.backdrop_image_textures[tex_idx]));
+        compute.set_texture(0, Some(active_tex));
         compute.set_sampler_state(0, Some(&self.backdrop_sampler));
         let tg = metal::MTLSize::new(16, 16, 1);
         let grid = metal::MTLSize::new(grid_w as u64, grid_h as u64, 1);

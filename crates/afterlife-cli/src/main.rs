@@ -689,6 +689,20 @@ const TOOLMAP: &[ToolSpec] = &[
                 repeatable: false,
             },
             FlagSpec {
+                flag: "--enable-apple-music",
+                mcp_key: "enable_apple_music",
+                kind: FlagKind::Bool,
+                required: false,
+                repeatable: false,
+            },
+            FlagSpec {
+                flag: "--disable-apple-music",
+                mcp_key: "disable_apple_music",
+                kind: FlagKind::Bool,
+                required: false,
+                repeatable: false,
+            },
+            FlagSpec {
                 flag: "--tile-size",
                 mcp_key: "tile_size_px",
                 kind: FlagKind::F32,
@@ -1261,6 +1275,26 @@ fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<Value
             } else {
                 None
             };
+            let enable_apple_music = payload
+                .get("enable_apple_music")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let disable_apple_music = payload
+                .get("disable_apple_music")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if enable_apple_music && disable_apple_music {
+                return Err(CliError::usage(
+                    "cannot pass both --enable-apple-music and --disable-apple-music",
+                ));
+            }
+            let apple_music_artwork_enabled = if enable_apple_music {
+                Some(true)
+            } else if disable_apple_music {
+                Some(false)
+            } else {
+                None
+            };
             let tile_size_px = payload
                 .get("tile_size_px")
                 .and_then(|v| v.as_f64())
@@ -1292,6 +1326,7 @@ fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<Value
             let cfg = store
                 .update_tuning(BackdropTuningPatch {
                     image_enabled,
+                    apple_music_artwork_enabled,
                     tile_size_px,
                     image_hold_secs,
                     image_brightness,

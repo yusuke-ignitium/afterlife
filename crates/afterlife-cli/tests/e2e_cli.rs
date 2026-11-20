@@ -343,6 +343,7 @@ fn e2e_cli_backdrop_crud_and_tuning() {
     assert!(ok, "backdrop list failed: {list0}");
     assert_eq!(list0["count"], 0);
     assert_eq!(list0["tuning"]["image_enabled"], false);
+    assert_eq!(list0["tuning"]["apple_music_artwork_enabled"], true);
     assert!((list0["tuning"]["tile_size_px"].as_f64().unwrap() - 6.0).abs() < 1e-4);
     assert!((list0["tuning"]["image_hold_secs"].as_f64().unwrap() - 10.0).abs() < 1e-4);
     assert!((list0["tuning"]["image_brightness"].as_f64().unwrap() - 0.40).abs() < 1e-4);
@@ -486,9 +487,47 @@ fn e2e_cli_backdrop_crud_and_tuning() {
     assert!(ok, "backdrop tuning re-enable failed: {reenabled}");
     assert_eq!(reenabled["tuning"]["image_enabled"], true);
 
+    let (ok, am_conflict) = run_cli_with_data_dir(
+        &tmp_dir,
+        &[
+            "backdrop",
+            "tuning",
+            "--enable-apple-music",
+            "--disable-apple-music",
+        ],
+    );
+    assert!(
+        !ok,
+        "conflicting apple music enable/disable flags should fail: {am_conflict}"
+    );
+
+    let (ok, am_disabled) =
+        run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--disable-apple-music"]);
+    assert!(
+        ok,
+        "backdrop tuning disable apple music failed: {am_disabled}"
+    );
+    assert_eq!(am_disabled["tuning"]["apple_music_artwork_enabled"], false);
+
+    let (ok, am_reenabled) =
+        run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--enable-apple-music"]);
+    assert!(
+        ok,
+        "backdrop tuning enable apple music failed: {am_reenabled}"
+    );
+    assert_eq!(am_reenabled["tuning"]["apple_music_artwork_enabled"], true);
+
+    let (ok, am_disabled_before_reset) =
+        run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--disable-apple-music"]);
+    assert!(
+        ok,
+        "backdrop tuning disable before reset failed: {am_disabled_before_reset}"
+    );
+
     let (ok, reset_tuned) = run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--reset"]);
     assert!(ok, "backdrop tuning reset failed: {reset_tuned}");
     assert_eq!(reset_tuned["tuning"]["image_enabled"], false);
+    assert_eq!(reset_tuned["tuning"]["apple_music_artwork_enabled"], true);
     assert!((reset_tuned["tuning"]["tile_size_px"].as_f64().unwrap() - 6.0).abs() < 1e-4);
     assert!((reset_tuned["tuning"]["image_hold_secs"].as_f64().unwrap() - 10.0).abs() < 1e-4);
     assert!((reset_tuned["tuning"]["image_brightness"].as_f64().unwrap() - 0.40).abs() < 1e-4);

@@ -1,5 +1,7 @@
 use gpui::{Bounds, DisplayId, Pixels};
 
+pub mod apple_music;
+
 #[cfg(target_os = "macos")]
 pub mod macos;
 

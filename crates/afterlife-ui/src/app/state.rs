@@ -42,6 +42,7 @@ fn apply_backdrop_config(
 ) {
     let tuning = cfg.tuning.clamped();
     glass.bg_image_enabled = tuning.image_enabled;
+    glass.bg_apple_music_artwork_enabled = tuning.apple_music_artwork_enabled;
     glass.bg_brightness = tuning.master_brightness;
     glass.bg_tile_size_px = tuning.tile_size_px;
     glass.bg_image_hold_secs = tuning.image_hold_secs;
@@ -66,6 +67,7 @@ fn apply_backdrop_config(
 fn snapshot_tuning(glass: &GlassSettings) -> BackdropTuning {
     BackdropTuning {
         image_enabled: glass.bg_image_enabled,
+        apple_music_artwork_enabled: glass.bg_apple_music_artwork_enabled,
         tile_size_px: glass.bg_tile_size_px,
         image_hold_secs: glass.bg_image_hold_secs,
         image_brightness: glass.bg_image_brightness,
@@ -154,14 +156,14 @@ impl GlassParamKey {
         )
     }
 
-    pub fn is_backdrop_image_param(self) -> bool {
-        matches!(
-            self,
-            Self::BgImageHoldSecs
-                | Self::BgImageBrightness
-                | Self::BgPeakLuminance
-                | Self::BgImageSaturation
-        )
+    pub fn is_dimmed(self, glass: &GlassSettings) -> bool {
+        match self {
+            Self::BgImageHoldSecs => !glass.bg_image_enabled,
+            Self::BgImageBrightness | Self::BgPeakLuminance | Self::BgImageSaturation => {
+                !glass.bg_image_enabled && !glass.bg_apple_music_artwork_enabled
+            }
+            _ => false,
+        }
     }
 
     pub fn spec(self) -> (&'static str, f32, f32, usize) {
@@ -427,6 +429,9 @@ impl AppState {
     pub fn refresh_palette(&mut self) {
         self.palette = Palette::from_style(self.style, &self.glass);
         set_particle_wave_tuning(self.glass.particle_wave_tuning());
+        crate::platform::apple_music::sync_watcher_enabled(
+            self.glass.bg_apple_music_artwork_enabled,
+        );
     }
 
     pub fn reload_backdrop_tuning(&mut self) -> bool {
@@ -516,6 +521,7 @@ mod tests {
     fn backdrop_config_round_trip_preserves_every_appearance_field() {
         let original = GlassSettings {
             bg_image_enabled: true,
+            bg_apple_music_artwork_enabled: false,
             bg_brightness: 1.25,
             bg_tile_size_px: 9.5,
             bg_image_hold_secs: 24.0,

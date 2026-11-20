@@ -40,6 +40,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <string>Afterlife</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Afterlife reads the currently playing track metadata and local artwork from Apple Music to display album art in the backdrop.</string>
 </dict>
 </plist>
 PLIST

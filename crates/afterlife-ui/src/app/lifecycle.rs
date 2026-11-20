@@ -173,6 +173,7 @@ pub fn run_app() {
         let state_for_quit = state.clone();
         let state_for_close_action = state.clone();
         cx.on_app_quit(move |cx| {
+            platform::apple_music::sync_watcher_enabled(false);
             if let Some(ref store) = window_store_for_quit {
                 let detail_h = Some(state_for_quit.read(cx).detail_height);
                 for handle in cx.windows() {
@@ -222,6 +223,9 @@ pub fn run_app() {
         open_main_window(&state, perf_session.clone(), cx);
 
         if perf_session.is_none() {
+            platform::apple_music::activate_watcher(
+                state.read(cx).glass.bg_apple_music_artwork_enabled,
+            );
             let daemon_opt = state.read(cx).daemon.clone();
             if let Some(daemon) = daemon_opt {
                 daemon

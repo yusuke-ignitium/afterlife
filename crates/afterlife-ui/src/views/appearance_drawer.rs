@@ -265,7 +265,7 @@ fn render_slider_row(
         1 => format!("{:.1}", val),
         _ => format!("{:.2}", val),
     };
-    let dimmed = !st.glass.bg_image_enabled && key.is_backdrop_image_param();
+    let dimmed = key.is_dimmed(&st.glass);
     let grp = SharedString::from(format!("slider-grp-{}", idx));
     let thumb_size = if is_dragging { 10.0 } else { 8.0 };
     let thumb_half = thumb_size * 0.5;
@@ -487,6 +487,19 @@ pub fn render_appearance_drawer(
                 .pb(SpacePx::S12.px())
                 .gap(SpacePx::S8.px())
                 .child(render_section_label(st, "Backdrop", SpacePx::S0))
+                .child(render_toggle_row(
+                    st,
+                    "toggle-apple-music-artwork",
+                    "Apple Music Artwork",
+                    st.glass.bg_apple_music_artwork_enabled,
+                    motion.toggle_apple_music_progress,
+                    |st| {
+                        st.glass.bg_apple_music_artwork_enabled =
+                            !st.glass.bg_apple_music_artwork_enabled;
+                        st.refresh_palette();
+                    },
+                    cx,
+                ))
                 .child(render_toggle_row(
                     st,
                     "toggle-backdrop-images",
