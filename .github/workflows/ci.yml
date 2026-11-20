@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # 1. Core domain, storage, and MCP schema drift checks (runs in parallel with E2E build)
+  unit-and-schema:
+    name: Core, Storage & Schema Drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run core/storage/daemon/cli tests
+        run: |
+          cargo test -p afterlife-core -p afterlife-storage -p afterlife-protocol
+          cargo test -p afterlife-daemon --lib
+          cargo test -p afterlife-cli
+
+  # 2. Build the E2E binary once and upload it so shards pay 0s compile overhead
+  build-e2e:
+    name: Build E2E Binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile E2E binary once
+        run: |
+          BIN="$(
+            cargo test -p afterlife-daemon --test e2e_human_mcp --no-run --message-format=json \
+              | jq -r 'select(.reason=="compiler-artifact" and .target.name=="e2e_human_mcp" and .executable != null) | .executable' \
+              | tail -n 1
+          )"
+          cp "$BIN" ./e2e_human_mcp
+          chmod +x ./e2e_human_mcp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-human-mcp-bin
+          path: ./e2e_human_mcp
+          retention-days: 1
+
+  # 3. Auto-sharded Black-Box E2E Matrix (0s Rust compile, O(1) wall time as tests grow)
+  e2e-sharded:
+    name: E2E Shard ${{ matrix.shard }}/4
+    needs: build-e2e
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-human-mcp-bin
+          path: .
+      - name: Run auto-sharded black-box Human x MCP E2E
+        env:
+          E2E_BIN: ./e2e_human_mcp
+          E2E_SHARD: "${{ matrix.shard }}/4"
+        run: |
+          chmod +x ./e2e_human_mcp
+          ./scripts/e2e.sh

@@ -1,0 +1,7 @@
+[package]
+name = "afterlife-design"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }

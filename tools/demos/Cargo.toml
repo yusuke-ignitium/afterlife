@@ -1,0 +1,24 @@
+[package]
+name = "afterlife-demos"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "border-demo"
+path = "src/bin/border_demo.rs"
+
+[[bin]]
+name = "edge-palette-demo"
+path = "src/bin/edge_palette_demo.rs"
+
+[[bin]]
+name = "palette-demo"
+path = "src/bin/palette_demo.rs"
+
+[[bin]]
+name = "mirror-tile-demo"
+path = "src/bin/mirror_tile_demo.rs"
+
+[dependencies]
+afterlife-design = { path = "../../crates/afterlife-design" }
+gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }

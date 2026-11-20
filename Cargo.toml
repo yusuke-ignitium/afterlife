@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/afterlife-core",
+    "crates/afterlife-protocol",
+    "crates/afterlife-storage",
+    "crates/afterlife-daemon",
+    "crates/afterlife-cli",
+    "crates/afterlife-design",
+    "crates/afterlife-ui",
+    "tools/demos",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"

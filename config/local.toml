@@ -1,0 +1,31 @@
+# Afterlife local development & desktop shared configuration
+# Used by both `afterlifed` and `Afterlife.app` (via AFTERLIFE_CONFIG=config/local.toml)
+
+[server]
+bind_addr = "127.0.0.1:4319"
+public_base_url = "http://127.0.0.1:4319"
+
+[auth]
+mode = "local_dev"
+default_owner_id = "local-owner"
+default_email = "you@local"
+issuer = "http://127.0.0.1:4319"
+jwt_secret_env = "AFTERLIFE_JWT_SECRET"
+access_token_ttl_secs = 900
+refresh_token_ttl_secs = 2592000
+
+[storage]
+backend = "sqlite"
+path = "./.afterlife/afterlife.db"
+
+[blobs]
+backend = "local_fs"
+dir = "./.afterlife/artifacts"
+
+[telemetry]
+backend = "jsonl_file"
+dir = "./.afterlife/telemetry"
+
+[event_bus]
+backend = "in_memory"
+capacity = 1024

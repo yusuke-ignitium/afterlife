@@ -1,0 +1,40 @@
+# Afterlife AWS production configuration template (30-100 engineers)
+# Secrets are injected via AWS Secrets Manager -> ECS Task Definition `secrets`.
+
+[server]
+bind_addr = "0.0.0.0:4319"
+public_base_url = "https://afterlife.example.com"
+
+[auth]
+mode = "google_oidc"
+issuer = "https://afterlife.example.com"
+google_client_id = "REPLACE_WITH_GOOGLE_WORKSPACE_CLIENT_ID.apps.googleusercontent.com"
+google_client_secret_env = "AFTERLIFE_GOOGLE_CLIENT_SECRET"
+hosted_domain = "example.com"
+jwt_secret_env = "AFTERLIFE_JWT_SECRET"
+access_token_ttl_secs = 900
+refresh_token_ttl_secs = 2592000
+allowed_emails = []
+
+[storage]
+backend = "postgres"
+dsn_env = "AFTERLIFE_DATABASE_URL"
+max_connections = 20
+rls_enforced = true
+
+[blobs]
+backend = "s3"
+bucket = "afterlife-prod-artifacts"
+prefix = "blobs"
+region = "ap-northeast-1"
+
+[telemetry]
+backend = "s3_jsonl"
+bucket = "afterlife-prod-telemetry"
+prefix = "events"
+region = "ap-northeast-1"
+flush_interval_secs = 15
+
+[event_bus]
+backend = "postgres_listen_notify"
+channel = "afterlife_events"
