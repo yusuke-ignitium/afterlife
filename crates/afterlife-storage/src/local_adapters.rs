@@ -55,7 +55,12 @@ impl ArtifactBlobStore for LocalFsBlobStore {
                 .map_err(|e| PortError::Storage(format!("write {}: {e}", blob_path.display())))?;
         }
         Ok(BlobRef {
-            uri: format!("local://{}/{}/{}", sanitize_path_segment(owner_id.as_str()), digest, filename),
+            uri: format!(
+                "local://{}/{}/{}",
+                sanitize_path_segment(owner_id.as_str()),
+                digest,
+                filename
+            ),
             sha256: digest,
             size_bytes: bytes.len() as u64,
         })
@@ -122,8 +127,7 @@ impl TelemetrySink for JsonlTelemetrySink {
         fs::create_dir_all(&dir)
             .map_err(|e| PortError::Storage(format!("mkdir {}: {e}", dir.display())))?;
         let file_path = dir.join("events.jsonl");
-        let line =
-            serde_json::to_string(record).map_err(|e| PortError::Storage(e.to_string()))?;
+        let line = serde_json::to_string(record).map_err(|e| PortError::Storage(e.to_string()))?;
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)

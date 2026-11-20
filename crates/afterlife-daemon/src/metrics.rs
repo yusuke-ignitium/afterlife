@@ -150,13 +150,7 @@ impl DaemonMetrics {
         self.log_path.as_deref()
     }
 
-    pub fn record_http(
-        &self,
-        method: &str,
-        path: &str,
-        status: u16,
-        latency_us: u64,
-    ) {
+    pub fn record_http(&self, method: &str, path: &str, status: u16, latency_us: u64) {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
         match status {
             200..=299 => self.status_2xx.fetch_add(1, Ordering::Relaxed),

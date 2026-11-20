@@ -159,19 +159,20 @@ impl Render for AfterlifeApp {
             } else {
                 let present_when_inactive =
                     self.perf.is_some() || !st.pause_animation_when_inactive;
-                window.set_continuous_present(
-                    Some(Duration::from_millis(14)),
-                    present_when_inactive,
-                );
+                window
+                    .set_continuous_present(Some(Duration::from_millis(14)), present_when_inactive);
             }
         } else {
             window.set_continuous_present(None, false);
         }
 
         let root_bg: Background = match st.style {
-            UiStyle::LiquidGlass => {
-                particle_wave_with(p.window_backdrop, p.wave_a, p.wave_b, st.glass.bg_brightness)
-            }
+            UiStyle::LiquidGlass => particle_wave_with(
+                p.window_backdrop,
+                p.wave_a,
+                p.wave_b,
+                st.glass.bg_brightness,
+            ),
             UiStyle::Wireframe => p.window_backdrop.into(),
         };
         let viewport_size = window.viewport_size();
@@ -194,9 +195,7 @@ impl Render for AfterlifeApp {
             .px(SpacePx::S16.px())
             .pb(SpacePx::S16.px())
             .gap(SpacePx::S12.px())
-            .when(is_resizing_detail, |d| {
-                d.cursor(CursorStyle::ResizeUpDown)
-            })
+            .when(is_resizing_detail, |d| d.cursor(CursorStyle::ResizeUpDown))
             .on_action(|_: &CloseWindow, window, _| {
                 window.remove_window();
             })
@@ -209,7 +208,8 @@ impl Render for AfterlifeApp {
                     }
                     if let Some(drag) = this.detail_resize {
                         let delta = drag.start_mouse_y - f32::from(ev.position.y);
-                        let next_h = clamp_detail_height(drag.start_height + delta, left_pane_height);
+                        let next_h =
+                            clamp_detail_height(drag.start_height + delta, left_pane_height);
                         this.state.update(cx, |st, _| {
                             st.detail_height = next_h;
                         });

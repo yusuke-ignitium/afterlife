@@ -112,9 +112,18 @@ mod tests {
         );
         assert_eq!(parsed.display_text, "ENG-123 日本語タスク PR #42");
         assert_eq!(parsed.links.len(), 2);
-        assert_eq!(&parsed.display_text[parsed.links[0].range.clone()], "ENG-123");
-        assert_eq!(parsed.links[0].url, "https://linear.app/example/issue/ENG-123");
-        assert_eq!(&parsed.display_text[parsed.links[1].range.clone()], "PR #42");
+        assert_eq!(
+            &parsed.display_text[parsed.links[0].range.clone()],
+            "ENG-123"
+        );
+        assert_eq!(
+            parsed.links[0].url,
+            "https://linear.app/example/issue/ENG-123"
+        );
+        assert_eq!(
+            &parsed.display_text[parsed.links[1].range.clone()],
+            "PR #42"
+        );
         assert_eq!(parsed.links[1].url, "https://github.com/org/repo/pull/42");
     }
 

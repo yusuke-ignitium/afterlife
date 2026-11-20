@@ -107,57 +107,61 @@ pub fn dispatch_command(
         actor: principal.actor.clone(),
         command,
     };
-    let outcome = state.ports.store.execute_command(env).map_err(|err| match err {
-        PortError::Domain(te) => {
-            let status = match &te {
-                afterlife_core::TransitionError::OwnerMismatch { .. }
-                | afterlife_core::TransitionError::HumanApprovalRequired { .. } => {
-                    StatusCode::FORBIDDEN
+    let outcome = state
+        .ports
+        .store
+        .execute_command(env)
+        .map_err(|err| match err {
+            PortError::Domain(te) => {
+                let status = match &te {
+                    afterlife_core::TransitionError::OwnerMismatch { .. }
+                    | afterlife_core::TransitionError::HumanApprovalRequired { .. } => {
+                        StatusCode::FORBIDDEN
+                    }
+                    afterlife_core::TransitionError::JobNotFound(_)
+                    | afterlife_core::TransitionError::DistrictNotFound(_)
+                    | afterlife_core::TransitionError::StageNotFound { .. }
+                    | afterlife_core::TransitionError::ProposalNotFound(_) => StatusCode::NOT_FOUND,
+                    afterlife_core::TransitionError::RevisionConflict { .. }
+                    | afterlife_core::TransitionError::AlreadyLeased { .. }
+                    | afterlife_core::TransitionError::StaleFencingToken { .. }
+                    | afterlife_core::TransitionError::LeaseExpired { .. }
+                    | afterlife_core::TransitionError::LeaseMissing { .. }
+                    | afterlife_core::TransitionError::JobAlreadyInDistrict { .. }
+                    | afterlife_core::TransitionError::PhilosophyVersionConflict { .. }
+                    | afterlife_core::TransitionError::SpecVersionConflict { .. } => {
+                        StatusCode::CONFLICT
+                    }
+                    _ => StatusCode::UNPROCESSABLE_ENTITY,
+                };
+                DispatchError {
+                    status,
+                    code: te.code().to_string(),
+                    error: te.to_string(),
+                    detail: serde_json::to_value(&te).ok(),
                 }
-                afterlife_core::TransitionError::JobNotFound(_)
-                | afterlife_core::TransitionError::DistrictNotFound(_)
-                | afterlife_core::TransitionError::StageNotFound { .. }
-                | afterlife_core::TransitionError::ProposalNotFound(_) => StatusCode::NOT_FOUND,
-                afterlife_core::TransitionError::RevisionConflict { .. }
-                | afterlife_core::TransitionError::AlreadyLeased { .. }
-                | afterlife_core::TransitionError::StaleFencingToken { .. }
-                | afterlife_core::TransitionError::LeaseExpired { .. }
-                | afterlife_core::TransitionError::LeaseMissing { .. }
-                | afterlife_core::TransitionError::JobAlreadyInDistrict { .. }
-                | afterlife_core::TransitionError::PhilosophyVersionConflict { .. }
-                | afterlife_core::TransitionError::SpecVersionConflict { .. } => {
-                    StatusCode::CONFLICT
-                }
-                _ => StatusCode::UNPROCESSABLE_ENTITY,
-            };
-            DispatchError {
-                status,
-                code: te.code().to_string(),
-                error: te.to_string(),
-                detail: serde_json::to_value(&te).ok(),
             }
-        }
-        PortError::InvalidInput(msg) => DispatchError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "invalid_input".into(),
-            error: msg,
-            detail: None,
-        },
-        PortError::IdempotencyConflict { command_id } => DispatchError {
-            status: StatusCode::CONFLICT,
-            code: "idempotency_conflict".into(),
-            error: format!(
-                "command_id '{command_id}' was already used with a different command payload"
-            ),
-            detail: Some(serde_json::json!({ "command_id": command_id })),
-        },
-        other => DispatchError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "internal_error".into(),
-            error: other.to_string(),
-            detail: None,
-        },
-    })?;
+            PortError::InvalidInput(msg) => DispatchError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "invalid_input".into(),
+                error: msg,
+                detail: None,
+            },
+            PortError::IdempotencyConflict { command_id } => DispatchError {
+                status: StatusCode::CONFLICT,
+                code: "idempotency_conflict".into(),
+                error: format!(
+                    "command_id '{command_id}' was already used with a different command payload"
+                ),
+                detail: Some(serde_json::json!({ "command_id": command_id })),
+            },
+            other => DispatchError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "internal_error".into(),
+                error: other.to_string(),
+                detail: None,
+            },
+        })?;
 
     if !outcome.idempotent_replay {
         for (offset, ev) in outcome.events.iter().enumerate() {
@@ -219,7 +223,10 @@ pub async fn get_workspace(
     AuthPrincipal(principal): AuthPrincipal,
 ) -> Response {
     if !principal.scopes.contains(&Scope::JobsRead) {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "insufficient_scope" })))
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "insufficient_scope" })),
+        )
             .into_response();
     }
     match state.ports.store.load_workspace(&principal.owner_id) {
@@ -238,7 +245,10 @@ pub async fn get_job_context(
     Path(job_id): Path<String>,
 ) -> Response {
     if !principal.scopes.contains(&Scope::JobsRead) {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "insufficient_scope" })))
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "insufficient_scope" })),
+        )
             .into_response();
     }
     let snap = match state.ports.store.load_workspace(&principal.owner_id) {
@@ -251,7 +261,10 @@ pub async fn get_job_context(
                 .into_response();
         }
     };
-    match snap.engine.compile_execution_context(&JobId::from(job_id.as_str())) {
+    match snap
+        .engine
+        .compile_execution_context(&JobId::from(job_id.as_str()))
+    {
         Some(ctx) => Json(ctx).into_response(),
         None => (
             StatusCode::NOT_FOUND,
@@ -293,7 +306,10 @@ pub async fn sse_events(
     Query(q): Query<EventsQuery>,
 ) -> Response {
     if !principal.scopes.contains(&Scope::JobsRead) {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "insufficient_scope" })))
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "insufficient_scope" })),
+        )
             .into_response();
     }
     let owner_id = principal.owner_id.clone();

@@ -150,13 +150,18 @@ fn capture_process_snapshot() -> ProcessSnapshot {
 
     unsafe {
         let _ = getrusage(RUSAGE_SELF, &mut ru);
-        let _ = task_info(mach_task_self(), MACH_TASK_BASIC_INFO, &mut info, &mut count);
+        let _ = task_info(
+            mach_task_self(),
+            MACH_TASK_BASIC_INFO,
+            &mut info,
+            &mut count,
+        );
     }
 
-    let user_us = (ru.ru_utime.tv_sec.max(0) as u64) * 1_000_000
-        + (ru.ru_utime.tv_usec.max(0) as u64);
-    let sys_us = (ru.ru_stime.tv_sec.max(0) as u64) * 1_000_000
-        + (ru.ru_stime.tv_usec.max(0) as u64);
+    let user_us =
+        (ru.ru_utime.tv_sec.max(0) as u64) * 1_000_000 + (ru.ru_utime.tv_usec.max(0) as u64);
+    let sys_us =
+        (ru.ru_stime.tv_sec.max(0) as u64) * 1_000_000 + (ru.ru_stime.tv_usec.max(0) as u64);
 
     ProcessSnapshot {
         user_us,
@@ -438,10 +443,21 @@ fn build_report_value(
 
     let m_count = metal_samples.len();
     let mf = m_count.max(1) as f64;
-    let avg_enc_switches =
-        metal_samples.iter().map(|s| s.encoder_switches as f64).sum::<f64>() / mf;
-    let avg_blit_count = metal_samples.iter().map(|s| s.blit_count as f64).sum::<f64>() / mf;
-    let avg_blit_pixels = metal_samples.iter().map(|s| s.blit_pixels as f64).sum::<f64>() / mf;
+    let avg_enc_switches = metal_samples
+        .iter()
+        .map(|s| s.encoder_switches as f64)
+        .sum::<f64>()
+        / mf;
+    let avg_blit_count = metal_samples
+        .iter()
+        .map(|s| s.blit_count as f64)
+        .sum::<f64>()
+        / mf;
+    let avg_blit_pixels = metal_samples
+        .iter()
+        .map(|s| s.blit_pixels as f64)
+        .sum::<f64>()
+        / mf;
     let avg_blit_full_frames = metal_samples
         .iter()
         .map(|s| {
@@ -470,9 +486,21 @@ fn build_report_value(
         .filter(|s| s.compute_scatter_dispatched)
         .count() as f64
         / mf;
-    let avg_q_reg = metal_samples.iter().map(|s| s.quads_regular as f64).sum::<f64>() / mf;
-    let avg_q_glass = metal_samples.iter().map(|s| s.quads_glass as f64).sum::<f64>() / mf;
-    let avg_q_wave = metal_samples.iter().map(|s| s.quads_wave as f64).sum::<f64>() / mf;
+    let avg_q_reg = metal_samples
+        .iter()
+        .map(|s| s.quads_regular as f64)
+        .sum::<f64>()
+        / mf;
+    let avg_q_glass = metal_samples
+        .iter()
+        .map(|s| s.quads_glass as f64)
+        .sum::<f64>()
+        / mf;
+    let avg_q_wave = metal_samples
+        .iter()
+        .map(|s| s.quads_wave as f64)
+        .sum::<f64>()
+        / mf;
     let avg_shadows = metal_samples.iter().map(|s| s.shadows as f64).sum::<f64>() / mf;
     let avg_mono = metal_samples
         .iter()

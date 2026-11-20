@@ -78,8 +78,7 @@ pub fn open_main_window(state: &Entity<AppState>, perf: Option<PerfSession>, cx:
         });
     }
     let (displays, primary_id) = collect_displays(cx);
-    let (display_id, window_bounds) =
-        resolve_initial_window(saved.as_ref(), &displays, primary_id);
+    let (display_id, window_bounds) = resolve_initial_window(saved.as_ref(), &displays, primary_id);
     let store_for_close = window_store.clone();
     let state_for_close = state.clone();
     cx.open_window(
@@ -232,8 +231,7 @@ pub fn run_app() {
                 let mut rx = daemon.ports.event_bus.subscribe();
                 let state_for_sync = state.clone();
                 cx.spawn(async move |cx| {
-                    while let Ok(_)
-                    | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) =
+                    while let Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) =
                         rx.recv().await
                     {
                         cx.background_executor()
@@ -288,9 +286,7 @@ pub fn run_app() {
                         let _ = cx.update(|cx| cx.quit());
                         std::process::exit(0);
                     }
-                    if perf.scenario() == PerfScenario::InteractiveChurn
-                        && step.is_multiple_of(2)
-                    {
+                    if perf.scenario() == PerfScenario::InteractiveChurn && step.is_multiple_of(2) {
                         let s = step / 2;
                         let _ = cx.update(|cx| {
                             state_for_perf.update(cx, |st, _| {

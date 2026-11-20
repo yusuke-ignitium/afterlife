@@ -1693,11 +1693,7 @@ impl Window {
     /// Useful for shader-driven time animations (e.g. `ParticleWave` / `LiquidGlass`) whose
     /// geometry and UI state do not change between frames. When `present_when_inactive` is
     /// `false`, presentation pauses automatically while the window is inactive.
-    pub fn set_continuous_present(
-        &self,
-        interval: Option<Duration>,
-        present_when_inactive: bool,
-    ) {
+    pub fn set_continuous_present(&self, interval: Option<Duration>, present_when_inactive: bool) {
         self.continuous_present_interval.set(interval);
         self.continuous_present_when_inactive
             .set(present_when_inactive);

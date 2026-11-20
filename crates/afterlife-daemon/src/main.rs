@@ -44,7 +44,9 @@ async fn main() {
         });
 
     eprintln!("[afterlifed] listening on {bind_addr} (public: {public_url})");
-    eprintln!("[afterlifed] REST: {public_url}/v1/workspace | SSE: {public_url}/v1/events | MCP: {public_url}/mcp");
+    eprintln!(
+        "[afterlifed] REST: {public_url}/v1/workspace | SSE: {public_url}/v1/events | MCP: {public_url}/mcp"
+    );
 
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("[afterlifed] server error: {e}");

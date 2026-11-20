@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, BackgroundTag, Bounds, ContentMask, DevicePixels,
-    MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
-    ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
+    AtlasTextureId, Background, BackgroundTag, Bounds, ContentMask, DevicePixels, MonochromeSprite,
+    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Size, Surface, Underline, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -201,7 +201,11 @@ fn read_backdrop_paths_from_config(path: &std::path::Path) -> Vec<String> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|item| item.get("path").and_then(|p| p.as_str()).map(str::to_string))
+                .filter_map(|item| {
+                    item.get("path")
+                        .and_then(|p| p.as_str())
+                        .map(str::to_string)
+                })
                 .filter(|s| !s.trim().is_empty())
                 .collect()
         })
@@ -549,7 +553,8 @@ impl MetalRenderer {
             .new_compute_pipeline_state_with_function(&scatter_fn)
             .expect("could not create particle_tile_scatter_pipeline");
         let particle_tile_grid_capacity = 1usize;
-        let particle_tile_grid_buffer = device.new_buffer(4, MTLResourceOptions::StorageModePrivate);
+        let particle_tile_grid_buffer =
+            device.new_buffer(4, MTLResourceOptions::StorageModePrivate);
 
         Self {
             device,
@@ -706,8 +711,13 @@ impl MetalRenderer {
         loop {
             let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
 
-            let command_buffer =
-                self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size, perf_on);
+            let command_buffer = self.draw_primitives(
+                scene,
+                &mut instance_buffer,
+                drawable,
+                viewport_size,
+                perf_on,
+            );
 
             match command_buffer {
                 Ok((command_buffer, perf_sample)) => {
@@ -720,7 +730,8 @@ impl MetalRenderer {
                                 let gpu_start: f64 = msg_send![ptr, GPUStartTime];
                                 let gpu_end: f64 = msg_send![ptr, GPUEndTime];
                                 if gpu_start > 0.0 && gpu_end >= gpu_start {
-                                    let dur_us = ((gpu_end - gpu_start) * 1_000_000.0).round() as u64;
+                                    let dur_us =
+                                        ((gpu_end - gpu_start) * 1_000_000.0).round() as u64;
                                     crate::perf_telemetry::record_gpu_timing_us(dur_us);
                                 }
                             }
@@ -781,7 +792,10 @@ impl MetalRenderer {
         drawable: &metal::MetalDrawableRef,
         viewport_size: Size<DevicePixels>,
         perf_on: bool,
-    ) -> Result<(metal::CommandBuffer, Option<crate::perf_telemetry::MetalFrameSample>)> {
+    ) -> Result<(
+        metal::CommandBuffer,
+        Option<crate::perf_telemetry::MetalFrameSample>,
+    )> {
         let encode_start = perf_on.then(Instant::now);
         let mut perf = perf_on.then(|| crate::perf_telemetry::MetalFrameSample {
             viewport_w: viewport_size.width.0.max(0) as u32,
@@ -965,11 +979,16 @@ impl MetalRenderer {
                                     // samples outside quad bounds (<= blurPx + 2px).
                                     'check_hit: for q in chunk {
                                         let blur_px = q.background.colors[1].percentage * 2.0;
-                                        let margin = if blur_px > 0.5 { blur_px + 2.0 } else { 2.0 };
+                                        let margin =
+                                            if blur_px > 0.5 { blur_px + 2.0 } else { 2.0 };
                                         let padded = Bounds {
                                             origin: point(
-                                                ScaledPixels((q.bounds.origin.x.0 - margin).max(0.0)),
-                                                ScaledPixels((q.bounds.origin.y.0 - margin).max(0.0)),
+                                                ScaledPixels(
+                                                    (q.bounds.origin.x.0 - margin).max(0.0),
+                                                ),
+                                                ScaledPixels(
+                                                    (q.bounds.origin.y.0 - margin).max(0.0),
+                                                ),
                                             ),
                                             size: size(
                                                 ScaledPixels(q.bounds.size.width.0 + margin * 2.0),
@@ -1001,8 +1020,12 @@ impl MetalRenderer {
                                                     ScaledPixels(c.origin.y.0 - CLUSTER_PAD),
                                                 ),
                                                 size: size(
-                                                    ScaledPixels(c.size.width.0 + CLUSTER_PAD * 2.0),
-                                                    ScaledPixels(c.size.height.0 + CLUSTER_PAD * 2.0),
+                                                    ScaledPixels(
+                                                        c.size.width.0 + CLUSTER_PAD * 2.0,
+                                                    ),
+                                                    ScaledPixels(
+                                                        c.size.height.0 + CLUSTER_PAD * 2.0,
+                                                    ),
                                                 ),
                                             };
                                             if exp.intersects(&d) {
@@ -1498,11 +1521,7 @@ impl MetalRenderer {
             drawable_tex,
             0,
             0,
-            metal::MTLOrigin {
-                x: ox,
-                y: oy,
-                z: 0,
-            },
+            metal::MTLOrigin { x: ox, y: oy, z: 0 },
             metal::MTLSize {
                 width: cw,
                 height: ch,
@@ -1511,11 +1530,7 @@ impl MetalRenderer {
             backdrop_tex,
             0,
             0,
-            metal::MTLOrigin {
-                x: ox,
-                y: oy,
-                z: 0,
-            },
+            metal::MTLOrigin { x: ox, y: oy, z: 0 },
         );
         if generate_mipmaps && backdrop_tex.mipmap_level_count() > 1 {
             blit.generate_mipmaps(backdrop_tex);
@@ -1562,11 +1577,7 @@ impl MetalRenderer {
                 drawable_tex,
                 0,
                 0,
-                metal::MTLOrigin {
-                    x: x0,
-                    y: y0,
-                    z: 0,
-                },
+                metal::MTLOrigin { x: x0, y: y0, z: 0 },
                 metal::MTLSize {
                     width: cw,
                     height: ch,
@@ -1575,11 +1586,7 @@ impl MetalRenderer {
                 backdrop_tex,
                 0,
                 0,
-                metal::MTLOrigin {
-                    x: x0,
-                    y: y0,
-                    z: 0,
-                },
+                metal::MTLOrigin { x: x0, y: y0, z: 0 },
             );
             total_px += cw * ch;
         }
@@ -1694,8 +1701,9 @@ impl MetalRenderer {
         }
         if self.particle_tile_grid_capacity > 1 {
             self.particle_tile_grid_capacity = 1;
-            self.particle_tile_grid_buffer =
-                self.device.new_buffer(4, MTLResourceOptions::StorageModePrivate);
+            self.particle_tile_grid_buffer = self
+                .device
+                .new_buffer(4, MTLResourceOptions::StorageModePrivate);
         }
     }
 
@@ -1771,10 +1779,9 @@ impl MetalRenderer {
         let needed = (grid_w as usize) * (grid_h as usize);
         if needed > self.particle_tile_grid_capacity {
             self.particle_tile_grid_capacity = needed;
-            self.particle_tile_grid_buffer = self.device.new_buffer(
-                (needed * 4) as u64,
-                MTLResourceOptions::StorageModePrivate,
-            );
+            self.particle_tile_grid_buffer = self
+                .device
+                .new_buffer((needed * 4) as u64, MTLResourceOptions::StorageModePrivate);
         }
 
         let now = Instant::now();

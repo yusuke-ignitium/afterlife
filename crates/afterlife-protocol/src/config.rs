@@ -68,7 +68,9 @@ pub enum StorageConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "backend", rename_all = "snake_case")]
 pub enum BlobConfig {
-    LocalFs { dir: String },
+    LocalFs {
+        dir: String,
+    },
     S3 {
         bucket: String,
         prefix: String,
@@ -80,7 +82,9 @@ pub enum BlobConfig {
 #[serde(tag = "backend", rename_all = "snake_case")]
 pub enum TelemetryConfig {
     Disabled,
-    JsonlFile { dir: String },
+    JsonlFile {
+        dir: String,
+    },
     S3Jsonl {
         bucket: String,
         prefix: String,

@@ -111,9 +111,24 @@ impl BorderDemoApp {
         let r_btn = px(g.radius * 0.8);
 
         let cards = [
-            ("JOB-042", "SQLite WAL state-lock benchmark", 0.0f32, "Z3 Verifier"),
-            ("JOB-041", "Enforce deterministic px & centering", 0.5f32, "Claude Duet"),
-            ("JOB-044", "Approve UDS vs Mach Port IPC spec", 1.0f32, "You"),
+            (
+                "JOB-042",
+                "SQLite WAL state-lock benchmark",
+                0.0f32,
+                "Z3 Verifier",
+            ),
+            (
+                "JOB-041",
+                "Enforce deterministic px & centering",
+                0.5f32,
+                "Claude Duet",
+            ),
+            (
+                "JOB-044",
+                "Approve UDS vs Mach Port IPC spec",
+                1.0f32,
+                "You",
+            ),
         ];
 
         div()
@@ -188,116 +203,122 @@ impl BorderDemoApp {
                                 [SharedString::from("Dots").into_any_element()],
                             )),
                     )
-                    .children(cards.into_iter().enumerate().map(|(idx, (id, title, kind, runner))| {
-                        let is_selected = self.selected_idx == idx;
-                        let is_gate = kind > 0.75;
-                        let effective_kind = if is_selected {
-                            0.5
-                        } else if is_gate {
-                            1.0
-                        } else {
-                            0.0
-                        };
+                    .children(cards.into_iter().enumerate().map(
+                        |(idx, (id, title, kind, runner))| {
+                            let is_selected = self.selected_idx == idx;
+                            let is_gate = kind > 0.75;
+                            let effective_kind = if is_selected {
+                                0.5
+                            } else if is_gate {
+                                1.0
+                            } else {
+                                0.0
+                            };
 
-                        let tint = if is_selected {
-                            gpui::Rgba {
-                                r: 43.0 / 255.0,
-                                g: 63.0 / 255.0,
-                                b: 99.0 / 255.0,
-                                a: 0.24,
-                            }
-                        } else if is_gate {
-                            gpui::Rgba {
-                                r: 58.0 / 255.0,
-                                g: 42.0 / 255.0,
-                                b: 14.0 / 255.0,
-                                a: 0.16,
-                            }
-                        } else if plan == DemoPlan::PlanC {
-                            gpui::Rgba {
-                                r: 18.0 / 255.0,
-                                g: 24.0 / 255.0,
-                                b: 36.0 / 255.0,
-                                a: 0.22,
-                            }
-                        } else {
-                            p.glass_card
-                        };
+                            let tint = if is_selected {
+                                gpui::Rgba {
+                                    r: 43.0 / 255.0,
+                                    g: 63.0 / 255.0,
+                                    b: 99.0 / 255.0,
+                                    a: 0.24,
+                                }
+                            } else if is_gate {
+                                gpui::Rgba {
+                                    r: 58.0 / 255.0,
+                                    g: 42.0 / 255.0,
+                                    b: 14.0 / 255.0,
+                                    a: 0.16,
+                                }
+                            } else if plan == DemoPlan::PlanC {
+                                gpui::Rgba {
+                                    r: 18.0 / 255.0,
+                                    g: 24.0 / 255.0,
+                                    b: 36.0 / 255.0,
+                                    a: 0.22,
+                                }
+                            } else {
+                                p.glass_card
+                            };
 
-                        let mut card = div()
-                            .id(SharedString::from(format!("demo-{}-{}", plan.edge_mode(), idx)))
-                            .relative()
-                            .flex()
-                            .flex_col()
-                            .p(SpacePx::S12.px())
-                            .gap(SpacePx::S4.px())
-                            .rounded(r_card)
-                            .bg(self.glass_bg(plan, tint, effective_kind))
-                            .shadow(glass_shadows())
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.selected_idx = idx;
-                                cx.notify();
-                            }));
-
-                        if plan == DemoPlan::PlanC && (is_selected || is_gate) {
-                            card = card.child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .top(px(6.0))
-                                    .bottom(px(6.0))
-                                    .w(px(2.0))
-                                    .bg(if is_gate { p.amber } else { p.accent }),
-                            );
-                        }
-
-                        card.child(
-                            div()
+                            let mut card = div()
+                                .id(SharedString::from(format!(
+                                    "demo-{}-{}",
+                                    plan.edge_mode(),
+                                    idx
+                                )))
+                                .relative()
                                 .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_between()
-                                .child(single_line(
-                                    RowHeightPx::H22,
-                                    SpacePx::S0,
-                                    SpacePx::S4,
-                                    FontPx::F11,
-                                    RadiusPx::R0,
-                                    None,
-                                    None,
-                                    if is_gate {
-                                        p.amber
-                                    } else if is_selected {
-                                        p.accent
-                                    } else {
-                                        p.text_secondary
-                                    },
-                                    false,
-                                    p.centerline,
-                                    [SharedString::from(id).into_any_element()],
-                                ))
-                                .child(single_line(
-                                    RowHeightPx::H22,
-                                    SpacePx::S0,
-                                    SpacePx::S4,
-                                    FontPx::F11,
-                                    RadiusPx::R0,
-                                    None,
-                                    None,
-                                    p.text_tertiary,
-                                    false,
-                                    p.centerline,
-                                    [SharedString::from(runner).into_any_element()],
-                                )),
-                        )
-                        .child(
-                            div()
-                                .text_size(FontPx::F12.px())
-                                .text_color(p.text_primary)
-                                .child(title),
-                        )
-                    }))
+                                .flex_col()
+                                .p(SpacePx::S12.px())
+                                .gap(SpacePx::S4.px())
+                                .rounded(r_card)
+                                .bg(self.glass_bg(plan, tint, effective_kind))
+                                .shadow(glass_shadows())
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.selected_idx = idx;
+                                    cx.notify();
+                                }));
+
+                            if plan == DemoPlan::PlanC && (is_selected || is_gate) {
+                                card = card.child(
+                                    div()
+                                        .absolute()
+                                        .left_0()
+                                        .top(px(6.0))
+                                        .bottom(px(6.0))
+                                        .w(px(2.0))
+                                        .bg(if is_gate { p.amber } else { p.accent }),
+                                );
+                            }
+
+                            card.child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(single_line(
+                                        RowHeightPx::H22,
+                                        SpacePx::S0,
+                                        SpacePx::S4,
+                                        FontPx::F11,
+                                        RadiusPx::R0,
+                                        None,
+                                        None,
+                                        if is_gate {
+                                            p.amber
+                                        } else if is_selected {
+                                            p.accent
+                                        } else {
+                                            p.text_secondary
+                                        },
+                                        false,
+                                        p.centerline,
+                                        [SharedString::from(id).into_any_element()],
+                                    ))
+                                    .child(single_line(
+                                        RowHeightPx::H22,
+                                        SpacePx::S0,
+                                        SpacePx::S4,
+                                        FontPx::F11,
+                                        RadiusPx::R0,
+                                        None,
+                                        None,
+                                        p.text_tertiary,
+                                        false,
+                                        p.centerline,
+                                        [SharedString::from(runner).into_any_element()],
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(FontPx::F12.px())
+                                    .text_color(p.text_primary)
+                                    .child(title),
+                            )
+                        },
+                    ))
                     .child(
                         div()
                             .flex()

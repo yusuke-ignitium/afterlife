@@ -33,7 +33,10 @@ impl fmt::Display for PortError {
             Self::Storage(msg) => write!(f, "storage error: {msg}"),
             Self::NotFound(msg) => write!(f, "not found: {msg}"),
             Self::UnimplementedAdapter(name) => {
-                write!(f, "production adapter '{name}' requires cloud feature/runtime wiring")
+                write!(
+                    f,
+                    "production adapter '{name}' requires cloud feature/runtime wiring"
+                )
             }
         }
     }

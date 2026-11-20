@@ -189,7 +189,12 @@ mod tests {
         );
         let auth_resp = app
             .clone()
-            .oneshot(Request::builder().uri(auth_uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(auth_uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(auth_resp.status(), StatusCode::SEE_OTHER);
@@ -260,8 +265,16 @@ mod tests {
         assert_eq!(ctx_json["result"]["isError"], false);
 
         for (req_id, tool_name, arguments) in [
-            (2, "jobs_claim", json!({ "job_id": "JOB-041", "ttl_ms": 60000 })),
-            (3, "jobs_assign", json!({ "job_id": "JOB-041", "district_id": "DIST-001" })),
+            (
+                2,
+                "jobs_claim",
+                json!({ "job_id": "JOB-041", "ttl_ms": 60000 }),
+            ),
+            (
+                3,
+                "jobs_assign",
+                json!({ "job_id": "JOB-041", "district_id": "DIST-001" }),
+            ),
             (4, "jobs_advance", json!({ "job_id": "JOB-041" })),
         ] {
             let resp = app
@@ -286,7 +299,10 @@ mod tests {
                 .await
                 .unwrap();
             let j = read_json(resp).await;
-            assert_eq!(j["result"]["isError"], true, "{tool_name} must fail at approval_gate");
+            assert_eq!(
+                j["result"]["isError"], true,
+                "{tool_name} must fail at approval_gate"
+            );
             let err_payload: Value =
                 serde_json::from_str(j["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
             assert_eq!(err_payload["status"], 403);
@@ -334,18 +350,16 @@ mod tests {
             .parent()
             .unwrap();
 
-        let local_cfg =
-            AfterlifeConfig::from_toml_file(workspace_root.join("config/local.toml"))
-                .expect("config/local.toml must parse cleanly");
+        let local_cfg = AfterlifeConfig::from_toml_file(workspace_root.join("config/local.toml"))
+            .expect("config/local.toml must parse cleanly");
         assert!(matches!(
             local_cfg.auth,
             afterlife_protocol::AuthConfig::LocalDev { .. }
         ));
 
-        let prod_cfg = AfterlifeConfig::from_toml_file(
-            workspace_root.join("config/production.example.toml"),
-        )
-        .expect("config/production.example.toml must parse cleanly");
+        let prod_cfg =
+            AfterlifeConfig::from_toml_file(workspace_root.join("config/production.example.toml"))
+                .expect("config/production.example.toml must parse cleanly");
         assert!(matches!(
             prod_cfg.auth,
             afterlife_protocol::AuthConfig::GoogleOidc { .. }
@@ -428,9 +442,12 @@ mod tests {
             .unwrap();
         let missing_json = read_json(missing).await;
         assert_eq!(missing_json["result"]["isError"], true);
-        let missing_err: Value =
-            serde_json::from_str(missing_json["result"]["content"][0]["text"].as_str().unwrap())
-                .unwrap();
+        let missing_err: Value = serde_json::from_str(
+            missing_json["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(missing_err["status"], 404);
 
         let claim_gate = app

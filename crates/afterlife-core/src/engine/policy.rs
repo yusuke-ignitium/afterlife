@@ -46,7 +46,10 @@ pub fn require_stage_authority(
     Ok(())
 }
 
-pub fn require_feedback_authority(actor: &Actor, kind: FeedbackKind) -> Result<(), TransitionError> {
+pub fn require_feedback_authority(
+    actor: &Actor,
+    kind: FeedbackKind,
+) -> Result<(), TransitionError> {
     if kind == FeedbackKind::ApprovalNote && !actor.is_human() {
         return Err(TransitionError::HumanApprovalRequired {
             action: "submit approval_note feedback".into(),

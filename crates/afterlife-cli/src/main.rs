@@ -895,7 +895,10 @@ fn mcp_rpc(method: &str, params: Value) -> Result<Value, CliError> {
 }
 
 fn mcp_call_tool(name: &str, arguments: Value) -> Result<Value, CliError> {
-    let result = mcp_rpc("tools/call", json!({ "name": name, "arguments": arguments }))?;
+    let result = mcp_rpc(
+        "tools/call",
+        json!({ "name": name, "arguments": arguments }),
+    )?;
     let is_error = result
         .get("isError")
         .and_then(Value::as_bool)
@@ -1199,10 +1202,7 @@ fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<Value
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| CliError::usage("missing <id>"))?;
-            let new_path = payload
-                .get("path")
-                .and_then(|v| v.as_str())
-                .map(Path::new);
+            let new_path = payload.get("path").and_then(|v| v.as_str()).map(Path::new);
             let new_label = payload.get("label").and_then(|v| v.as_str());
             let new_index = payload
                 .get("index")
@@ -1306,7 +1306,9 @@ fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<Value
                 "tuning": cfg.tuning,
             }))
         }
-        _ => Err(CliError::usage(format!("unknown backdrop subcommand `{sub}`"))),
+        _ => Err(CliError::usage(format!(
+            "unknown backdrop subcommand `{sub}`"
+        ))),
     }
 }
 

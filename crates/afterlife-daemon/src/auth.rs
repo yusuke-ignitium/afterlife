@@ -207,10 +207,7 @@ impl AuthBroker {
         if claims.exp <= now_sec {
             return Err((StatusCode::UNAUTHORIZED, "access token expired"));
         }
-        if store
-            .is_token_jti_revoked(&claims.jti)
-            .unwrap_or(true)
-        {
+        if store.is_token_jti_revoked(&claims.jti).unwrap_or(true) {
             return Err((StatusCode::UNAUTHORIZED, "access token revoked"));
         }
 
@@ -839,7 +836,13 @@ pub async fn token_post(
                     .into_response();
             }
 
-            issue_token_pair(&state, &pending.owner_id, pending.actor, &pending.scopes, &pending.client_id)
+            issue_token_pair(
+                &state,
+                &pending.owner_id,
+                pending.actor,
+                &pending.scopes,
+                &pending.client_id,
+            )
         }
         "refresh_token" => {
             let Some(raw_refresh) = req.refresh_token else {
@@ -891,9 +894,7 @@ fn issue_token_pair(
         *token_jti = jti_preview;
     }
 
-    let (access_token, _jti, expires_in) = state
-        .auth
-        .mint_access_token(owner_id, &actor, scopes);
+    let (access_token, _jti, expires_in) = state.auth.mint_access_token(owner_id, &actor, scopes);
 
     let effective_scopes = if actor.is_human() {
         scopes.clone()
@@ -929,10 +930,7 @@ fn issue_token_pair(
     .into_response()
 }
 
-pub async fn revoke_post(
-    State(state): State<Arc<AppDaemonState>>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn revoke_post(State(state): State<Arc<AppDaemonState>>, headers: HeaderMap) -> Response {
     if let Some(tok) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())

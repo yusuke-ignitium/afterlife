@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Instant};
 
 use afterlife_core::{
     ArtifactKind, CommandId, DistrictId, EngineCommand, FeedbackId, FeedbackKind, FencingToken,
-    GateVerdict, JobId, JobLocation, PhilosophyVersion, Principle, RunnerId, SpecVersion,
-    StageDef, StageId,
+    GateVerdict, JobId, JobLocation, PhilosophyVersion, Principle, RunnerId, SpecVersion, StageDef,
+    StageId,
 };
 use afterlife_protocol::Scope;
 use axum::{
@@ -544,7 +544,10 @@ fn handle_tool_call(
     match name {
         "districts_list" => {
             if !principal.scopes.contains(&Scope::JobsRead) {
-                return rpc_ok(id, tool_text(json!({ "error": "insufficient_scope" }), true));
+                return rpc_ok(
+                    id,
+                    tool_text(json!({ "error": "insufficient_scope" }), true),
+                );
             }
             match state.ports.store.load_workspace(&principal.owner_id) {
                 Ok(snap) => {
@@ -571,11 +574,23 @@ fn handle_tool_call(
         }
         "jobs_list" => {
             if !principal.scopes.contains(&Scope::JobsRead) {
-                return rpc_ok(id, tool_text(json!({ "status": 403, "code": "insufficient_scope", "error": "insufficient_scope" }), true));
+                return rpc_ok(
+                    id,
+                    tool_text(
+                        json!({ "status": 403, "code": "insufficient_scope", "error": "insufficient_scope" }),
+                        true,
+                    ),
+                );
             }
             let limit = match parse_optional_u64(&args, "limit") {
                 Ok(Some(v)) if (1..=200).contains(&v) => v as usize,
-                Ok(Some(v)) => return invalid_arg(id, "limit", &format!("must be between 1 and 200 (got {v})")),
+                Ok(Some(v)) => {
+                    return invalid_arg(
+                        id,
+                        "limit",
+                        &format!("must be between 1 and 200 (got {v})"),
+                    );
+                }
                 Ok(None) => 50,
                 Err(msg) => return invalid_arg(id, "limit", &msg),
             };
@@ -599,7 +614,9 @@ fn handle_tool_call(
                         .engine
                         .jobs
                         .iter()
-                        .filter(|j| include_archived || !matches!(j.location, JobLocation::Archived))
+                        .filter(|j| {
+                            include_archived || !matches!(j.location, JobLocation::Archived)
+                        })
                         .filter(|j| match &filter_dist {
                             Some(did) => j.is_in_district(did),
                             None => true,
@@ -623,12 +640,24 @@ fn handle_tool_call(
                         ),
                     )
                 }
-                Err(e) => rpc_ok(id, tool_text(json!({ "status": 500, "code": "storage_error", "error": e.to_string() }), true)),
+                Err(e) => rpc_ok(
+                    id,
+                    tool_text(
+                        json!({ "status": 500, "code": "storage_error", "error": e.to_string() }),
+                        true,
+                    ),
+                ),
             }
         }
         "job_get_context" => {
             if !principal.scopes.contains(&Scope::JobsRead) {
-                return rpc_ok(id, tool_text(json!({ "status": 403, "code": "insufficient_scope", "error": "insufficient_scope" }), true));
+                return rpc_ok(
+                    id,
+                    tool_text(
+                        json!({ "status": 403, "code": "insufficient_scope", "error": "insufficient_scope" }),
+                        true,
+                    ),
+                );
             }
             let Some(jid) = args.get("job_id").and_then(|v| v.as_str()) else {
                 return rpc_err(id, -32602, "missing job_id");
@@ -638,10 +667,19 @@ fn handle_tool_call(
                     Some(ctx) => rpc_ok(id, tool_text(json!(ctx), false)),
                     None => rpc_ok(
                         id,
-                        tool_text(json!({ "status": 404, "code": "job_context_not_available", "error": "job not active in a district" }), true),
+                        tool_text(
+                            json!({ "status": 404, "code": "job_context_not_available", "error": "job not active in a district" }),
+                            true,
+                        ),
                     ),
                 },
-                Err(e) => rpc_ok(id, tool_text(json!({ "status": 500, "code": "storage_error", "error": e.to_string() }), true)),
+                Err(e) => rpc_ok(
+                    id,
+                    tool_text(
+                        json!({ "status": 500, "code": "storage_error", "error": e.to_string() }),
+                        true,
+                    ),
+                ),
             }
         }
         "jobs_create" => {
@@ -690,7 +728,10 @@ fn handle_tool_call(
                 Ok(v) => v,
                 Err(msg) => return invalid_arg(id, "fencing_token", &msg),
             };
-            let title = args.get("title").and_then(|v| v.as_str()).map(str::to_string);
+            let title = args
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             let raw_input = args
                 .get("raw_input")
                 .and_then(|v| v.as_str())

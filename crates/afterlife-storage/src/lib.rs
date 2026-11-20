@@ -3,7 +3,9 @@ pub mod local_adapters;
 pub mod sqlite;
 
 pub use factory::RuntimePorts;
-pub use local_adapters::{InMemoryEventBus, JsonlTelemetrySink, LocalFsBlobStore, NoopTelemetrySink};
+pub use local_adapters::{
+    InMemoryEventBus, JsonlTelemetrySink, LocalFsBlobStore, NoopTelemetrySink,
+};
 pub use sqlite::SqliteWorkspaceStore;
 
 #[cfg(test)]

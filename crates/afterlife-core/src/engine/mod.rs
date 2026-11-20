@@ -701,12 +701,15 @@ impl AfterlifeEngine {
 
                 policy::require_stage_exit_gate(actor, &job_snap, &district_id, &stage)?;
 
-                let next_stage_id = stage.next.first().cloned().ok_or_else(|| {
-                    TransitionError::NoNextStage {
-                        district_id: district_id.clone(),
-                        stage_id: stage_id.clone(),
-                    }
-                })?;
+                let next_stage_id =
+                    stage
+                        .next
+                        .first()
+                        .cloned()
+                        .ok_or_else(|| TransitionError::NoNextStage {
+                            district_id: district_id.clone(),
+                            stage_id: stage_id.clone(),
+                        })?;
                 let next_stage = self
                     .find_stage(&district_id, &next_stage_id)
                     .cloned()
@@ -793,10 +796,12 @@ impl AfterlifeEngine {
                 policy::require_stage_authority(actor, &district_id, &stage, "rework")?;
                 policy::require_mutation_lease(actor, &job_snap, fencing_token, at)?;
 
-                let rework_id = stage.rework_to.ok_or_else(|| TransitionError::NoReworkTarget {
-                    district_id: district_id.clone(),
-                    stage_id: stage_id.clone(),
-                })?;
+                let rework_id = stage
+                    .rework_to
+                    .ok_or_else(|| TransitionError::NoReworkTarget {
+                        district_id: district_id.clone(),
+                        stage_id: stage_id.clone(),
+                    })?;
                 let rework_stage = self
                     .find_stage(&district_id, &rework_id)
                     .cloned()
@@ -938,7 +943,8 @@ impl AfterlifeEngine {
                 else {
                     return Err(TransitionError::InvalidLocation {
                         job_id,
-                        reason: "job must be in a district stage to record gate verification".into(),
+                        reason: "job must be in a district stage to record gate verification"
+                            .into(),
                     });
                 };
 

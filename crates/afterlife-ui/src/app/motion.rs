@@ -191,10 +191,8 @@ impl UiMotion {
             self.last_detail_job = selected_job.clone();
             self.last_detail_job_id = selected_id.clone();
             self.last_tab = st.active_tab;
-            self.toggle_backdrop = ScalarTransition::settled(
-                if st.glass.bg_image_enabled { 1.0 } else { 0.0 },
-                now,
-            );
+            self.toggle_backdrop =
+                ScalarTransition::settled(if st.glass.bg_image_enabled { 1.0 } else { 0.0 }, now);
             self.toggle_pause = ScalarTransition::settled(
                 if st.pause_animation_when_inactive {
                     1.0

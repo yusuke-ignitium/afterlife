@@ -43,8 +43,8 @@ pub fn sanitize_detail_height(height: Option<f32>) -> f32 {
 }
 
 pub fn clamp_detail_height(height: f32, pane_height: f32) -> f32 {
-    let max_h = (pane_height - MIN_QUEUE_PANE_HEIGHT_PX)
-        .clamp(MIN_DETAIL_HEIGHT_PX, MAX_DETAIL_HEIGHT_PX);
+    let max_h =
+        (pane_height - MIN_QUEUE_PANE_HEIGHT_PX).clamp(MIN_DETAIL_HEIGHT_PX, MAX_DETAIL_HEIGHT_PX);
     sanitize_detail_height(Some(height)).clamp(MIN_DETAIL_HEIGHT_PX, max_h)
 }
 
@@ -195,11 +195,10 @@ pub fn resolve_initial_window<Id: Copy + Eq>(
         );
     };
 
-    let matched = saved.display_uuid.as_deref().and_then(|uuid| {
-        displays
-            .iter()
-            .find(|d| d.uuid.as_deref() == Some(uuid))
-    });
+    let matched = saved
+        .display_uuid
+        .as_deref()
+        .and_then(|uuid| displays.iter().find(|d| d.uuid.as_deref() == Some(uuid)));
     let (target, same_display) = match matched {
         Some(d) => (d, true),
         None => (primary_display, saved.display_uuid.is_none()),
@@ -349,13 +348,19 @@ mod tests {
         };
         let (_, fallback_bounds) =
             resolve_initial_window(Some(&corrupt), &displays, Some(primary.id));
-        assert_eq!(fallback_bounds, WindowBounds::Windowed(primary.visible_bounds));
+        assert_eq!(
+            fallback_bounds,
+            WindowBounds::Windowed(primary.visible_bounds)
+        );
     }
 
     #[test]
     fn detail_height_sanitizes_clamps_and_persists_with_backward_compat() {
         assert_eq!(sanitize_detail_height(None), DEFAULT_DETAIL_HEIGHT_PX);
-        assert_eq!(sanitize_detail_height(Some(f32::NAN)), DEFAULT_DETAIL_HEIGHT_PX);
+        assert_eq!(
+            sanitize_detail_height(Some(f32::NAN)),
+            DEFAULT_DETAIL_HEIGHT_PX
+        );
         assert_eq!(sanitize_detail_height(Some(40.0)), MIN_DETAIL_HEIGHT_PX);
         assert_eq!(sanitize_detail_height(Some(2000.0)), MAX_DETAIL_HEIGHT_PX);
         assert_eq!(clamp_detail_height(700.0, 600.0), 460.0);
@@ -364,7 +369,10 @@ mod tests {
         let legacy_json = r#"{"x":10.0,"y":20.0,"width":1200.0,"height":800.0,"fullscreen":false}"#;
         let parsed: SavedWindowState = serde_json::from_str(legacy_json).expect("legacy json");
         assert_eq!(parsed.detail_height, None);
-        assert_eq!(sanitize_detail_height(parsed.detail_height), DEFAULT_DETAIL_HEIGHT_PX);
+        assert_eq!(
+            sanitize_detail_height(parsed.detail_height),
+            DEFAULT_DETAIL_HEIGHT_PX
+        );
     }
 
     #[test]

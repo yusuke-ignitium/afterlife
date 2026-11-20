@@ -104,7 +104,10 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(matches!(claim_err, TransitionError::HumanApprovalRequired { .. }));
+        assert!(matches!(
+            claim_err,
+            TransitionError::HumanApprovalRequired { .. }
+        ));
 
         let assign_err = engine
             .apply(
@@ -117,7 +120,10 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(matches!(assign_err, TransitionError::HumanApprovalRequired { .. }));
+        assert!(matches!(
+            assign_err,
+            TransitionError::HumanApprovalRequired { .. }
+        ));
 
         let err = engine
             .apply(
@@ -238,7 +244,10 @@ mod tests {
                     summary: "All tests and philosophy checks passed".into(),
                     checklist_results: vec![
                         ("cargo check / test が全 pass している".into(), true),
-                        ("District Philosophy のアンチパターンに抵触していない".into(), true),
+                        (
+                            "District Philosophy のアンチパターンに抵触していない".into(),
+                            true,
+                        ),
                     ],
                     fencing_token: Some(token_b),
                     at: t0 + 20_000,
@@ -292,7 +301,8 @@ mod tests {
                     job_id: Some(JobId::from("JOB-041")),
                     stage_id: Some(StageId::from("approval_gate")),
                     kind: FeedbackKind::PhilosophyInsight,
-                    body: "DBスキーマ変更時はダウンタイムゼロ互換マイグレーションを必須にしたい".into(),
+                    body: "DBスキーマ変更時はダウンタイムゼロ互換マイグレーションを必須にしたい"
+                        .into(),
                     at: 1000,
                 },
             )
@@ -313,7 +323,8 @@ mod tests {
                         id: "P-CODE-3".into(),
                         title: "Zero-Downtime Migrations".into(),
                         statement: "DBスキーマは必ず expand-and-contract で後方互換にする。".into(),
-                        rationale: "Fargate ローリングデプロイ中の旧タスクと衝突させないため。".into(),
+                        rationale: "Fargate ローリングデプロイ中の旧タスクと衝突させないため。"
+                            .into(),
                     }],
                     anti_patterns: vec!["既存カラムの即時DROP".into()],
                     decision_heuristics: vec![],
@@ -349,10 +360,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            engine.find_district(&dist_id).unwrap().active_philosophy_version,
+            engine
+                .find_district(&dist_id)
+                .unwrap()
+                .active_philosophy_version,
             PhilosophyVersion::new(2)
         );
-        let ctx = engine.compile_execution_context(&JobId::from("JOB-041")).unwrap();
+        let ctx = engine
+            .compile_execution_context(&JobId::from("JOB-041"))
+            .unwrap();
         assert_eq!(ctx.philosophy.version, PhilosophyVersion::new(1));
         assert_eq!(ctx.recent_feedbacks.len(), 1);
     }
@@ -546,7 +562,10 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(engine.find_job(&job_id).unwrap().location, JobLocation::Archived);
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().location,
+            JobLocation::Archived
+        );
 
         let err = engine
             .apply(

@@ -42,7 +42,9 @@ pub fn display_visible_bounds(display_id: DisplayId) -> Option<Bounds<Pixels>> {
             return None;
         }
         let count = NSArray::count(screens);
-        let key: id = NSString::alloc(nil).init_str("NSScreenNumber").autorelease();
+        let key: id = NSString::alloc(nil)
+            .init_str("NSScreenNumber")
+            .autorelease();
         let mut found = None;
         for idx in 0..count {
             let screen = NSArray::objectAtIndex(screens, idx);

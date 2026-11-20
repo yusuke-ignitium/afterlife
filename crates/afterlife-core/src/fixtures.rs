@@ -45,22 +45,28 @@ pub fn sample_workspace(
         id: SubMachineTemplateId::from("tmpl-pr-ci"),
         name: "PR CI Watch".into(),
         description: "PR作成からCI監視、失敗時の自動修正ループ".into(),
-        philosophy_notes: "CIが赤のまま人間レビューに回さない。差分は小さく自己説明的に保つ。".into(),
+        philosophy_notes: "CIが赤のまま人間レビューに回さない。差分は小さく自己説明的に保つ。"
+            .into(),
         stages: vec![
             SubStageDef {
                 id: SubStageId::from("create_pr"),
                 label: "Create PR".into(),
                 runner: "Dots (Git)".into(),
                 runner_kind: RunnerKind::Ai,
-                procedure: "変更差分を要約し、検証コマンド・ロールバック手順付きでPRを作成する。".into(),
-                gate_checks: vec!["PR本文に検証ログがある".into(), "不要な差分が混入していない".into()],
+                procedure: "変更差分を要約し、検証コマンド・ロールバック手順付きでPRを作成する。"
+                    .into(),
+                gate_checks: vec![
+                    "PR本文に検証ログがある".into(),
+                    "不要な差分が混入していない".into(),
+                ],
             },
             SubStageDef {
                 id: SubStageId::from("watch_ci"),
                 label: "Watch CI".into(),
                 runner: "CI Poller".into(),
                 runner_kind: RunnerKind::Deterministic,
-                procedure: "全CIチェック完了を監視し、失敗時は失敗ログを抽出して修正ループを回す。".into(),
+                procedure: "全CIチェック完了を監視し、失敗時は失敗ログを抽出して修正ループを回す。"
+                    .into(),
                 gate_checks: vec!["全必須チェックが緑である".into()],
             },
             SubStageDef {
@@ -85,7 +91,8 @@ pub fn sample_workspace(
                 label: "Extract Inv".into(),
                 runner: "Claude Duet".into(),
                 runner_kind: RunnerKind::Ai,
-                procedure: "仕様から不変条件（競合・権限・状態遷移）を抽出しテスト仕様化する。".into(),
+                procedure: "仕様から不変条件（競合・権限・状態遷移）を抽出しテスト仕様化する。"
+                    .into(),
                 gate_checks: vec!["最低1つ以上の異常系不変条件が定義されている".into()],
             },
             SubStageDef {
@@ -110,7 +117,8 @@ pub fn sample_workspace(
                 label: "Crawl Docs".into(),
                 runner: "Grok Bot".into(),
                 runner_kind: RunnerKind::Ai,
-                procedure: "公式ドキュメント・一次実装・ベンチマークから根拠付きメモを収集する。".into(),
+                procedure: "公式ドキュメント・一次実装・ベンチマークから根拠付きメモを収集する。"
+                    .into(),
                 gate_checks: vec!["すべての主張に一次ソースまたは実測根拠がある".into()],
             },
             SubStageDef {
@@ -118,7 +126,9 @@ pub fn sample_workspace(
                 label: "Synthesize".into(),
                 runner: "Claude Duet".into(),
                 runner_kind: RunnerKind::Ai,
-                procedure: "意思決定に必要な比較軸（速度・コスト・堅牢性）で構造化ブリーフを作成する。".into(),
+                procedure:
+                    "意思決定に必要な比較軸（速度・コスト・堅牢性）で構造化ブリーフを作成する。"
+                        .into(),
                 gate_checks: vec!["推奨案と棄却案の理由が明記されている".into()],
             },
         ],
@@ -135,7 +145,8 @@ pub fn sample_workspace(
 
     let code_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
-        summary: "計測駆動・型安全・ロールバック可能性を最優先にする本番実装ディストリクト。".into(),
+        summary: "計測駆動・型安全・ロールバック可能性を最優先にする本番実装ディストリクト。"
+            .into(),
         principles: vec![
             Principle {
                 id: "P-CODE-1".into(),
@@ -146,8 +157,11 @@ pub fn sample_workspace(
             Principle {
                 id: "P-CODE-2".into(),
                 title: "Fail Closed on Boundaries".into(),
-                statement: "権限・データ境界・競合ロックはアプリ層とDB層の両方で安全側に倒す。".into(),
-                rationale: "エージェントの暴走やネットワーク遅延によるデータ破損を構造的に防ぐため。".into(),
+                statement: "権限・データ境界・競合ロックはアプリ層とDB層の両方で安全側に倒す。"
+                    .into(),
+                rationale:
+                    "エージェントの暴走やネットワーク遅延によるデータ破損を構造的に防ぐため。"
+                        .into(),
             },
         ],
         anti_patterns: vec![
@@ -260,7 +274,8 @@ pub fn sample_workspace(
 
     let research_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
-        summary: "一次情報と実測を武器に、意思決定コストを最小化するリサーチディストリクト。".into(),
+        summary: "一次情報と実測を武器に、意思決定コストを最小化するリサーチディストリクト。"
+            .into(),
         principles: vec![Principle {
             id: "P-RES-1".into(),
             title: "Primary Evidence Only".into(),
@@ -287,7 +302,9 @@ pub fn sample_workspace(
                 runner: "Grok Bot".into(),
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
-                procedure: "一次ソース収集・比較表・コスト/リスク試算を作成してArtifactとして添付する。".into(),
+                procedure:
+                    "一次ソース収集・比較表・コスト/リスク試算を作成してArtifactとして添付する。"
+                        .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec!["一次ソースと具体的な数値根拠が含まれる".into()],
                     auto_verify_by_llm: true,
@@ -303,7 +320,8 @@ pub fn sample_workspace(
                 runner: "You".into(),
                 runner_kind: RunnerKind::Human,
                 kind: StageKind::ApprovalGate,
-                procedure: "調査ブリーフの十分性と意思決定の妥当性を人間オーナーが最終確認する。".into(),
+                procedure: "調査ブリーフの十分性と意思決定の妥当性を人間オーナーが最終確認する。"
+                    .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec!["次の実装フェーズに着手できる明確さがある".into()],
                     auto_verify_by_llm: true,

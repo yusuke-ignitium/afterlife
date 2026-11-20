@@ -437,7 +437,11 @@ impl AppState {
             return false;
         };
         let before = (self.glass, self.pause_animation_when_inactive);
-        apply_backdrop_config(&mut self.glass, &mut self.pause_animation_when_inactive, &cfg);
+        apply_backdrop_config(
+            &mut self.glass,
+            &mut self.pause_animation_when_inactive,
+            &cfg,
+        );
         let after = (self.glass, self.pause_animation_when_inactive);
         if before != after {
             self.refresh_palette();
@@ -501,7 +505,10 @@ mod tests {
         let wave_def = ParticleWaveTuning::default();
 
         assert_eq!(snapshot_tuning(&glass_def), tuning_def);
-        assert_eq!(snapshot_glass_appearance(&glass_def, false), saved_glass_def);
+        assert_eq!(
+            snapshot_glass_appearance(&glass_def, false),
+            saved_glass_def
+        );
         assert_eq!(glass_def.particle_wave_tuning(), wave_def);
     }
 

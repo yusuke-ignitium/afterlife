@@ -76,9 +76,7 @@ pub fn single_line_ex(
         .text_color(text_color)
         .font_family("SF Mono");
 
-    if draw_flat_border
-        && let Some(bc) = border_color
-    {
+    if draw_flat_border && let Some(bc) = border_color {
         d = d.border(px(BORDER_PX)).border_color(bc);
     }
     if let Some(g) = glass_opt {

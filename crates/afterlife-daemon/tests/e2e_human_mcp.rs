@@ -208,7 +208,11 @@ impl SseStream {
             .unwrap();
 
         let resp = sender.send_request(req).await.expect("open SSE stream");
-        assert_eq!(resp.status(), StatusCode::OK, "SSE endpoint must return 200");
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "SSE endpoint must return 200"
+        );
         Self {
             body: resp.into_body(),
             buf: String::new(),
@@ -419,7 +423,13 @@ impl McpClient {
         val
     }
 
-    async fn call_err(&self, name: &str, arguments: Value, expected_status: u64, expected_code: &str) -> Value {
+    async fn call_err(
+        &self,
+        name: &str,
+        arguments: Value,
+        expected_status: u64,
+        expected_code: &str,
+    ) -> Value {
         let (is_err, val) = self.call_tool(name, arguments).await;
         assert!(
             is_err,
@@ -480,7 +490,15 @@ impl HumanClient {
     }
 
     async fn metrics(&self) -> Value {
-        let r = send_http(self.addr, Method::GET, "/v1/metrics", None, None, Vec::new()).await;
+        let r = send_http(
+            self.addr,
+            Method::GET,
+            "/v1/metrics",
+            None,
+            None,
+            Vec::new(),
+        )
+        .await;
         assert_eq!(r.status, StatusCode::OK);
         r.json()
     }
@@ -608,7 +626,12 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
     }
 
     agent
-        .call_err("jobs_claim", json!({ "job_id": job_id }), 403, "human_approval_required")
+        .call_err(
+            "jobs_claim",
+            json!({ "job_id": job_id }),
+            403,
+            "human_approval_required",
+        )
         .await;
     agent
         .call_err(
@@ -619,10 +642,20 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
         )
         .await;
     agent
-        .call_err("jobs_advance", json!({ "job_id": job_id }), 403, "human_approval_required")
+        .call_err(
+            "jobs_advance",
+            json!({ "job_id": job_id }),
+            403,
+            "human_approval_required",
+        )
         .await;
     agent
-        .call_err("jobs_rework", json!({ "job_id": job_id }), 403, "human_approval_required")
+        .call_err(
+            "jobs_rework",
+            json!({ "job_id": job_id }),
+            403,
+            "human_approval_required",
+        )
         .await;
     agent
         .call_err(
@@ -675,7 +708,11 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
     while last_seq < final_seq {
         let ev = sse.next_event().await;
         let seq = ev["seq"].as_u64().unwrap();
-        assert_eq!(seq, last_seq + 1, "SSE event seq must be strictly contiguous");
+        assert_eq!(
+            seq,
+            last_seq + 1,
+            "SSE event seq must be strictly contiguous"
+        );
         last_seq = seq;
         if ev["event"]["type"] == "job_transitioned"
             && ev["event"]["job_id"] == job_id
@@ -695,9 +732,13 @@ async fn e2e_philosophy_and_spec_self_evolution_loop() {
     let tmp = TempDataDir::new("evolution");
     let server = LiveServer::start(tmp.path()).await;
 
-    let (_, agent_token, _, _) =
-        oauth_register_and_login(server.addr, "Frontier Reviewer", true, "jobs:read jobs:work")
-            .await;
+    let (_, agent_token, _, _) = oauth_register_and_login(
+        server.addr,
+        "Frontier Reviewer",
+        true,
+        "jobs:read jobs:work",
+    )
+    .await;
     let agent = McpClient::new(server.addr, Some(agent_token.clone()));
     let human = HumanClient::new(server.addr, None);
 
@@ -821,7 +862,12 @@ async fn e2e_adversarial_chaos_invariants_f1_to_f9() {
         )
         .await;
 
-    for bad_ttl in [json!(9_007_199_254_740_991u64), json!(0), json!(-1), json!(-100_000)] {
+    for bad_ttl in [
+        json!(9_007_199_254_740_991u64),
+        json!(0),
+        json!(-1),
+        json!(-100_000),
+    ] {
         agent
             .call_err(
                 "jobs_claim",
@@ -881,7 +927,12 @@ async fn e2e_adversarial_chaos_invariants_f1_to_f9() {
         .await;
 
     agent
-        .call_err("jobs_create", json!({ "title": "   " }), 422, "invalid_input")
+        .call_err(
+            "jobs_create",
+            json!({ "title": "   " }),
+            422,
+            "invalid_input",
+        )
         .await;
     agent
         .call_err(
@@ -1011,7 +1062,10 @@ async fn e2e_high_concurrency_barrier_storm_zero_corruption() {
             conflicts += 1;
         }
     }
-    assert_eq!(winners, 1, "strictly 1 runner may win the 24-way claim race");
+    assert_eq!(
+        winners, 1,
+        "strictly 1 runner may win the 24-way claim race"
+    );
     assert_eq!(conflicts, claim_n - 1);
 
     let idem_n = 24usize;
@@ -1065,7 +1119,10 @@ async fn e2e_high_concurrency_barrier_storm_zero_corruption() {
 
     let metrics = human.metrics().await;
     assert_eq!(metrics["status_counts"]["5xx"], 0);
-    assert_eq!(metrics["mcp_tools"]["jobs_claim"]["conflicts"], (claim_n - 1) as u64);
+    assert_eq!(
+        metrics["mcp_tools"]["jobs_claim"]["conflicts"],
+        (claim_n - 1) as u64
+    );
 
     server.shutdown().await;
 }
@@ -1157,7 +1214,15 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
     let tmp = TempDataDir::new("desktop_fail_closed");
     let server = LiveServer::start_desktop_embedded(tmp.path()).await;
 
-    let health = send_http(server.addr, Method::GET, "/v1/health", None, None, Vec::new()).await;
+    let health = send_http(
+        server.addr,
+        Method::GET,
+        "/v1/health",
+        None,
+        None,
+        Vec::new(),
+    )
+    .await;
     assert_eq!(health.status, StatusCode::OK);
     assert_eq!(health.json()["human_http_policy"], "desktop_only");
 

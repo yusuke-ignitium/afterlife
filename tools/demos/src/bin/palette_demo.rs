@@ -233,8 +233,12 @@ impl SixteenColorDemoApp {
                         neutral.active,
                         false,
                         centerline,
-                        [SharedString::from("16-Color Base Palette (8 Roles x Active / Inactive)")
-                            .into_any_element()],
+                        [
+                            SharedString::from(
+                                "16-Color Base Palette (8 Roles x Active / Inactive)",
+                            )
+                            .into_any_element(),
+                        ],
                     ))
                     .child(
                         div()
@@ -258,10 +262,12 @@ impl SixteenColorDemoApp {
                                 .id("all-active")
                                 .cursor_pointer()
                                 .bg(self.backdrop_synced_btn(with_alpha(bg.bg_base, 0.14), 0.0))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.active_cards = [true; 8];
-                                    cx.notify();
-                                })),
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.active_cards = [true; 8];
+                                        cx.notify();
+                                    },
+                                )),
                             )
                             .child(
                                 single_line(
@@ -280,107 +286,102 @@ impl SixteenColorDemoApp {
                                 .id("all-inactive")
                                 .cursor_pointer()
                                 .bg(self.backdrop_synced_btn(with_alpha(bg.bg_base, 0.08), 0.0))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.active_cards = [false; 8];
-                                    cx.notify();
-                                })),
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.active_cards = [false; 8];
+                                        cx.notify();
+                                    },
+                                )),
                             ),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(SpacePx::S8.px())
-                    .children([0..4, 4..8].into_iter().map(|range| {
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap(SpacePx::S12.px())
-                            .children(range.map(|idx| {
-                                let role = self.roles[idx];
-                                let is_act = self.active_cards[idx];
-                                div()
-                                    .id(SharedString::from(format!("swatch-{}", idx)))
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .justify_between()
-                                    .flex_1()
-                                    .p(SpacePx::S8.px())
-                                    .rounded(px(self.glass.radius * 0.8))
-                                    .bg(with_alpha(
-                                        bg.bg_base,
-                                        if is_act { 0.30 } else { 0.14 },
-                                    ))
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.active_cards[idx] = !this.active_cards[idx];
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        div()
-                                            .text_size(FontPx::F11.px())
-                                            .font_family("SF Mono")
-                                            .text_color(if is_act {
-                                                role.active
-                                            } else {
-                                                role.inactive
-                                            })
-                                            .child(role.role),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .gap(SpacePx::S8.px())
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_row()
-                                                    .items_center()
-                                                    .gap(SpacePx::S4.px())
-                                                    .child(
-                                                        div()
-                                                            .w(px(12.0))
-                                                            .h(px(12.0))
-                                                            .rounded(px(2.0))
-                                                            .bg(role.active),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(FontPx::F11.px())
-                                                            .font_family("SF Mono")
-                                                            .text_color(role.active)
-                                                            .child(role.active_hex),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_row()
-                                                    .items_center()
-                                                    .gap(SpacePx::S4.px())
-                                                    .child(
-                                                        div()
-                                                            .w(px(12.0))
-                                                            .h(px(12.0))
-                                                            .rounded(px(2.0))
-                                                            .bg(role.inactive),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(FontPx::F11.px())
-                                                            .font_family("SF Mono")
-                                                            .text_color(role.inactive)
-                                                            .child(role.inactive_hex),
-                                                    ),
-                                            ),
-                                    )
-                            }))
-                    })),
-            )
+            .child(div().flex().flex_col().gap(SpacePx::S8.px()).children(
+                [0..4, 4..8].into_iter().map(|range| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(SpacePx::S12.px())
+                        .children(range.map(|idx| {
+                            let role = self.roles[idx];
+                            let is_act = self.active_cards[idx];
+                            div()
+                                .id(SharedString::from(format!("swatch-{}", idx)))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .flex_1()
+                                .p(SpacePx::S8.px())
+                                .rounded(px(self.glass.radius * 0.8))
+                                .bg(with_alpha(bg.bg_base, if is_act { 0.30 } else { 0.14 }))
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.active_cards[idx] = !this.active_cards[idx];
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(FontPx::F11.px())
+                                        .font_family("SF Mono")
+                                        .text_color(if is_act {
+                                            role.active
+                                        } else {
+                                            role.inactive
+                                        })
+                                        .child(role.role),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(SpacePx::S8.px())
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap(SpacePx::S4.px())
+                                                .child(
+                                                    div()
+                                                        .w(px(12.0))
+                                                        .h(px(12.0))
+                                                        .rounded(px(2.0))
+                                                        .bg(role.active),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(FontPx::F11.px())
+                                                        .font_family("SF Mono")
+                                                        .text_color(role.active)
+                                                        .child(role.active_hex),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap(SpacePx::S4.px())
+                                                .child(
+                                                    div()
+                                                        .w(px(12.0))
+                                                        .h(px(12.0))
+                                                        .rounded(px(2.0))
+                                                        .bg(role.inactive),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(FontPx::F11.px())
+                                                        .font_family("SF Mono")
+                                                        .text_color(role.inactive)
+                                                        .child(role.inactive_hex),
+                                                ),
+                                        ),
+                                )
+                        }))
+                }),
+            ))
             .into_any_element()
     }
 
@@ -443,8 +444,10 @@ impl SixteenColorDemoApp {
                         id_col,
                         false,
                         centerline,
-                        [SharedString::from(format!("{} · {}", role.sample_id, role.role))
-                            .into_any_element()],
+                        [
+                            SharedString::from(format!("{} · {}", role.sample_id, role.role))
+                                .into_any_element(),
+                        ],
                     ))
                     .child(single_line(
                         RowHeightPx::H22,
@@ -516,10 +519,7 @@ impl SixteenColorDemoApp {
                                     .h(RowHeightPx::H24.px())
                                     .px(SpacePx::S8.px())
                                     .rounded(px(self.glass.radius * 0.8))
-                                    .bg(self.backdrop_synced_btn(
-                                        with_alpha(bg.bg_base, 0.08),
-                                        0.0,
-                                    ))
+                                    .bg(self.backdrop_synced_btn(with_alpha(bg.bg_base, 0.08), 0.0))
                                     .text_size(FontPx::F11.px())
                                     .font_family("SF Mono")
                                     .text_color(neutral.inactive)
@@ -603,10 +603,12 @@ impl Render for SixteenColorDemoApp {
                                 )
                                 .id(SharedString::from(format!("bg-var-{}", i)))
                                 .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.backdrop_idx = i;
-                                    cx.notify();
-                                }))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.backdrop_idx = i;
+                                        cx.notify();
+                                    },
+                                ))
                             })),
                     ),
             )

@@ -8,11 +8,7 @@ use gpui::{
     UnderlineStyle, div, px,
 };
 
-pub fn linkified_text(
-    id: impl Into<ElementId>,
-    text: &str,
-    link_color: Rgba,
-) -> AnyElement {
+pub fn linkified_text(id: impl Into<ElementId>, text: &str, link_color: Rgba) -> AnyElement {
     let parsed = parse_inline_links(text);
     if parsed.links.is_empty() {
         return SharedString::from(parsed.display_text).into_any_element();
@@ -87,13 +83,7 @@ pub fn clickable_link_row(
                 cx.stop_propagation();
                 cx.open_url(&open_uri);
             })
-            .child(
-                div()
-                    .w(px(6.0))
-                    .h(px(6.0))
-                    .rounded(px(3.0))
-                    .bg(dot_color),
-            )
+            .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(dot_color))
             .child(
                 div()
                     .text_size(afterlife_design::FontPx::F11.px())

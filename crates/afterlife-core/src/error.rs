@@ -133,7 +133,10 @@ impl fmt::Display for TransitionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::OwnerMismatch { expected, actual } => {
-                write!(f, "owner isolation violation: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "owner isolation violation: expected {expected}, got {actual}"
+                )
             }
             Self::HumanApprovalRequired { action } => {
                 write!(f, "human approval required for action: {action}")
@@ -183,7 +186,10 @@ impl fmt::Display for TransitionError {
             Self::NoNextStage {
                 district_id,
                 stage_id,
-            } => write!(f, "stage has no outgoing transition: {district_id}/{stage_id}"),
+            } => write!(
+                f,
+                "stage has no outgoing transition: {district_id}/{stage_id}"
+            ),
             Self::NoReworkTarget {
                 district_id,
                 stage_id,

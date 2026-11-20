@@ -10,8 +10,7 @@ use afterlife_protocol::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
-const SQLITE_MIGRATION_0001: &str =
-    include_str!("../../../db/migrations/sqlite/0001_init.sql");
+const SQLITE_MIGRATION_0001: &str = include_str!("../../../db/migrations/sqlite/0001_init.sql");
 
 fn command_payload_hash(cmd: &EngineCommand) -> Result<String, PortError> {
     let mut val = serde_json::to_value(cmd).map_err(|e| PortError::Storage(e.to_string()))?;
@@ -114,7 +113,9 @@ impl SqliteWorkspaceStore {
                 "ALTER TABLE idempotency_keys ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
                 [],
             )
-            .map_err(|e| PortError::Storage(format!("sqlite alter idempotency_keys failed: {e}")))?;
+            .map_err(|e| {
+                PortError::Storage(format!("sqlite alter idempotency_keys failed: {e}"))
+            })?;
         }
         Ok(())
     }
@@ -316,8 +317,8 @@ impl WorkspaceStore for SqliteWorkspaceStore {
         for row in rows {
             let (seq, command_id, owner, event_json) =
                 row.map_err(|e| PortError::Storage(e.to_string()))?;
-            let event: JobEvent = serde_json::from_str(&event_json)
-                .map_err(|e| PortError::Storage(e.to_string()))?;
+            let event: JobEvent =
+                serde_json::from_str(&event_json).map_err(|e| PortError::Storage(e.to_string()))?;
             out.push(EventRecord {
                 seq: seq as u64,
                 command_id: CommandId::new(command_id),
@@ -414,7 +415,16 @@ impl WorkspaceStore for SqliteWorkspaceStore {
                 "SELECT owner_id, actor_json, client_id, scopes_raw, expires_at_ms, rotated
                  FROM oauth_refresh_tokens WHERE token_hash = ?1",
                 params![token_hash],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|e| PortError::Storage(e.to_string()))?;

@@ -407,7 +407,11 @@ pub fn live_snapshot() -> LivePerfSnapshot {
     };
 
     let draw_total: Vec<u64> = guard.live_metal.iter().map(|s| s.draw_total_us).collect();
-    let next_drawable: Vec<u64> = guard.live_metal.iter().map(|s| s.next_drawable_us).collect();
+    let next_drawable: Vec<u64> = guard
+        .live_metal
+        .iter()
+        .map(|s| s.next_drawable_us)
+        .collect();
     let draw_cpu: Vec<u64> = guard
         .live_metal
         .iter()
@@ -416,7 +420,11 @@ pub fn live_snapshot() -> LivePerfSnapshot {
     let encode: Vec<u64> = guard.live_metal.iter().map(|s| s.encode_us).collect();
     let gpu: Vec<u64> = guard.live_gpu_us.iter().copied().collect();
 
-    let prepaint: Vec<u64> = guard.live_window_draws.iter().map(|s| s.prepaint_us).collect();
+    let prepaint: Vec<u64> = guard
+        .live_window_draws
+        .iter()
+        .map(|s| s.prepaint_us)
+        .collect();
     let paint: Vec<u64> = guard.live_window_draws.iter().map(|s| s.paint_us).collect();
     let draw_full: Vec<u64> = guard.live_window_draws.iter().map(|s| s.total_us).collect();
 
@@ -429,9 +437,18 @@ pub fn live_snapshot() -> LivePerfSnapshot {
     let backdrop_images_loaded = last.map(|s| s.backdrop_images_loaded).unwrap_or(0);
     let compute_scatter_active = last.map(|s| s.compute_scatter_dispatched).unwrap_or(false);
 
-    let encoder_switches_avg =
-        guard.live_metal.iter().map(|s| s.encoder_switches as f64).sum::<f64>() / mf;
-    let blit_count_avg = guard.live_metal.iter().map(|s| s.blit_count as f64).sum::<f64>() / mf;
+    let encoder_switches_avg = guard
+        .live_metal
+        .iter()
+        .map(|s| s.encoder_switches as f64)
+        .sum::<f64>()
+        / mf;
+    let blit_count_avg = guard
+        .live_metal
+        .iter()
+        .map(|s| s.blit_count as f64)
+        .sum::<f64>()
+        / mf;
     let blit_full_frame_ratio_avg = guard
         .live_metal
         .iter()
@@ -441,8 +458,12 @@ pub fn live_snapshot() -> LivePerfSnapshot {
         })
         .sum::<f64>()
         / mf;
-    let instance_bytes_avg =
-        guard.live_metal.iter().map(|s| s.instance_bytes as f64).sum::<f64>() / mf;
+    let instance_bytes_avg = guard
+        .live_metal
+        .iter()
+        .map(|s| s.instance_bytes as f64)
+        .sum::<f64>()
+        / mf;
 
     LivePerfSnapshot {
         live_enabled,

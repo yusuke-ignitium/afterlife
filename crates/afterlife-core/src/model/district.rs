@@ -119,7 +119,9 @@ impl District {
     }
 
     pub fn philosophy_at(&self, version: PhilosophyVersion) -> Option<&Philosophy> {
-        self.philosophy_history.iter().find(|p| p.version == version)
+        self.philosophy_history
+            .iter()
+            .find(|p| p.version == version)
     }
 
     pub fn spec_at(&self, version: SpecVersion) -> Option<&ProcedureSpec> {
