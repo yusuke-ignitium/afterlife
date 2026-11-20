@@ -1,4 +1,4 @@
-use gpui::{Pixels, px};
+use gpui::{Pixels, Styled, px};
 
 pub const BORDER_PX: f32 = 1.0;
 
@@ -105,5 +105,67 @@ impl RadiusPx {
 
     pub fn px(self) -> Pixels {
         px(self.val())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FadePx {
+    F0,
+    F8,
+    F12,
+    F16,
+    F20,
+    F24,
+}
+
+impl FadePx {
+    pub const ALL: [Self; 6] = [
+        Self::F0,
+        Self::F8,
+        Self::F12,
+        Self::F16,
+        Self::F20,
+        Self::F24,
+    ];
+
+    pub const fn val(self) -> f32 {
+        match self {
+            Self::F0 => 0.0,
+            Self::F8 => 8.0,
+            Self::F12 => 12.0,
+            Self::F16 => 16.0,
+            Self::F20 => 20.0,
+            Self::F24 => 24.0,
+        }
+    }
+
+    pub fn px(self) -> Pixels {
+        px(self.val())
+    }
+}
+
+pub trait ScrollFadeExt: Styled + Sized {
+    fn overflow_fade_bottom(self, fade: FadePx) -> Self {
+        self.overflow_fade_b(fade.px())
+    }
+}
+
+impl<T: Styled> ScrollFadeExt for T {}
+
+#[cfg(test)]
+mod tests {
+    use super::FadePx;
+
+    #[test]
+    fn fade_px_scale_is_minimal_monotonic_and_grid_aligned() {
+        let values: Vec<f32> = FadePx::ALL.into_iter().map(FadePx::val).collect();
+        assert_eq!(values, vec![0.0, 8.0, 12.0, 16.0, 20.0, 24.0]);
+        for pair in values.windows(2) {
+            assert!(pair[0] < pair[1]);
+        }
+        for v in values {
+            assert_eq!(v % 4.0, 0.0);
+            assert!(v <= 24.0);
+        }
     }
 }

@@ -22,6 +22,29 @@ pub fn glass_shadows() -> Vec<BoxShadow> {
     ]
 }
 
+pub fn sheet_shadows() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: rgba(0x0000004d).into(),
+            offset: point(px(0.0), px(-6.0)),
+            blur_radius: px(28.0),
+            spread_radius: px(0.0),
+        },
+        BoxShadow {
+            color: rgba(0x00000033).into(),
+            offset: point(px(0.0), px(2.0)),
+            blur_radius: px(10.0),
+            spread_radius: px(0.0),
+        },
+    ]
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShadowPreset {
+    Card,
+    Sheet,
+}
+
 pub struct GlassSurface<'a> {
     palette: &'a Palette,
     glass: &'a GlassSettings,
@@ -34,6 +57,7 @@ pub struct GlassSurface<'a> {
     accent: EdgeAccent,
     blur_floor: f32,
     disp_cap: Option<f32>,
+    shadow_preset: ShadowPreset,
 }
 
 impl<'a> GlassSurface<'a> {
@@ -50,6 +74,7 @@ impl<'a> GlassSurface<'a> {
             accent: EdgeAccent::Neutral,
             blur_floor: 0.0,
             disp_cap: None,
+            shadow_preset: ShadowPreset::Card,
         }
     }
 
@@ -66,6 +91,7 @@ impl<'a> GlassSurface<'a> {
             accent: EdgeAccent::Selected,
             blur_floor: 0.0,
             disp_cap: None,
+            shadow_preset: ShadowPreset::Card,
         }
     }
 
@@ -82,6 +108,24 @@ impl<'a> GlassSurface<'a> {
             accent: EdgeAccent::Neutral,
             blur_floor: 11.0,
             disp_cap: Some(115.0),
+            shadow_preset: ShadowPreset::Card,
+        }
+    }
+
+    pub fn sheet(palette: &'a Palette, glass: &'a GlassSettings) -> Self {
+        Self {
+            palette,
+            glass,
+            pad: SpacePx::S12,
+            gap: SpacePx::S12,
+            radius_factor: 1.2,
+            border_color: Some(palette.border_rim),
+            bg: Some(palette.glass_sheet),
+            liquid_part: true,
+            accent: EdgeAccent::Neutral,
+            blur_floor: 14.0,
+            disp_cap: Some(95.0),
+            shadow_preset: ShadowPreset::Sheet,
         }
     }
 
@@ -133,6 +177,7 @@ impl<'a> GlassSurface<'a> {
             self.accent.shader_value(),
             self.blur_floor,
             self.disp_cap,
+            self.shadow_preset,
         )
     }
 }
@@ -161,6 +206,7 @@ pub fn glass_box(
         edge_tint_kind,
         0.0,
         None,
+        ShadowPreset::Card,
     )
 }
 
@@ -177,6 +223,7 @@ fn glass_box_ex(
     edge_tint_kind: f32,
     blur_floor: f32,
     disp_cap: Option<f32>,
+    shadow_preset: ShadowPreset,
 ) -> Div {
     let r = palette.radius_f32(glass, radius_factor);
     let mut d = div()
@@ -197,6 +244,10 @@ fn glass_box_ex(
         let tint = bg.unwrap_or(palette.glass_card);
         let disp_scale = disp_cap.map_or(glass.disp_scale, |cap| glass.disp_scale.min(cap));
         let blur_std_dev = glass.blur_std_dev.max(blur_floor);
+        let shadows = match shadow_preset {
+            ShadowPreset::Card => glass_shadows(),
+            ShadowPreset::Sheet => sheet_shadows(),
+        };
         d = d
             .bg(liquid_glass_styled(
                 tint,
@@ -209,7 +260,7 @@ fn glass_box_ex(
                 7,
                 edge_tint_kind,
             ))
-            .shadow(glass_shadows());
+            .shadow(shadows);
     } else if let Some(b) = bg {
         d = d.bg(b);
     }

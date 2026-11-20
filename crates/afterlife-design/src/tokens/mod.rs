@@ -4,4 +4,4 @@ pub mod scale;
 
 pub use color::{ColorRole, ColorState, with_alpha};
 pub use glass::{EdgeAccent, GlassSettings};
-pub use scale::{BORDER_PX, FontPx, RadiusPx, RowHeightPx, SpacePx};
+pub use scale::{BORDER_PX, FadePx, FontPx, RadiusPx, RowHeightPx, ScrollFadeExt, SpacePx};

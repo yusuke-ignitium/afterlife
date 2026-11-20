@@ -1,7 +1,8 @@
 use std::{cell::Cell, rc::Rc};
 
 use afterlife_design::{
-    FontPx, GlassSettings, GlassSurface, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha,
+    FadePx, FontPx, GlassSettings, GlassSurface, RadiusPx, RowHeightPx, ScrollFadeExt, SpacePx,
+    single_line, with_alpha,
 };
 use gpui::{
     AnyElement, Bounds, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -345,9 +346,7 @@ fn render_slider_row(
                                 .w(relative(frac))
                                 .rounded(px(1.0))
                                 .bg(with_alpha(p.text_primary, fill_alpha))
-                                .group_hover(grp, move |s| {
-                                    s.bg(with_alpha(p.text_primary, 0.80))
-                                }),
+                                .group_hover(grp, move |s| s.bg(with_alpha(p.text_primary, 0.80))),
                         )
                         .child(
                             div()
@@ -407,58 +406,46 @@ fn render_tint_section(st: &AppState, cx: &mut Context<AfterlifeApp>) -> AnyElem
                         .child(current_hex),
                 ),
         )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap(SpacePx::S8.px())
-                .children(TINT_PRESETS.into_iter().map(|(label, rgb_arr)| {
-                    let active = st.glass.tint_rgb == rgb_arr;
-                    let swatch = gpui::Rgba {
-                        r: rgb_arr[0] as f32 / 255.0,
-                        g: rgb_arr[1] as f32 / 255.0,
-                        b: rgb_arr[2] as f32 / 255.0,
-                        a: 0.92,
-                    };
-                    div()
-                        .id(SharedString::from(format!("tint-{}", label)))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(4.0))
-                        .flex_1()
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.state.update(cx, |st, _| {
-                                st.glass.tint_rgb = rgb_arr;
-                                st.refresh_palette();
-                                st.persist_appearance();
-                            });
-                            cx.notify();
-                        }))
-                        .child(
-                            div()
-                                .w_full()
-                                .h(px(18.0))
-                                .rounded(px(4.0))
-                                .bg(swatch)
-                                .when(!active, |d| {
-                                    d.opacity(0.72).hover(|s| s.opacity(0.94))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .w(px(14.0))
-                                .h(px(2.0))
-                                .rounded(px(1.0))
-                                .bg(if active {
-                                    with_alpha(p.text_primary, 0.85)
-                                } else {
-                                    with_alpha(p.text_primary, 0.0)
-                                }),
-                        )
-                })),
-        )
+        .child(div().flex().flex_row().gap(SpacePx::S8.px()).children(
+            TINT_PRESETS.into_iter().map(|(label, rgb_arr)| {
+                let active = st.glass.tint_rgb == rgb_arr;
+                let swatch = gpui::Rgba {
+                    r: rgb_arr[0] as f32 / 255.0,
+                    g: rgb_arr[1] as f32 / 255.0,
+                    b: rgb_arr[2] as f32 / 255.0,
+                    a: 0.92,
+                };
+                div()
+                    .id(SharedString::from(format!("tint-{}", label)))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(4.0))
+                    .flex_1()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.state.update(cx, |st, _| {
+                            st.glass.tint_rgb = rgb_arr;
+                            st.refresh_palette();
+                            st.persist_appearance();
+                        });
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(18.0))
+                            .rounded(px(4.0))
+                            .bg(swatch)
+                            .when(!active, |d| d.opacity(0.72).hover(|s| s.opacity(0.94))),
+                    )
+                    .child(div().w(px(14.0)).h(px(2.0)).rounded(px(1.0)).bg(if active {
+                        with_alpha(p.text_primary, 0.85)
+                    } else {
+                        with_alpha(p.text_primary, 0.0)
+                    }))
+            }),
+        ))
         .into_any_element()
 }
 
@@ -496,7 +483,7 @@ pub fn render_appearance_drawer(
                 .max_h(px(scroll_max_h))
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
-                .overflow_fade_b(px(28.0))
+                .overflow_fade_bottom(FadePx::F16)
                 .pb(SpacePx::S12.px())
                 .gap(SpacePx::S8.px())
                 .child(render_section_label(st, "Backdrop", SpacePx::S0))

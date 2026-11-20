@@ -1,6 +1,7 @@
 use afterlife_core::{EngineCommand, JobLocation};
 use afterlife_design::{
-    EdgeAccent, FontPx, GlassSurface, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha,
+    EdgeAccent, FadePx, FontPx, GlassSurface, RadiusPx, RowHeightPx, ScrollFadeExt, SpacePx,
+    single_line, with_alpha,
 };
 use gpui::{
     AnyElement, AppContext, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton,
@@ -36,6 +37,13 @@ pub fn render_left_pane(
     let detail_job = (detail_t > 0.005)
         .then(|| motion.detail_job.clone())
         .flatten();
+    let detail_target_h = clamp_detail_height(st.detail_height, pane_height);
+    let queue_fade = if detail_job.is_some() {
+        FadePx::F0
+    } else {
+        FadePx::F16
+    };
+    let queue_pb = SpacePx::S24.val() + detail_target_h * detail_t;
     let card_radius = p.radius_f32(&st.glass, 1.0);
 
     div()
@@ -64,10 +72,10 @@ pub fn render_left_pane(
                         .min_h(px(0.0))
                         .overflow_y_scroll()
                         .restrict_scroll_to_axis()
-                        .overflow_fade_b(px(40.0))
+                        .overflow_fade_bottom(queue_fade)
                         .pt(SpacePx::S12.px())
                         .px(SpacePx::S12.px())
-                        .pb(SpacePx::S24.px())
+                        .pb(px(queue_pb))
                         .gap(SpacePx::S16.px())
                         .when(!approvals.is_empty(), |d| {
                             d.child(
@@ -337,9 +345,8 @@ pub fn render_left_pane(
                                         )
                                 })),
                         ),
-                ),
-        )
-        .when_some(detail_job, |d, job| {
+                )
+                .when_some(detail_job, |d, job| {
             let jid_adv = job.id.clone();
             let jid_rew = job.id.clone();
             let jid_arch = job.id.clone();
@@ -374,9 +381,7 @@ pub fn render_left_pane(
                 JobLocation::Archived => "Archived".into(),
             };
             let swap_t = motion.detail_swap_progress;
-            let detail_mt = 16.0 * detail_t;
             let inner_pt = (1.0 - detail_t) * 6.0 + (1.0 - swap_t) * 2.0;
-            let detail_target_h = clamp_detail_height(st.detail_height, pane_height);
             let card_border = if is_resizing_detail {
                 with_alpha(p.accent, 0.58)
             } else {
@@ -390,20 +395,23 @@ pub fn render_left_pane(
             let grip_hover = with_alpha(p.text_primary, 0.44);
 
             d.child(
-                GlassSurface::card(&p, &st.glass)
-                    .pad(SpacePx::S12)
-                    .gap(SpacePx::S12)
-                    .radius_factor(1.4)
+                GlassSurface::sheet(&p, &st.glass)
                     .border(Some(card_border))
-                    .bg(Some(with_alpha(p.window_backdrop, 0.34)))
-                    .accent(EdgeAccent::Neutral)
                     .build()
-                    .relative()
-                    .mt(px(detail_mt))
+                    .id("left-detail-sheet")
+                    .absolute()
+                    .left(SpacePx::S4.px())
+                    .right(SpacePx::S4.px())
+                    .bottom(SpacePx::S4.px())
                     .h(px(detail_target_h * detail_t))
                     .overflow_hidden()
                     .opacity(detail_t)
-                    .flex_shrink_0()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     .child(
                         div()
                             .id("detail-resize-handle")
@@ -456,7 +464,7 @@ pub fn render_left_pane(
                             .min_h(px(0.0))
                             .overflow_y_scroll()
                             .restrict_scroll_to_axis()
-                            .overflow_fade_b(px(24.0))
+                            .overflow_fade_bottom(FadePx::F16)
                             .pt(px(inner_pt))
                             .pb(SpacePx::S12.px())
                             .opacity(0.72 + 0.28 * swap_t)
@@ -749,6 +757,7 @@ pub fn render_left_pane(
                             }),
                     ),
             )
-        })
+        }),
+        )
         .into_any_element()
 }

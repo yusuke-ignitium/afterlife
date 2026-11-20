@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_IMAGE_ENABLED: bool = false;
 pub const DEFAULT_TILE_SIZE_PX: f32 = 6.0;
-pub const DEFAULT_IMAGE_HOLD_SECS: f32 = 3.6;
+pub const DEFAULT_IMAGE_HOLD_SECS: f32 = 10.0;
 pub const DEFAULT_IMAGE_BRIGHTNESS: f32 = 0.40;
 pub const DEFAULT_IMAGE_PEAK_LUMINANCE: f32 = 0.55;
 pub const DEFAULT_IMAGE_SATURATION: f32 = 0.64;
@@ -384,8 +384,7 @@ impl BackdropStore {
 
     fn import_image(&self, canonical_src: &Path, id: &str) -> Result<PathBuf, String> {
         let dir = self.images_dir();
-        fs::create_dir_all(&dir)
-            .map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+        fs::create_dir_all(&dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
         let dst_png = dir.join(format!("{id}.png"));
         if convert_with_sips_atomic(&dir, id, canonical_src, &dst_png)? {
             return Ok(dst_png);
@@ -408,10 +407,7 @@ impl BackdropStore {
         }
         if let Err(e) = fs::rename(&tmp_dst, &fallback_dst) {
             let _ = fs::remove_file(&tmp_dst);
-            return Err(format!(
-                "failed to replace {}: {e}",
-                fallback_dst.display()
-            ));
+            return Err(format!("failed to replace {}: {e}", fallback_dst.display()));
         }
         Ok(fallback_dst)
     }
@@ -538,15 +534,17 @@ mod tests {
     use std::sync::Arc;
 
     const TINY_PNG: &[u8] = &[
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
-        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192,
-        240, 31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240,
+        31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
 
     fn make_temp_dir(tag: &str) -> PathBuf {
         let seq = TMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("afterlife_backdrop_ut_{tag}_{}_{seq}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "afterlife_backdrop_ut_{tag}_{}_{seq}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -630,7 +628,10 @@ mod tests {
         fs::write(&fake, "not a valid image payload").unwrap();
 
         let err = store.add_image(&fake, Some("bad")).unwrap_err();
-        assert!(err.contains("unsupported or unreadable image file"), "{err}");
+        assert!(
+            err.contains("unsupported or unreadable image file"),
+            "{err}"
+        );
         let entries: Vec<_> = fs::read_dir(store.images_dir())
             .map(|rd| rd.filter_map(Result::ok).collect())
             .unwrap_or_default();

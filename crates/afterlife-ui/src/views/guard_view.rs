@@ -1,6 +1,6 @@
 use afterlife_design::{
-    ColorRole, ColorState, FontPx, GlassSurface, RadiusPx, RowHeightPx, SpacePx, single_line,
-    single_line_ex, with_alpha,
+    ColorRole, ColorState, FadePx, FontPx, GlassSurface, RadiusPx, RowHeightPx, SpacePx,
+    single_line, single_line_ex, with_alpha,
 };
 use gpui::{AnyElement, IntoElement, ParentElement, SharedString, Styled, div, px};
 
@@ -15,6 +15,14 @@ pub fn render_guard_tab(st: &AppState) -> AnyElement {
         RowHeightPx::H32,
         RowHeightPx::H36,
     ];
+    let fade_scale_label = format!(
+        "FadePx: {}",
+        FadePx::ALL
+            .into_iter()
+            .map(|f| (f.val() as u32).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     div()
         .flex()
@@ -43,7 +51,7 @@ pub fn render_guard_tab(st: &AppState) -> AnyElement {
                     div()
                         .text_size(FontPx::F12.px())
                         .text_color(p.text_secondary)
-                        .child("SpacePx / FontPx / RowHeightPx are closed enums; Glass uses Backdrop-Synced razor edges."),
+                        .child("SpacePx / FontPx / RowHeightPx / RadiusPx / FadePx are closed enums; Glass uses Backdrop-Synced razor edges."),
                 )
                 .child(single_line_ex(
                     RowHeightPx::H24,
@@ -89,6 +97,36 @@ pub fn render_guard_tab(st: &AppState) -> AnyElement {
                     st.show_centerline,
                     p.centerline,
                     [SharedString::from("RowHeightPx: 22, 24, 28, 32, 36").into_any_element()],
+                ))
+                .child(single_line_ex(
+                    RowHeightPx::H24,
+                    SpacePx::S8,
+                    SpacePx::S0,
+                    FontPx::F12,
+                    p.radius_f32(&st.glass, 0.8),
+                    Some(p.border_subtle),
+                    Some(p.glass_card),
+                    st.glass_opt(),
+                    0.0,
+                    p.text_primary,
+                    st.show_centerline,
+                    p.centerline,
+                    [SharedString::from("RadiusPx: 0, 2, 4, 6, 8").into_any_element()],
+                ))
+                .child(single_line_ex(
+                    RowHeightPx::H24,
+                    SpacePx::S8,
+                    SpacePx::S0,
+                    FontPx::F12,
+                    p.radius_f32(&st.glass, 0.8),
+                    Some(p.border_subtle),
+                    Some(p.glass_card),
+                    st.glass_opt(),
+                    0.0,
+                    p.text_primary,
+                    st.show_centerline,
+                    p.centerline,
+                    [SharedString::from(fade_scale_label).into_any_element()],
                 ))
                 .child(single_line_ex(
                     RowHeightPx::H24,

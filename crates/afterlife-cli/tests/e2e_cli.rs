@@ -91,7 +91,10 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
             toolmap["limits"]["max_lease_ttl_ms"],
             afterlife_core::engine::policy::MAX_LEASE_TTL_MS
         );
-        assert_eq!(toolmap["unmapped_server_tools"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            toolmap["unmapped_server_tools"].as_array().unwrap().len(),
+            0
+        );
         let cli_mapped_tools: BTreeSet<String> = toolmap["toolmap"]
             .as_array()
             .unwrap()
@@ -222,7 +225,10 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
         assert_eq!(err["status"], 403);
         assert_eq!(err["code"], "human_approval_required");
 
-        let (ok, err) = run_cli(&url_clone, &["jobs", "archive", "JOB-041", "--reason", "try bypass"]);
+        let (ok, err) = run_cli(
+            &url_clone,
+            &["jobs", "archive", "JOB-041", "--reason", "try bypass"],
+        );
         assert!(!ok, "CLI must NOT be able to archive ApprovalGate job");
         assert_eq!(err["status"], 403);
         assert_eq!(err["code"], "human_approval_required");
@@ -312,15 +318,17 @@ fn run_cli_with_data_dir(data_dir: &std::path::Path, args: &[&str]) -> (bool, Va
 #[test]
 fn e2e_cli_backdrop_crud_and_tuning() {
     let seq = DIR_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp_dir =
-        std::env::temp_dir().join(format!("afterlife_backdrop_cli_{}_{seq}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "afterlife_backdrop_cli_{}_{seq}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&tmp_dir);
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
     let tiny_png: &[u8] = &[
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
-        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192,
-        240, 31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240,
+        31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
     let img_a = tmp_dir.join("alpha.png");
     let img_b = tmp_dir.join("beta.png");
@@ -336,7 +344,7 @@ fn e2e_cli_backdrop_crud_and_tuning() {
     assert_eq!(list0["count"], 0);
     assert_eq!(list0["tuning"]["image_enabled"], false);
     assert!((list0["tuning"]["tile_size_px"].as_f64().unwrap() - 6.0).abs() < 1e-4);
-    assert!((list0["tuning"]["image_hold_secs"].as_f64().unwrap() - 3.6).abs() < 1e-4);
+    assert!((list0["tuning"]["image_hold_secs"].as_f64().unwrap() - 10.0).abs() < 1e-4);
     assert!((list0["tuning"]["image_brightness"].as_f64().unwrap() - 0.40).abs() < 1e-4);
     assert!((list0["tuning"]["image_peak_luminance"].as_f64().unwrap() - 0.55).abs() < 1e-4);
     assert!((list0["tuning"]["image_saturation"].as_f64().unwrap() - 0.64).abs() < 1e-4);
@@ -344,7 +352,13 @@ fn e2e_cli_backdrop_crud_and_tuning() {
 
     let (ok, rejected) = run_cli_with_data_dir(
         &tmp_dir,
-        &["backdrop", "add", fake_txt.to_str().unwrap(), "--label", "bad"],
+        &[
+            "backdrop",
+            "add",
+            fake_txt.to_str().unwrap(),
+            "--label",
+            "bad",
+        ],
     );
     assert!(!ok, "non-image file must be rejected: {rejected}");
 
@@ -362,7 +376,13 @@ fn e2e_cli_backdrop_crud_and_tuning() {
 
     let (ok, added1) = run_cli_with_data_dir(
         &tmp_dir,
-        &["backdrop", "add", img_a.to_str().unwrap(), "--label", "first"],
+        &[
+            "backdrop",
+            "add",
+            img_a.to_str().unwrap(),
+            "--label",
+            "first",
+        ],
     );
     assert!(ok, "backdrop add 1 failed: {added1}");
     assert_eq!(added1["added"]["id"], "img-1");
@@ -373,14 +393,23 @@ fn e2e_cli_backdrop_crud_and_tuning() {
 
     let (ok, added2) = run_cli_with_data_dir(
         &tmp_dir,
-        &["backdrop", "add", img_b.to_str().unwrap(), "--label", "second"],
+        &[
+            "backdrop",
+            "add",
+            img_b.to_str().unwrap(),
+            "--label",
+            "second",
+        ],
     );
     assert!(ok, "backdrop add 2 failed: {added2}");
     assert_eq!(added2["added"]["id"], "img-2");
     assert_eq!(added2["count"], 2);
 
     let (ok, noop_update) = run_cli_with_data_dir(&tmp_dir, &["backdrop", "update", "img-2"]);
-    assert!(!ok, "update with no mutation flags must fail: {noop_update}");
+    assert!(
+        !ok,
+        "update with no mutation flags must fail: {noop_update}"
+    );
 
     let (ok, missing_update) = run_cli_with_data_dir(
         &tmp_dir,
@@ -442,7 +471,10 @@ fn e2e_cli_backdrop_crud_and_tuning() {
         &tmp_dir,
         &["backdrop", "tuning", "--enable-images", "--disable-images"],
     );
-    assert!(!ok, "conflicting enable/disable flags should fail: {conflict}");
+    assert!(
+        !ok,
+        "conflicting enable/disable flags should fail: {conflict}"
+    );
 
     let (ok, disabled) =
         run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--disable-images"]);
@@ -458,12 +490,11 @@ fn e2e_cli_backdrop_crud_and_tuning() {
     assert!(ok, "backdrop tuning reset failed: {reset_tuned}");
     assert_eq!(reset_tuned["tuning"]["image_enabled"], false);
     assert!((reset_tuned["tuning"]["tile_size_px"].as_f64().unwrap() - 6.0).abs() < 1e-4);
-    assert!((reset_tuned["tuning"]["image_hold_secs"].as_f64().unwrap() - 3.6).abs() < 1e-4);
+    assert!((reset_tuned["tuning"]["image_hold_secs"].as_f64().unwrap() - 10.0).abs() < 1e-4);
     assert!((reset_tuned["tuning"]["image_brightness"].as_f64().unwrap() - 0.40).abs() < 1e-4);
     assert_eq!(store.load().unwrap().glass, Some(saved_glass));
 
-    let (ok, missing_remove) =
-        run_cli_with_data_dir(&tmp_dir, &["backdrop", "remove", "img-999"]);
+    let (ok, missing_remove) = run_cli_with_data_dir(&tmp_dir, &["backdrop", "remove", "img-999"]);
     assert!(!ok, "remove on unknown id must fail: {missing_remove}");
 
     let removed_file = added1["added"]["path"].as_str().unwrap().to_string();

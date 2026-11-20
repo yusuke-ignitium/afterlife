@@ -850,7 +850,7 @@ impl Default for ParticleWaveTuning {
         Self {
             image_enabled: false,
             tile_size_px: 6.0,
-            image_hold_secs: 3.6,
+            image_hold_secs: 10.0,
             image_brightness: 0.40,
             image_peak_luminance: 0.55,
             image_saturation: 0.64,
