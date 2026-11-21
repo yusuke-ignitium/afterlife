@@ -73,7 +73,7 @@ impl BackdropTuning {
             image_enabled: self.image_enabled,
             apple_music_artwork_enabled: self.apple_music_artwork_enabled,
             youtube_mirror_enabled: self.youtube_mirror_enabled,
-            tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px),
+            tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px).round(),
             image_hold_secs: finite_clamp(self.image_hold_secs, 0.5, 600.0, def.image_hold_secs),
             image_brightness: finite_clamp(self.image_brightness, 0.0, 2.0, def.image_brightness),
             image_peak_luminance: finite_clamp(
@@ -188,7 +188,7 @@ pub fn sanitize_display_tile_sizes(map: BTreeMap<String, f32>) -> BTreeMap<Strin
             if trimmed.is_empty() || !v.is_finite() {
                 return None;
             }
-            Some((trimmed.to_string(), v.clamp(2.0, 24.0)))
+            Some((trimmed.to_string(), v.clamp(2.0, 24.0).round()))
         })
         .collect()
 }
@@ -203,15 +203,15 @@ pub fn resolve_tile_size_for_display(
         && let Some(&saved) = overrides.get(uuid)
         && saved.is_finite()
     {
-        return saved.clamp(2.0, 24.0);
+        return saved.clamp(2.0, 24.0).round();
     }
-    let base = finite_clamp(base_tile_size_px, 2.0, 24.0, DEFAULT_TILE_SIZE_PX);
+    let base = finite_clamp(base_tile_size_px, 2.0, 24.0, DEFAULT_TILE_SIZE_PX).round();
     let safe_scale = if scale_factor.is_finite() && scale_factor > 0.0 {
         scale_factor
     } else {
         2.0
     };
-    (base * (safe_scale / 2.0)).clamp(2.0, 24.0)
+    (base * (safe_scale / 2.0)).round().clamp(2.0, 24.0)
 }
 
 impl BackdropConfig {
@@ -828,10 +828,14 @@ mod tests {
             3.0
         );
 
-        overrides.insert("lg-tv-uuid".to_string(), 2.5);
+        overrides.insert("lg-tv-uuid".to_string(), 3.0289884);
         assert_eq!(
             resolve_tile_size_for_display(3.0, Some("lg-tv-uuid"), 1.0, &overrides),
-            2.5
+            3.0
+        );
+        assert_eq!(
+            resolve_tile_size_for_display(5.0, Some("fhd-24-uuid"), 1.0, &overrides),
+            3.0
         );
         assert_eq!(
             resolve_tile_size_for_display(3.0, Some("retina-uuid"), 2.0, &overrides),

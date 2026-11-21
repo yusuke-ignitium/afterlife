@@ -339,7 +339,7 @@ fn inactive_particle_uniforms(
     viewport_h: f32,
     tuning: crate::ParticleWaveTuning,
 ) -> ParticleWaveUniforms {
-    let tile_size = tuning.tile_size_px.max(2.0);
+    let tile_size = tuning.tile_size_px.round().max(2.0);
     let grid_w = (viewport_w / tile_size).ceil().max(1.0) as u32;
     let grid_h = (viewport_h / tile_size).ceil().max(1.0) as u32;
     ParticleWaveUniforms {
@@ -2862,7 +2862,7 @@ impl MetalRenderer {
         let vw = viewport_size.width.0.max(1) as f32;
         let vh = viewport_size.height.0.max(1) as f32;
         let tuning = crate::particle_wave_tuning().clamped();
-        let tile_size = tuning.tile_size_px;
+        let tile_size = tuning.tile_size_px.round().max(2.0);
         let grid_w = (vw / tile_size).ceil().max(1.0) as u32;
         let grid_h = (vh / tile_size).ceil().max(1.0) as u32;
         crate::set_particle_wave_grid_dimensions(grid_w, grid_h);

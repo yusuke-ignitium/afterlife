@@ -880,7 +880,7 @@ impl ParticleWaveTuning {
             image_enabled: self.image_enabled,
             apple_music_artwork_enabled: self.apple_music_artwork_enabled,
             youtube_mirror_enabled: self.youtube_mirror_enabled,
-            tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px),
+            tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px).round(),
             image_hold_secs: finite_clamp(self.image_hold_secs, 0.5, 600.0, def.image_hold_secs),
             image_brightness: finite_clamp(self.image_brightness, 0.0, 2.0, def.image_brightness),
             image_peak_luminance: finite_clamp(

@@ -174,7 +174,7 @@ impl GlassParamKey {
     pub fn spec(self) -> (&'static str, f32, f32, usize) {
         match self {
             Self::BgBrightness => ("Brightness", 0.2, 2.0, 2),
-            Self::BgTileSizePx => ("Tile Size", 2.0, 24.0, 1),
+            Self::BgTileSizePx => ("Tile Size", 2.0, 24.0, 0),
             Self::BgImageHoldSecs => ("Image Hold (s)", 0.5, 60.0, 1),
             Self::BgImageBrightness => ("Image Brightness", 0.00, 2.00, 2),
             Self::BgPeakLuminance => ("Peak Luminance", 0.00, 1.00, 2),
@@ -486,9 +486,9 @@ impl AppState {
     pub fn set_glass_param(&mut self, key: GlassParamKey, value: f32) {
         if key == GlassParamKey::BgTileSizePx {
             let clamped = if value.is_finite() {
-                value.clamp(2.0, 24.0)
+                value.clamp(2.0, 24.0).round()
             } else {
-                self.glass.bg_tile_size_px
+                self.glass.bg_tile_size_px.round().clamp(2.0, 24.0)
             };
             self.glass.bg_tile_size_px = clamped;
             if let Some(ref uuid) = self.active_display_uuid {
@@ -639,7 +639,7 @@ mod tests {
             bg_apple_music_artwork_enabled: false,
             bg_youtube_mirror_enabled: false,
             bg_brightness: 1.25,
-            bg_tile_size_px: 9.5,
+            bg_tile_size_px: 10.0,
             bg_image_hold_secs: 24.0,
             bg_image_brightness: 0.72,
             bg_peak_luminance: 0.68,
@@ -685,15 +685,15 @@ mod tests {
         st.sync_active_display(Some("external-lg-4k".to_string()), 1.0);
         assert_eq!(st.glass.bg_tile_size_px, 2.0);
 
-        st.set_glass_param(GlassParamKey::BgTileSizePx, 2.4);
-        assert_eq!(st.glass.bg_tile_size_px, 2.4);
+        st.set_glass_param(GlassParamKey::BgTileSizePx, 3.8);
+        assert_eq!(st.glass.bg_tile_size_px, 4.0);
         assert_eq!(st.base_tile_size_px, 3.0);
-        assert_eq!(st.display_tile_sizes.get("external-lg-4k"), Some(&2.4));
+        assert_eq!(st.display_tile_sizes.get("external-lg-4k"), Some(&4.0));
 
         st.sync_active_display(Some("retina-builtin".to_string()), 2.0);
         assert_eq!(st.glass.bg_tile_size_px, 3.0);
 
         st.sync_active_display(Some("external-lg-4k".to_string()), 1.0);
-        assert_eq!(st.glass.bg_tile_size_px, 2.4);
+        assert_eq!(st.glass.bg_tile_size_px, 4.0);
     }
 }

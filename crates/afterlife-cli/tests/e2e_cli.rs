@@ -460,7 +460,7 @@ fn e2e_cli_backdrop_crud_and_tuning() {
     );
     assert!(ok, "backdrop tuning failed: {tuned}");
     assert_eq!(tuned["tuning"]["image_enabled"], true);
-    assert!((tuned["tuning"]["tile_size_px"].as_f64().unwrap() - 10.5).abs() < 1e-4);
+    assert!((tuned["tuning"]["tile_size_px"].as_f64().unwrap() - 11.0).abs() < 1e-4);
     assert!((tuned["tuning"]["image_hold_secs"].as_f64().unwrap() - 15.0).abs() < 1e-4);
     assert!((tuned["tuning"]["image_brightness"].as_f64().unwrap() - 0.65).abs() < 1e-4);
     assert!((tuned["tuning"]["image_peak_luminance"].as_f64().unwrap() - 0.70).abs() < 1e-4);
