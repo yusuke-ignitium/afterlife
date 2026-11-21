@@ -43,6 +43,7 @@ fn apply_backdrop_config(
     let tuning = cfg.tuning.clamped();
     glass.bg_image_enabled = tuning.image_enabled;
     glass.bg_apple_music_artwork_enabled = tuning.apple_music_artwork_enabled;
+    glass.bg_youtube_mirror_enabled = tuning.youtube_mirror_enabled;
     glass.bg_brightness = tuning.master_brightness;
     glass.bg_tile_size_px = tuning.tile_size_px;
     glass.bg_image_hold_secs = tuning.image_hold_secs;
@@ -68,6 +69,7 @@ fn snapshot_tuning(glass: &GlassSettings) -> BackdropTuning {
     BackdropTuning {
         image_enabled: glass.bg_image_enabled,
         apple_music_artwork_enabled: glass.bg_apple_music_artwork_enabled,
+        youtube_mirror_enabled: glass.bg_youtube_mirror_enabled,
         tile_size_px: glass.bg_tile_size_px,
         image_hold_secs: glass.bg_image_hold_secs,
         image_brightness: glass.bg_image_brightness,
@@ -160,7 +162,9 @@ impl GlassParamKey {
         match self {
             Self::BgImageHoldSecs => !glass.bg_image_enabled,
             Self::BgImageBrightness | Self::BgPeakLuminance | Self::BgImageSaturation => {
-                !glass.bg_image_enabled && !glass.bg_apple_music_artwork_enabled
+                !glass.bg_image_enabled
+                    && !glass.bg_apple_music_artwork_enabled
+                    && !glass.bg_youtube_mirror_enabled
             }
             _ => false,
         }
@@ -437,6 +441,9 @@ impl AppState {
         crate::platform::apple_music::sync_watcher_enabled(
             self.glass.bg_apple_music_artwork_enabled,
         );
+        crate::platform::youtube_mirror::sync_receiver_enabled(
+            self.glass.bg_youtube_mirror_enabled,
+        );
     }
 
     pub fn reload_backdrop_tuning(&mut self) -> bool {
@@ -527,6 +534,7 @@ mod tests {
         let original = GlassSettings {
             bg_image_enabled: true,
             bg_apple_music_artwork_enabled: false,
+            bg_youtube_mirror_enabled: false,
             bg_brightness: 1.25,
             bg_tile_size_px: 9.5,
             bg_image_hold_secs: 24.0,

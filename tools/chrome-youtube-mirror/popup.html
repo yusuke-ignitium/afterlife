@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Afterlife YouTube Mirror</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        width: 280px;
+        padding: 14px;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+        background: #0d1117;
+        color: #e6edf3;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .app-icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        flex: 0 0 auto;
+      }
+      .title {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      .subtitle {
+        font-size: 11px;
+        color: #8b949e;
+        margin-top: 2px;
+      }
+      .switch {
+        position: relative;
+        width: 36px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .slider {
+        position: absolute;
+        inset: 0;
+        cursor: pointer;
+        background: #30363d;
+        border-radius: 999px;
+        transition: background 180ms ease;
+      }
+      .slider::before {
+        content: "";
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        left: 3px;
+        top: 3px;
+        border-radius: 50%;
+        background: #f0f6fc;
+        transition: transform 180ms ease;
+      }
+      input:checked + .slider {
+        background: #38bdf8;
+      }
+      input:checked + .slider::before {
+        transform: translateX(16px);
+      }
+      .card {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 10px;
+        display: grid;
+        gap: 6px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11.5px;
+      }
+      .label {
+        color: #8b949e;
+      }
+      .value {
+        font-variant-numeric: tabular-nums;
+        font-weight: 500;
+      }
+      .badge {
+        padding: 2px 7px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 600;
+      }
+      .badge-live {
+        background: rgba(56, 189, 248, 0.18);
+        color: #7dd3fc;
+      }
+      .badge-music {
+        background: rgba(244, 114, 182, 0.18);
+        color: #f9a8d4;
+      }
+      .badge-idle {
+        background: rgba(148, 163, 184, 0.16);
+        color: #cbd5e1;
+      }
+      .badge-off {
+        background: rgba(248, 113, 113, 0.16);
+        color: #fca5a5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="header-brand">
+        <img class="app-icon" src="icons/icon-48.png" alt="Afterlife" />
+        <div>
+          <div class="title">Afterlife YouTube Mirror</div>
+          <div class="subtitle">Apple Music &gt; YouTube &gt; Backdrop</div>
+        </div>
+      </div>
+      <label class="switch">
+        <input id="toggle-enabled" type="checkbox" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <span class="label">Status</span>
+        <span id="status-badge" class="badge badge-idle">Checking…</span>
+      </div>
+      <div class="row">
+        <span class="label">Mirror Grid</span>
+        <span id="grid-size" class="value">—</span>
+      </div>
+      <div class="row">
+        <span class="label">Stream Frame</span>
+        <span id="frame-size" class="value">—</span>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

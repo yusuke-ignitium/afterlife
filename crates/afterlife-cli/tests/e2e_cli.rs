@@ -524,10 +524,48 @@ fn e2e_cli_backdrop_crud_and_tuning() {
         "backdrop tuning disable before reset failed: {am_disabled_before_reset}"
     );
 
+    let (ok, yt_conflict) = run_cli_with_data_dir(
+        &tmp_dir,
+        &[
+            "backdrop",
+            "tuning",
+            "--enable-youtube-mirror",
+            "--disable-youtube-mirror",
+        ],
+    );
+    assert!(
+        !ok,
+        "conflicting youtube mirror enable/disable flags should fail: {yt_conflict}"
+    );
+
+    let (ok, yt_disabled) =
+        run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--disable-youtube-mirror"]);
+    assert!(
+        ok,
+        "backdrop tuning disable youtube mirror failed: {yt_disabled}"
+    );
+    assert_eq!(yt_disabled["tuning"]["youtube_mirror_enabled"], false);
+
+    let (ok, yt_reenabled) =
+        run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--enable-youtube-mirror"]);
+    assert!(
+        ok,
+        "backdrop tuning enable youtube mirror failed: {yt_reenabled}"
+    );
+    assert_eq!(yt_reenabled["tuning"]["youtube_mirror_enabled"], true);
+
+    let (ok, yt_disabled_before_reset) =
+        run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--disable-youtube-mirror"]);
+    assert!(
+        ok,
+        "backdrop tuning disable youtube before reset failed: {yt_disabled_before_reset}"
+    );
+
     let (ok, reset_tuned) = run_cli_with_data_dir(&tmp_dir, &["backdrop", "tuning", "--reset"]);
     assert!(ok, "backdrop tuning reset failed: {reset_tuned}");
     assert_eq!(reset_tuned["tuning"]["image_enabled"], false);
     assert_eq!(reset_tuned["tuning"]["apple_music_artwork_enabled"], true);
+    assert_eq!(reset_tuned["tuning"]["youtube_mirror_enabled"], true);
     assert!((reset_tuned["tuning"]["tile_size_px"].as_f64().unwrap() - 6.0).abs() < 1e-4);
     assert!((reset_tuned["tuning"]["image_hold_secs"].as_f64().unwrap() - 10.0).abs() < 1e-4);
     assert!((reset_tuned["tuning"]["image_brightness"].as_f64().unwrap() - 0.40).abs() < 1e-4);

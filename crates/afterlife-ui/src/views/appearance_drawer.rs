@@ -502,6 +502,18 @@ pub fn render_appearance_drawer(
                 ))
                 .child(render_toggle_row(
                     st,
+                    "toggle-youtube-mirror",
+                    "YouTube Mirror",
+                    st.glass.bg_youtube_mirror_enabled,
+                    motion.toggle_youtube_mirror_progress,
+                    |st| {
+                        st.glass.bg_youtube_mirror_enabled = !st.glass.bg_youtube_mirror_enabled;
+                        st.refresh_palette();
+                    },
+                    cx,
+                ))
+                .child(render_toggle_row(
+                    st,
                     "toggle-backdrop-images",
                     "Backdrop Images",
                     st.glass.bg_image_enabled,

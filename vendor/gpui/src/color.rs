@@ -835,6 +835,8 @@ pub struct ParticleWaveTuning {
     pub image_enabled: bool,
     /// Whether live Apple Music artwork takes priority over custom backdrop images while playing.
     pub apple_music_artwork_enabled: bool,
+    /// Whether live YouTube video mirroring is enabled when Apple Music artwork is not active.
+    pub youtube_mirror_enabled: bool,
     /// Mirror-ball tile size in device pixels (clamped to 2.0..=24.0).
     pub tile_size_px: f32,
     /// Duration in seconds that each backdrop image stays intact before disintegrating (0.5..=600.0).
@@ -852,6 +854,7 @@ impl Default for ParticleWaveTuning {
         Self {
             image_enabled: false,
             apple_music_artwork_enabled: true,
+            youtube_mirror_enabled: true,
             tile_size_px: 6.0,
             image_hold_secs: 10.0,
             image_brightness: 0.40,
@@ -876,6 +879,7 @@ impl ParticleWaveTuning {
         Self {
             image_enabled: self.image_enabled,
             apple_music_artwork_enabled: self.apple_music_artwork_enabled,
+            youtube_mirror_enabled: self.youtube_mirror_enabled,
             tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px),
             image_hold_secs: finite_clamp(self.image_hold_secs, 0.5, 600.0, def.image_hold_secs),
             image_brightness: finite_clamp(self.image_brightness, 0.0, 2.0, def.image_brightness),
@@ -960,6 +964,128 @@ pub fn particle_wave_override_image() -> (u64, Option<String>) {
         .lock()
         .map(|g| (g.generation, g.path.clone()))
         .unwrap_or((0, None))
+}
+
+/// Returns whether a live priority override backdrop image (e.g. Apple Music artwork) is currently set.
+pub fn particle_wave_override_image_active() -> bool {
+    particle_wave_override_cell()
+        .lock()
+        .map(|g| g.path.is_some())
+        .unwrap_or(false)
+}
+
+/// A live RGBA8 video frame streamed in-memory for the mirror-ball backdrop.
+#[derive(Clone, Debug)]
+pub struct ParticleWaveLiveVideoFrame {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Tightly packed RGBA8 pixel data (`width * height * 4` bytes).
+    pub rgba: std::sync::Arc<Vec<u8>>,
+    /// Timestamp when this frame was received.
+    pub updated_at: std::time::Instant,
+}
+
+struct LiveVideoState {
+    generation: u64,
+    frame: Option<ParticleWaveLiveVideoFrame>,
+}
+
+static LIVE_VIDEO_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn particle_wave_live_video_cell() -> &'static std::sync::Mutex<LiveVideoState> {
+    static CELL: std::sync::OnceLock<std::sync::Mutex<LiveVideoState>> =
+        std::sync::OnceLock::new();
+    CELL.get_or_init(|| {
+        std::sync::Mutex::new(LiveVideoState {
+            generation: 0,
+            frame: None,
+        })
+    })
+}
+
+/// Updates the shared in-memory live video frame for the mirror-ball backdrop.
+pub fn set_particle_wave_live_video_frame(width: u32, height: u32, rgba: Vec<u8>) {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(4));
+    if width == 0 || height == 0 || expected != Some(rgba.len()) {
+        return;
+    }
+    if let Ok(mut guard) = particle_wave_live_video_cell().lock() {
+        guard.generation = guard.generation.wrapping_add(1).max(1);
+        guard.frame = Some(ParticleWaveLiveVideoFrame {
+            width,
+            height,
+            rgba: std::sync::Arc::new(rgba),
+            updated_at: std::time::Instant::now(),
+        });
+        LIVE_VIDEO_GEN.store(guard.generation, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Decodes an encoded image payload (JPEG/WebP/PNG) and updates the shared live video frame.
+pub fn set_particle_wave_live_video_encoded(
+    bytes: &[u8],
+    min_dim: u32,
+    max_width: u32,
+    max_height: u32,
+) -> Result<(u32, u32), String> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| format!("failed to decode live video frame: {e}"))?;
+    let w = img.width();
+    let h = img.height();
+    if !(min_dim..=max_width).contains(&w) || !(min_dim..=max_height).contains(&h) {
+        return Err(format!(
+            "decoded frame {w}x{h} out of allowed bounds {min_dim}..={max_width}x{min_dim}..={max_height}"
+        ));
+    }
+    let rgba = img.to_rgba8().into_raw();
+    set_particle_wave_live_video_frame(w, h, rgba);
+    Ok((w, h))
+}
+
+/// Clears any active live video backdrop frame immediately.
+pub fn clear_particle_wave_live_video_frame() {
+    if let Ok(mut guard) = particle_wave_live_video_cell().lock() {
+        if guard.frame.is_none() {
+            return;
+        }
+        guard.generation = guard.generation.wrapping_add(1).max(1);
+        guard.frame = None;
+        LIVE_VIDEO_GEN.store(guard.generation, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Returns the lock-free generation counter for the live video backdrop frame.
+pub fn particle_wave_live_video_gen() -> u64 {
+    LIVE_VIDEO_GEN.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Returns the current `(generation, Option<ParticleWaveLiveVideoFrame>)` for live video mirroring.
+pub fn particle_wave_live_video_frame() -> (u64, Option<ParticleWaveLiveVideoFrame>) {
+    particle_wave_live_video_cell()
+        .lock()
+        .map(|g| (g.generation, g.frame.clone()))
+        .unwrap_or((0, None))
+}
+
+static PARTICLE_WAVE_GRID_DIMS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Records the active particle-wave tile grid dimensions `(grid_w, grid_h)` from the renderer.
+pub fn set_particle_wave_grid_dimensions(grid_w: u32, grid_h: u32) {
+    let packed = ((grid_w as u64) << 32) | (grid_h as u64);
+    if PARTICLE_WAVE_GRID_DIMS.load(std::sync::atomic::Ordering::Relaxed) != packed {
+        PARTICLE_WAVE_GRID_DIMS.store(packed, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Returns the latest rendered particle-wave tile grid dimensions `(grid_w, grid_h)`.
+pub fn particle_wave_grid_dimensions() -> (u32, u32) {
+    let packed = PARTICLE_WAVE_GRID_DIMS.load(std::sync::atomic::Ordering::Acquire);
+    ((packed >> 32) as u32, (packed & 0xFFFF_FFFF) as u32)
 }
 
 /// Creates a drifting, gently waving fine particle field background rendered on GPU.

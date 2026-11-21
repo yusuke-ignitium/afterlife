@@ -21,6 +21,7 @@ impl EdgeAccent {
 pub struct GlassSettings {
     pub bg_image_enabled: bool,
     pub bg_apple_music_artwork_enabled: bool,
+    pub bg_youtube_mirror_enabled: bool,
     pub bg_brightness: f32,
     pub bg_tile_size_px: f32,
     pub bg_image_hold_secs: f32,
@@ -44,6 +45,7 @@ impl Default for GlassSettings {
         Self {
             bg_image_enabled: false,
             bg_apple_music_artwork_enabled: true,
+            bg_youtube_mirror_enabled: true,
             bg_brightness: 1.5,
             bg_tile_size_px: 6.0,
             bg_image_hold_secs: 10.0,
@@ -69,6 +71,7 @@ impl GlassSettings {
         Self {
             bg_image_enabled: false,
             bg_apple_music_artwork_enabled: true,
+            bg_youtube_mirror_enabled: true,
             bg_brightness: 1.0,
             bg_tile_size_px: 6.0,
             bg_image_hold_secs: 10.0,
@@ -92,6 +95,7 @@ impl GlassSettings {
         ParticleWaveTuning {
             image_enabled: self.bg_image_enabled,
             apple_music_artwork_enabled: self.bg_apple_music_artwork_enabled,
+            youtube_mirror_enabled: self.bg_youtube_mirror_enabled,
             tile_size_px: self.bg_tile_size_px,
             image_hold_secs: self.bg_image_hold_secs,
             image_brightness: self.bg_image_brightness,

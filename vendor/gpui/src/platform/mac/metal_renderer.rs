@@ -726,6 +726,7 @@ unsafe fn attach_compute_timestamps<'a>(
 enum ActiveBackdropSource {
     None,
     Override(u64),
+    LiveVideo(u64),
     Custom(usize),
 }
 
@@ -789,6 +790,8 @@ pub(crate) struct MetalRenderer {
     backdrop_override_seen_gen: u64,
     backdrop_pending_override: Option<(u64, metal::Texture, [f32; 3])>,
     backdrop_active_override: Option<(u64, metal::Texture, [f32; 3])>,
+    backdrop_live_video_seen_gen: u64,
+    backdrop_live_video: Option<(u64, metal::Texture, [f32; 3], Instant)>,
     backdrop_active_source: ActiveBackdropSource,
     backdrop_phase_stage: u8,
     backdrop_phase_elapsed: f32,
@@ -1112,6 +1115,8 @@ impl MetalRenderer {
             backdrop_override_seen_gen: 0,
             backdrop_pending_override: None,
             backdrop_active_override: None,
+            backdrop_live_video_seen_gen: 0,
+            backdrop_live_video: None,
             backdrop_active_source: ActiveBackdropSource::None,
             backdrop_phase_stage: 0,
             backdrop_phase_elapsed: 0.0,
@@ -2740,6 +2745,75 @@ impl MetalRenderer {
         });
     }
 
+    fn sync_live_video(&mut self, enabled: bool) {
+        const LIVE_VIDEO_STALE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+        if !enabled {
+            self.backdrop_live_video = None;
+            self.backdrop_live_video_seen_gen = 0;
+            return;
+        }
+        let current_gen = crate::particle_wave_live_video_gen();
+        if current_gen != self.backdrop_live_video_seen_gen {
+            let (locked_gen, frame_opt) = crate::particle_wave_live_video_frame();
+            self.backdrop_live_video_seen_gen = locked_gen;
+            match frame_opt {
+                Some(frame) if frame.updated_at.elapsed() <= LIVE_VIDEO_STALE_TIMEOUT => {
+                    let w = frame.width as u64;
+                    let h = frame.height as u64;
+                    let can_reuse = self.backdrop_live_video.as_ref().is_some_and(|(_, tex, _, _)| {
+                        tex.width() == w && tex.height() == h
+                    });
+                    if can_reuse
+                        && let Some((ref mut gen_slot, ref tex, ref mut dims, ref mut ts)) =
+                            self.backdrop_live_video
+                    {
+                        tex.replace_region(
+                            metal::MTLRegion::new_2d(0, 0, w, h),
+                            0,
+                            frame.rgba.as_ptr() as *const _,
+                            w * 4,
+                        );
+                        *gen_slot = locked_gen;
+                        *dims = [frame.width as f32, frame.height as f32, 1.0];
+                        *ts = frame.updated_at;
+                    } else {
+                        let desc = metal::TextureDescriptor::new();
+                        desc.set_texture_type(metal::MTLTextureType::D2);
+                        desc.set_pixel_format(MTLPixelFormat::RGBA8Unorm);
+                        desc.set_width(w);
+                        desc.set_height(h);
+                        desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+                        desc.set_storage_mode(if self.device.has_unified_memory() {
+                            metal::MTLStorageMode::Shared
+                        } else {
+                            metal::MTLStorageMode::Managed
+                        });
+                        let tex = self.device.new_texture(&desc);
+                        tex.replace_region(
+                            metal::MTLRegion::new_2d(0, 0, w, h),
+                            0,
+                            frame.rgba.as_ptr() as *const _,
+                            w * 4,
+                        );
+                        self.backdrop_live_video = Some((
+                            locked_gen,
+                            tex,
+                            [frame.width as f32, frame.height as f32, 1.0],
+                            frame.updated_at,
+                        ));
+                    }
+                }
+                _ => {
+                    self.backdrop_live_video = None;
+                }
+            }
+        } else if let Some((_, _, _, updated_at)) = self.backdrop_live_video
+            && updated_at.elapsed() > LIVE_VIDEO_STALE_TIMEOUT
+        {
+            self.backdrop_live_video = None;
+        }
+    }
+
     fn sync_backdrop_images(&mut self) {
         if !self.backdrop_images_loaded {
             let (textures, sizes, entries, cfg_path, mtime) = load_backdrop_images(&self.device);
@@ -2789,8 +2863,12 @@ impl MetalRenderer {
         let vh = viewport_size.height.0.max(1) as f32;
         let tuning = crate::particle_wave_tuning().clamped();
         let tile_size = tuning.tile_size_px;
+        let grid_w = (vw / tile_size).ceil().max(1.0) as u32;
+        let grid_h = (vh / tile_size).ceil().max(1.0) as u32;
+        crate::set_particle_wave_grid_dimensions(grid_w, grid_h);
 
         self.sync_override_image(tuning.apple_music_artwork_enabled);
+        self.sync_live_video(tuning.youtube_mirror_enabled);
 
         if tuning.image_enabled {
             self.sync_backdrop_images();
@@ -2820,12 +2898,54 @@ impl MetalRenderer {
 
         let desired_source = if let Some((pending_gen, _, _)) = self.backdrop_pending_override {
             ActiveBackdropSource::Override(pending_gen)
+        } else if let Some((live_gen, _, _, _)) = self.backdrop_live_video {
+            ActiveBackdropSource::LiveVideo(live_gen)
         } else if custom_count > 0 {
             self.backdrop_image_index %= custom_count;
             ActiveBackdropSource::Custom(self.backdrop_image_index)
         } else {
             ActiveBackdropSource::None
         };
+
+        if matches!(desired_source, ActiveBackdropSource::LiveVideo(_))
+            && !matches!(self.backdrop_active_source, ActiveBackdropSource::Override(_))
+        {
+            self.backdrop_active_override = None;
+            self.backdrop_active_source = desired_source;
+            self.backdrop_phase_stage = 0;
+            self.backdrop_phase_elapsed = 0.0;
+            self.backdrop_phase_last_tick = Instant::now();
+        } else if matches!(self.backdrop_active_source, ActiveBackdropSource::LiveVideo(_))
+            && !matches!(desired_source, ActiveBackdropSource::LiveVideo(_))
+        {
+            match desired_source {
+                ActiveBackdropSource::Override(_) => {
+                    self.backdrop_active_override = self.backdrop_pending_override.clone();
+                    self.backdrop_active_source = desired_source;
+                    self.backdrop_phase_stage = 3;
+                    self.backdrop_phase_elapsed = 0.0;
+                    self.backdrop_phase_last_tick = Instant::now();
+                }
+                ActiveBackdropSource::Custom(idx) => {
+                    self.backdrop_active_override = None;
+                    self.backdrop_active_source = ActiveBackdropSource::Custom(idx);
+                    self.backdrop_phase_stage = 3;
+                    self.backdrop_phase_elapsed = 0.0;
+                    self.backdrop_phase_last_tick = Instant::now();
+                }
+                ActiveBackdropSource::None => {
+                    self.backdrop_active_override = None;
+                    self.backdrop_active_source = ActiveBackdropSource::None;
+                    self.backdrop_phase_stage = 0;
+                    self.backdrop_phase_elapsed = 0.0;
+                    self.release_particle_grid_buffer();
+                    self.current_particle_uniforms =
+                        inactive_particle_uniforms(time_sec, vw, vh, tuning);
+                    return false;
+                }
+                ActiveBackdropSource::LiveVideo(_) => {}
+            }
+        }
 
         if self.backdrop_active_source == ActiveBackdropSource::None {
             if desired_source == ActiveBackdropSource::None {
@@ -2839,14 +2959,20 @@ impl MetalRenderer {
                 ActiveBackdropSource::Override(_) => {
                     self.backdrop_active_override = self.backdrop_pending_override.clone();
                     self.backdrop_active_source = desired_source;
+                    self.backdrop_phase_stage = 3;
+                }
+                ActiveBackdropSource::LiveVideo(_) => {
+                    self.backdrop_active_override = None;
+                    self.backdrop_active_source = desired_source;
+                    self.backdrop_phase_stage = 0;
                 }
                 ActiveBackdropSource::Custom(idx) => {
                     self.backdrop_active_override = None;
                     self.backdrop_active_source = ActiveBackdropSource::Custom(idx);
+                    self.backdrop_phase_stage = 3;
                 }
                 ActiveBackdropSource::None => {}
             }
-            self.backdrop_phase_stage = 3;
             self.backdrop_phase_elapsed = 0.0;
             self.backdrop_phase_last_tick = Instant::now();
         }
@@ -2884,8 +3010,10 @@ impl MetalRenderer {
             .min(0.25);
         self.backdrop_phase_last_tick = now;
 
-        let stay_in_hold = matches!(self.backdrop_active_source, ActiveBackdropSource::Override(_))
-            && !needs_switch;
+        let stay_in_hold = matches!(
+            self.backdrop_active_source,
+            ActiveBackdropSource::Override(_) | ActiveBackdropSource::LiveVideo(_)
+        ) && !needs_switch;
 
         if !(stay_in_hold && self.backdrop_phase_stage == 0) {
             self.backdrop_phase_elapsed += dt;
@@ -2910,6 +3038,13 @@ impl MetalRenderer {
                         ActiveBackdropSource::Override(_) => {
                             self.backdrop_active_override = self.backdrop_pending_override.clone();
                             self.backdrop_active_source = desired_source;
+                        }
+                        ActiveBackdropSource::LiveVideo(_) => {
+                            self.backdrop_active_override = None;
+                            self.backdrop_active_source = desired_source;
+                            self.backdrop_phase_stage = 0;
+                            self.backdrop_phase_elapsed = 0.0;
+                            break;
                         }
                         ActiveBackdropSource::Custom(_) if custom_count > 0 => {
                             if was_custom {
@@ -2945,6 +3080,13 @@ impl MetalRenderer {
                                     ActiveBackdropSource::Override(want_gen);
                             }
                         }
+                        ActiveBackdropSource::LiveVideo(_) => {
+                            self.backdrop_active_override = None;
+                            self.backdrop_active_source = desired_source;
+                            self.backdrop_phase_stage = 0;
+                            self.backdrop_phase_elapsed = 0.0;
+                            break;
+                        }
                         ActiveBackdropSource::Custom(_) if custom_count > 0 => {
                             self.backdrop_image_index %= custom_count;
                             self.backdrop_active_override = None;
@@ -2976,6 +3118,10 @@ impl MetalRenderer {
                 .backdrop_active_override
                 .as_ref()
                 .map(|(_, tex, dims)| (tex, *dims)),
+            ActiveBackdropSource::LiveVideo(_) => self
+                .backdrop_live_video
+                .as_ref()
+                .map(|(_, tex, dims, _)| (tex, *dims)),
             ActiveBackdropSource::Custom(idx) if idx < self.backdrop_image_textures.len() => {
                 Some((
                     &self.backdrop_image_textures[idx],
@@ -2993,8 +3139,6 @@ impl MetalRenderer {
             return false;
         };
 
-        let grid_w = (vw / tile_size).ceil().max(1.0) as u32;
-        let grid_h = (vh / tile_size).ceil().max(1.0) as u32;
         let needed = (grid_w as usize) * (grid_h as usize);
         let tex_reallocated = Self::ensure_particle_2d_texture(
             &self.device,
@@ -4870,6 +5014,7 @@ mod offscreen_gpu_bench {
         crate::set_particle_wave_tuning(ParticleWaveTuning {
             image_enabled: true,
             apple_music_artwork_enabled: false,
+            youtube_mirror_enabled: false,
             tile_size_px: 3.0,
             image_hold_secs: 60.0,
             image_brightness: 1.0,

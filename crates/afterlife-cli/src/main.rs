@@ -703,6 +703,20 @@ const TOOLMAP: &[ToolSpec] = &[
                 repeatable: false,
             },
             FlagSpec {
+                flag: "--enable-youtube-mirror",
+                mcp_key: "enable_youtube_mirror",
+                kind: FlagKind::Bool,
+                required: false,
+                repeatable: false,
+            },
+            FlagSpec {
+                flag: "--disable-youtube-mirror",
+                mcp_key: "disable_youtube_mirror",
+                kind: FlagKind::Bool,
+                required: false,
+                repeatable: false,
+            },
+            FlagSpec {
                 flag: "--tile-size",
                 mcp_key: "tile_size_px",
                 kind: FlagKind::F32,
@@ -1295,6 +1309,26 @@ fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<Value
             } else {
                 None
             };
+            let enable_youtube_mirror = payload
+                .get("enable_youtube_mirror")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let disable_youtube_mirror = payload
+                .get("disable_youtube_mirror")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if enable_youtube_mirror && disable_youtube_mirror {
+                return Err(CliError::usage(
+                    "cannot pass both --enable-youtube-mirror and --disable-youtube-mirror",
+                ));
+            }
+            let youtube_mirror_enabled = if enable_youtube_mirror {
+                Some(true)
+            } else if disable_youtube_mirror {
+                Some(false)
+            } else {
+                None
+            };
             let tile_size_px = payload
                 .get("tile_size_px")
                 .and_then(|v| v.as_f64())
@@ -1327,6 +1361,7 @@ fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<Value
                 .update_tuning(BackdropTuningPatch {
                     image_enabled,
                     apple_music_artwork_enabled,
+                    youtube_mirror_enabled,
                     tile_size_px,
                     image_hold_secs,
                     image_brightness,

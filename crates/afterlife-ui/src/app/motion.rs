@@ -117,6 +117,7 @@ pub struct MotionSnapshot {
     pub detail_job: Option<Job>,
     pub tab_progress: f32,
     pub toggle_apple_music_progress: f32,
+    pub toggle_youtube_mirror_progress: f32,
     pub toggle_backdrop_progress: f32,
     pub toggle_pause_progress: f32,
     pub selection_weights: HashMap<JobId, f32>,
@@ -146,6 +147,7 @@ pub struct UiMotion {
     last_tab: TabId,
     tab_enter_started: Option<Instant>,
     toggle_apple_music: ScalarTransition,
+    toggle_youtube_mirror: ScalarTransition,
     toggle_backdrop: ScalarTransition,
     toggle_pause: ScalarTransition,
     selection_weights: HashMap<JobId, ScalarTransition>,
@@ -171,6 +173,7 @@ impl UiMotion {
             last_tab: TabId::Workspace,
             tab_enter_started: None,
             toggle_apple_music: ScalarTransition::settled(1.0, now),
+            toggle_youtube_mirror: ScalarTransition::settled(1.0, now),
             toggle_backdrop: ScalarTransition::settled(0.0, now),
             toggle_pause: ScalarTransition::settled(1.0, now),
             selection_weights: HashMap::new(),
@@ -196,6 +199,14 @@ impl UiMotion {
             self.last_tab = st.active_tab;
             self.toggle_apple_music = ScalarTransition::settled(
                 if st.glass.bg_apple_music_artwork_enabled {
+                    1.0
+                } else {
+                    0.0
+                },
+                now,
+            );
+            self.toggle_youtube_mirror = ScalarTransition::settled(
+                if st.glass.bg_youtube_mirror_enabled {
                     1.0
                 } else {
                     0.0
@@ -256,6 +267,15 @@ impl UiMotion {
 
             self.toggle_apple_music.set_target(
                 if st.glass.bg_apple_music_artwork_enabled {
+                    1.0
+                } else {
+                    0.0
+                },
+                Duration::from_millis(TOGGLE_MS),
+                now,
+            );
+            self.toggle_youtube_mirror.set_target(
+                if st.glass.bg_youtube_mirror_enabled {
                     1.0
                 } else {
                     0.0
@@ -349,6 +369,7 @@ impl UiMotion {
             || self.detail_swap_started.is_some()
             || self.tab_enter_started.is_some()
             || self.toggle_apple_music.is_active(now)
+            || self.toggle_youtube_mirror.is_active(now)
             || self.toggle_backdrop.is_active(now)
             || self.toggle_pause.is_active(now)
             || any_selection_active
@@ -361,6 +382,7 @@ impl UiMotion {
             detail_job: self.last_detail_job.clone(),
             tab_progress,
             toggle_apple_music_progress: self.toggle_apple_music.value(now),
+            toggle_youtube_mirror_progress: self.toggle_youtube_mirror.value(now),
             toggle_backdrop_progress: self.toggle_backdrop.value(now),
             toggle_pause_progress: self.toggle_pause.value(now),
             selection_weights,

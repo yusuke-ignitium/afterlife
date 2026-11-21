@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_IMAGE_ENABLED: bool = false;
 pub const DEFAULT_APPLE_MUSIC_ARTWORK_ENABLED: bool = true;
+pub const DEFAULT_YOUTUBE_MIRROR_ENABLED: bool = true;
 pub const DEFAULT_TILE_SIZE_PX: f32 = 6.0;
 pub const DEFAULT_IMAGE_HOLD_SECS: f32 = 10.0;
 pub const DEFAULT_IMAGE_BRIGHTNESS: f32 = 0.40;
@@ -39,6 +40,7 @@ fn unique_tmp_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
 pub struct BackdropTuning {
     pub image_enabled: bool,
     pub apple_music_artwork_enabled: bool,
+    pub youtube_mirror_enabled: bool,
     pub tile_size_px: f32,
     pub image_hold_secs: f32,
     pub image_brightness: f32,
@@ -52,6 +54,7 @@ impl Default for BackdropTuning {
         Self {
             image_enabled: DEFAULT_IMAGE_ENABLED,
             apple_music_artwork_enabled: DEFAULT_APPLE_MUSIC_ARTWORK_ENABLED,
+            youtube_mirror_enabled: DEFAULT_YOUTUBE_MIRROR_ENABLED,
             tile_size_px: DEFAULT_TILE_SIZE_PX,
             image_hold_secs: DEFAULT_IMAGE_HOLD_SECS,
             image_brightness: DEFAULT_IMAGE_BRIGHTNESS,
@@ -68,6 +71,7 @@ impl BackdropTuning {
         Self {
             image_enabled: self.image_enabled,
             apple_music_artwork_enabled: self.apple_music_artwork_enabled,
+            youtube_mirror_enabled: self.youtube_mirror_enabled,
             tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px),
             image_hold_secs: finite_clamp(self.image_hold_secs, 0.5, 600.0, def.image_hold_secs),
             image_brightness: finite_clamp(self.image_brightness, 0.0, 2.0, def.image_brightness),
@@ -92,6 +96,7 @@ impl BackdropTuning {
 pub struct BackdropTuningPatch {
     pub image_enabled: Option<bool>,
     pub apple_music_artwork_enabled: Option<bool>,
+    pub youtube_mirror_enabled: Option<bool>,
     pub tile_size_px: Option<f32>,
     pub image_hold_secs: Option<f32>,
     pub image_brightness: Option<f32>,
@@ -355,6 +360,9 @@ impl BackdropStore {
         if let Some(v) = patch.apple_music_artwork_enabled {
             cfg.tuning.apple_music_artwork_enabled = v;
         }
+        if let Some(v) = patch.youtube_mirror_enabled {
+            cfg.tuning.youtube_mirror_enabled = v;
+        }
         if let Some(v) = patch.tile_size_px {
             cfg.tuning.tile_size_px = v;
         }
@@ -563,6 +571,7 @@ mod tests {
         let tuning = BackdropTuning {
             image_enabled: true,
             apple_music_artwork_enabled: false,
+            youtube_mirror_enabled: false,
             tile_size_px: f32::NAN,
             image_hold_secs: f32::INFINITY,
             image_brightness: -5.0,
@@ -573,6 +582,7 @@ mod tests {
         .clamped();
         assert!(tuning.image_enabled);
         assert!(!tuning.apple_music_artwork_enabled);
+        assert!(!tuning.youtube_mirror_enabled);
         assert_eq!(tuning.tile_size_px, DEFAULT_TILE_SIZE_PX);
         assert_eq!(tuning.image_hold_secs, DEFAULT_IMAGE_HOLD_SECS);
         assert_eq!(tuning.image_brightness, 0.0);
@@ -621,6 +631,7 @@ mod tests {
         let cfg = store.load().unwrap();
         assert!(!cfg.tuning.image_enabled);
         assert!(cfg.tuning.apple_music_artwork_enabled);
+        assert!(cfg.tuning.youtube_mirror_enabled);
         assert_eq!(cfg.tuning.tile_size_px, 24.0);
         assert_eq!(cfg.tuning.image_hold_secs, DEFAULT_IMAGE_HOLD_SECS);
         let g = cfg.glass.expect("glass section should deserialize");
