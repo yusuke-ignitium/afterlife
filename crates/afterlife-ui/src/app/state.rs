@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -14,7 +15,7 @@ use afterlife_daemon::AppDaemonState;
 use afterlife_design::{GlassSettings, Palette, UiStyle};
 use afterlife_protocol::{
     AfterlifeConfig, BackdropConfig, BackdropGlassAppearance, BackdropStore, BackdropTuning,
-    CommandEnvelope, EventRecord,
+    CommandEnvelope, EventRecord, resolve_tile_size_for_display, sanitize_display_tile_sizes,
 };
 use gpui::{Entity, Image, ImageFormat, set_particle_wave_tuning};
 
@@ -248,6 +249,10 @@ pub struct AppState {
     pub show_centerline: bool,
     pub style: UiStyle,
     pub glass: GlassSettings,
+    pub base_tile_size_px: f32,
+    pub display_tile_sizes: BTreeMap<String, f32>,
+    pub active_display_uuid: Option<String>,
+    pub active_display_scale: f32,
     pub palette: Palette,
     pub settings_open: bool,
     pub pause_animation_when_inactive: bool,
@@ -262,6 +267,8 @@ impl AppState {
 
         let style = UiStyle::LiquidGlass;
         let mut glass = GlassSettings::default();
+        let mut base_tile_size_px = glass.bg_tile_size_px;
+        let mut display_tile_sizes = BTreeMap::new();
         let mut pause_animation_when_inactive = false;
         let load_backdrop_store = backdrop_store
             .clone()
@@ -269,7 +276,13 @@ impl AppState {
         if let Some(ref store) = load_backdrop_store {
             match store.load() {
                 Ok(backdrop) => {
-                    apply_backdrop_config(&mut glass, &mut pause_animation_when_inactive, &backdrop)
+                    apply_backdrop_config(
+                        &mut glass,
+                        &mut pause_animation_when_inactive,
+                        &backdrop,
+                    );
+                    base_tile_size_px = backdrop.tuning.clamped().tile_size_px;
+                    display_tile_sizes = sanitize_display_tile_sizes(backdrop.display_tile_sizes);
                 }
                 Err(e) => eprintln!("afterlife-ui: failed to load appearance config ({e})"),
             }
@@ -338,6 +351,10 @@ impl AppState {
             show_centerline: false,
             style,
             glass,
+            base_tile_size_px,
+            display_tile_sizes,
+            active_display_uuid: None,
+            active_display_scale: 2.0,
             palette,
             settings_open: false,
             pause_animation_when_inactive,
@@ -435,6 +452,71 @@ impl AppState {
         Some(next)
     }
 
+    pub fn sync_active_display(
+        &mut self,
+        display_uuid: Option<String>,
+        scale_factor: f32,
+    ) -> bool {
+        let safe_scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+            scale_factor
+        } else {
+            2.0
+        };
+        let normalized_uuid = display_uuid
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty());
+        let resolved = resolve_tile_size_for_display(
+            self.base_tile_size_px,
+            normalized_uuid.as_deref(),
+            safe_scale,
+            &self.display_tile_sizes,
+        );
+        let changed = self.active_display_uuid != normalized_uuid
+            || (self.active_display_scale - safe_scale).abs() > 1e-3
+            || (self.glass.bg_tile_size_px - resolved).abs() > 1e-4;
+        self.active_display_uuid = normalized_uuid;
+        self.active_display_scale = safe_scale;
+        if (self.glass.bg_tile_size_px - resolved).abs() > 1e-4 {
+            self.glass.bg_tile_size_px = resolved;
+            self.refresh_palette();
+        }
+        changed
+    }
+
+    pub fn set_glass_param(&mut self, key: GlassParamKey, value: f32) {
+        if key == GlassParamKey::BgTileSizePx {
+            let clamped = if value.is_finite() {
+                value.clamp(2.0, 24.0)
+            } else {
+                self.glass.bg_tile_size_px
+            };
+            self.glass.bg_tile_size_px = clamped;
+            if let Some(ref uuid) = self.active_display_uuid {
+                self.display_tile_sizes.insert(uuid.clone(), clamped);
+            }
+            if self.active_display_scale >= 1.5 || self.active_display_uuid.is_none() {
+                self.base_tile_size_px = clamped;
+            }
+        } else {
+            key.set(&mut self.glass, value);
+        }
+        self.refresh_palette();
+    }
+
+    pub fn reset_glass_settings(&mut self, preset: GlassSettings) {
+        self.glass = preset;
+        self.base_tile_size_px = preset.bg_tile_size_px;
+        self.display_tile_sizes.clear();
+        let resolved = resolve_tile_size_for_display(
+            self.base_tile_size_px,
+            self.active_display_uuid.as_deref(),
+            self.active_display_scale,
+            &self.display_tile_sizes,
+        );
+        self.glass.bg_tile_size_px = resolved;
+        self.refresh_palette();
+    }
+
     pub fn refresh_palette(&mut self) {
         self.palette = Palette::from_style(self.style, &self.glass);
         set_particle_wave_tuning(self.glass.particle_wave_tuning());
@@ -453,13 +535,31 @@ impl AppState {
         let Ok(cfg) = store.load() else {
             return false;
         };
-        let before = (self.glass, self.pause_animation_when_inactive);
+        let before = (
+            self.glass,
+            self.pause_animation_when_inactive,
+            self.base_tile_size_px,
+            self.display_tile_sizes.clone(),
+        );
         apply_backdrop_config(
             &mut self.glass,
             &mut self.pause_animation_when_inactive,
             &cfg,
         );
-        let after = (self.glass, self.pause_animation_when_inactive);
+        self.base_tile_size_px = cfg.tuning.clamped().tile_size_px;
+        self.display_tile_sizes = sanitize_display_tile_sizes(cfg.display_tile_sizes);
+        self.glass.bg_tile_size_px = resolve_tile_size_for_display(
+            self.base_tile_size_px,
+            self.active_display_uuid.as_deref(),
+            self.active_display_scale,
+            &self.display_tile_sizes,
+        );
+        let after = (
+            self.glass,
+            self.pause_animation_when_inactive,
+            self.base_tile_size_px,
+            self.display_tile_sizes.clone(),
+        );
         if before != after {
             self.refresh_palette();
             true
@@ -472,9 +572,12 @@ impl AppState {
         let Some(ref store) = self.backdrop_store else {
             return;
         };
-        if let Err(e) = store.save_appearance(
-            snapshot_tuning(&self.glass),
+        let mut tuning = snapshot_tuning(&self.glass);
+        tuning.tile_size_px = self.base_tile_size_px.clamp(2.0, 24.0);
+        if let Err(e) = store.save_appearance_with_displays(
+            tuning,
             snapshot_glass_appearance(&self.glass, self.pause_animation_when_inactive),
+            self.display_tile_sizes.clone(),
         ) {
             eprintln!("afterlife-ui: failed to save appearance config ({e})");
         }
@@ -557,6 +660,7 @@ mod tests {
             images: Vec::new(),
             tuning: snapshot_tuning(&original),
             glass: Some(snapshot_glass_appearance(&original, true)),
+            display_tile_sizes: BTreeMap::new(),
         };
 
         let mut restored = GlassSettings::default();
@@ -565,5 +669,31 @@ mod tests {
 
         assert_eq!(restored, original);
         assert!(pause_inactive);
+    }
+
+    #[test]
+    fn switching_displays_applies_scale_and_preserves_per_display_tile_memory() {
+        let mut st = AppState::new();
+        st.backdrop_store = None;
+        st.display_tile_sizes.clear();
+        st.base_tile_size_px = 3.0;
+        st.glass.bg_tile_size_px = 3.0;
+
+        st.sync_active_display(Some("retina-builtin".to_string()), 2.0);
+        assert_eq!(st.glass.bg_tile_size_px, 3.0);
+
+        st.sync_active_display(Some("external-lg-4k".to_string()), 1.0);
+        assert_eq!(st.glass.bg_tile_size_px, 2.0);
+
+        st.set_glass_param(GlassParamKey::BgTileSizePx, 2.4);
+        assert_eq!(st.glass.bg_tile_size_px, 2.4);
+        assert_eq!(st.base_tile_size_px, 3.0);
+        assert_eq!(st.display_tile_sizes.get("external-lg-4k"), Some(&2.4));
+
+        st.sync_active_display(Some("retina-builtin".to_string()), 2.0);
+        assert_eq!(st.glass.bg_tile_size_px, 3.0);
+
+        st.sync_active_display(Some("external-lg-4k".to_string()), 1.0);
+        assert_eq!(st.glass.bg_tile_size_px, 2.4);
     }
 }

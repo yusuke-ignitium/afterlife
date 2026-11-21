@@ -45,8 +45,16 @@ pub struct AfterlifeApp {
     pub slider_bounds: Vec<(GlassParamKey, Rc<Cell<Bounds<Pixels>>>)>,
     pub detail_resize: Option<DetailResizeDrag>,
     window_store: Option<WindowStateStore>,
-    _bounds_subscription: Option<Subscription>,
+    _bounds_subscription: Subscription,
     window_save_task: Option<Task<()>>,
+}
+
+fn current_display_metrics(window: &Window, cx: &App) -> (Option<String>, f32) {
+    let display_uuid = window
+        .display(cx)
+        .and_then(|d| d.uuid().ok())
+        .map(|u| u.to_string());
+    (display_uuid, window.scale_factor())
 }
 
 impl AfterlifeApp {
@@ -61,22 +69,35 @@ impl AfterlifeApp {
             .iter()
             .map(|&k| (k, Rc::new(Cell::new(Bounds::default()))))
             .collect();
-        let bounds_subscription = window_store.clone().map(|store| {
-            cx.observe_window_bounds(window, move |this, window, cx| {
-                let detail_h = Some(this.state.read(cx).detail_height);
-                let Some(snapshot) = capture_window_state(window, cx, detail_h) else {
-                    return;
-                };
-                let store_for_task = store.clone();
-                this.window_save_task = Some(cx.spawn(async move |_, cx| {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(250))
-                        .await;
-                    if let Err(err) = store_for_task.save(&snapshot) {
-                        eprintln!("[afterlife-ui] failed to persist window state: {err}");
-                    }
-                }));
-            })
+        let (initial_uuid, initial_scale) = current_display_metrics(window, cx);
+        state.update(cx, |st, _| {
+            st.sync_active_display(initial_uuid, initial_scale);
+        });
+        let store_for_bounds = window_store.clone();
+        let bounds_subscription = cx.observe_window_bounds(window, move |this, window, cx| {
+            let (display_uuid, scale_factor) = current_display_metrics(window, cx);
+            let display_changed = this
+                .state
+                .update(cx, |st, _| st.sync_active_display(display_uuid, scale_factor));
+            if display_changed {
+                cx.notify();
+            }
+            let Some(ref store) = store_for_bounds else {
+                return;
+            };
+            let detail_h = Some(this.state.read(cx).detail_height);
+            let Some(snapshot) = capture_window_state(window, cx, detail_h) else {
+                return;
+            };
+            let store_for_task = store.clone();
+            this.window_save_task = Some(cx.spawn(async move |_, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+                if let Err(err) = store_for_task.save(&snapshot) {
+                    eprintln!("[afterlife-ui] failed to persist window state: {err}");
+                }
+            }));
         });
         Self {
             state,
@@ -115,8 +136,7 @@ impl AfterlifeApp {
         let t = (rel_x / w).clamp(0.0, 1.0);
         let (_, min, max, _) = key.spec();
         self.state.update(cx, |st, _| {
-            key.set(&mut st.glass, min + t * (max - min));
-            st.refresh_palette();
+            st.set_glass_param(key, min + t * (max - min));
         });
     }
 

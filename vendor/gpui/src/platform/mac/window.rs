@@ -1976,6 +1976,11 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.start_display_link();
+    if let Some(mut callback) = lock.moved_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().moved_callback = Some(callback);
+    }
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {

@@ -1505,7 +1505,7 @@ kernel void particle_tile_scatter_kernel(
   if (gid.x >= uniforms->grid_w || gid.y >= uniforms->grid_h) {
     return;
   }
-  float tileSize = max(uniforms->tile_size, 3.0);
+  float tileSize = max(uniforms->tile_size, 2.0);
   float2 src = float2(float(gid.x), float(gid.y));
   float2 srcPx = (src + 0.5) * tileSize;
   float2 res = float2(uniforms->viewport_w, uniforms->viewport_h);
@@ -1647,7 +1647,7 @@ kernel void particle_tile_hold_kernel(
     tile_img_tex.write(half4(0.0h), gid);
     return;
   }
-  float tileSize = max(uniforms->tile_size, 3.0);
+  float tileSize = max(uniforms->tile_size, 2.0);
   float2 srcPx = (float2(float(gid.x), float(gid.y)) + 0.5) * tileSize;
   float2 res = float2(uniforms->viewport_w, uniforms->viewport_h);
   float2 imgSize = float2(uniforms->image_w, uniforms->image_h);
@@ -1736,7 +1736,7 @@ vertex ParticleWaveVertexOutput particle_wave_vertex(
 
   float2 fragPx = float2(quad.bounds.origin.x, quad.bounds.origin.y) +
                   unit_vertex * float2(quad.bounds.size.width, quad.bounds.size.height);
-  float tileSize = max(uniforms->tile_size, 3.0);
+  float tileSize = max(uniforms->tile_size, 2.0);
   float2 grid_pos = fragPx / tileSize;
   float t = uniforms->time_sec;
   float2 wave_phase = float2(

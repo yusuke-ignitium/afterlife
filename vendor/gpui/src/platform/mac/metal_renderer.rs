@@ -339,7 +339,7 @@ fn inactive_particle_uniforms(
     viewport_h: f32,
     tuning: crate::ParticleWaveTuning,
 ) -> ParticleWaveUniforms {
-    let tile_size = tuning.tile_size_px.max(3.0);
+    let tile_size = tuning.tile_size_px.max(2.0);
     let grid_w = (viewport_w / tile_size).ceil().max(1.0) as u32;
     let grid_h = (viewport_h / tile_size).ceil().max(1.0) as u32;
     ParticleWaveUniforms {

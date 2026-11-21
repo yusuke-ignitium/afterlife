@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -176,12 +177,48 @@ pub struct BackdropConfig {
     pub tuning: BackdropTuning,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub glass: Option<BackdropGlassAppearance>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub display_tile_sizes: BTreeMap<String, f32>,
+}
+
+pub fn sanitize_display_tile_sizes(map: BTreeMap<String, f32>) -> BTreeMap<String, f32> {
+    map.into_iter()
+        .filter_map(|(k, v)| {
+            let trimmed = k.trim();
+            if trimmed.is_empty() || !v.is_finite() {
+                return None;
+            }
+            Some((trimmed.to_string(), v.clamp(2.0, 24.0)))
+        })
+        .collect()
+}
+
+pub fn resolve_tile_size_for_display(
+    base_tile_size_px: f32,
+    display_uuid: Option<&str>,
+    scale_factor: f32,
+    overrides: &BTreeMap<String, f32>,
+) -> f32 {
+    if let Some(uuid) = display_uuid.map(str::trim).filter(|s| !s.is_empty())
+        && let Some(&saved) = overrides.get(uuid)
+        && saved.is_finite()
+    {
+        return saved.clamp(2.0, 24.0);
+    }
+    let base = finite_clamp(base_tile_size_px, 2.0, 24.0, DEFAULT_TILE_SIZE_PX);
+    let safe_scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        2.0
+    };
+    (base * (safe_scale / 2.0)).clamp(2.0, 24.0)
 }
 
 impl BackdropConfig {
     pub fn sanitized(mut self) -> Self {
         self.tuning = self.tuning.clamped();
         self.glass = self.glass.map(BackdropGlassAppearance::clamped);
+        self.display_tile_sizes = sanitize_display_tile_sizes(self.display_tile_sizes);
         self
     }
 }
@@ -353,6 +390,7 @@ impl BackdropStore {
         let mut cfg = self.load()?;
         if patch.reset {
             cfg.tuning = BackdropTuning::default();
+            cfg.display_tile_sizes.clear();
         }
         if let Some(v) = patch.image_enabled {
             cfg.tuning.image_enabled = v;
@@ -365,6 +403,7 @@ impl BackdropStore {
         }
         if let Some(v) = patch.tile_size_px {
             cfg.tuning.tile_size_px = v;
+            cfg.display_tile_sizes.clear();
         }
         if let Some(v) = patch.image_hold_secs {
             cfg.tuning.image_hold_secs = v;
@@ -394,6 +433,20 @@ impl BackdropStore {
         let mut cfg = self.load()?;
         cfg.tuning = tuning.clamped();
         cfg.glass = Some(glass.clamped());
+        self.save(&cfg)?;
+        Ok(cfg)
+    }
+
+    pub fn save_appearance_with_displays(
+        &self,
+        tuning: BackdropTuning,
+        glass: BackdropGlassAppearance,
+        display_tile_sizes: BTreeMap<String, f32>,
+    ) -> Result<BackdropConfig, String> {
+        let mut cfg = self.load()?;
+        cfg.tuning = tuning.clamped();
+        cfg.glass = Some(glass.clamped());
+        cfg.display_tile_sizes = sanitize_display_tile_sizes(display_tile_sizes);
         self.save(&cfg)?;
         Ok(cfg)
     }
@@ -738,6 +791,7 @@ mod tests {
                             radius: 4.0 + (step % 8) as f32,
                             ..BackdropGlassAppearance::default()
                         }),
+                        display_tile_sizes: BTreeMap::new(),
                     };
                     s.save(&cfg).unwrap();
                 }
@@ -754,6 +808,74 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
             .collect();
         assert!(leftover_tmps.is_empty(), "no temp files should remain");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_tile_size_scales_with_backing_factor_and_prefers_per_display_override() {
+        let mut overrides = BTreeMap::new();
+        assert_eq!(
+            resolve_tile_size_for_display(3.0, Some("retina-uuid"), 2.0, &overrides),
+            3.0
+        );
+        assert_eq!(
+            resolve_tile_size_for_display(3.0, Some("lg-tv-uuid"), 1.0, &overrides),
+            2.0
+        );
+        assert_eq!(
+            resolve_tile_size_for_display(6.0, Some("fhd-24-uuid"), 1.0, &overrides),
+            3.0
+        );
+
+        overrides.insert("lg-tv-uuid".to_string(), 2.5);
+        assert_eq!(
+            resolve_tile_size_for_display(3.0, Some("lg-tv-uuid"), 1.0, &overrides),
+            2.5
+        );
+        assert_eq!(
+            resolve_tile_size_for_display(3.0, Some("retina-uuid"), 2.0, &overrides),
+            3.0
+        );
+    }
+
+    #[test]
+    fn display_tile_sizes_sanitize_and_round_trip_without_breaking_legacy_json() {
+        let dir = make_temp_dir("display-tiles");
+        let store = BackdropStore::open(&dir);
+
+        let mut map = BTreeMap::new();
+        map.insert("retina-1".to_string(), 3.0);
+        map.insert("ext-1".to_string(), 1.0);
+        map.insert("ext-huge".to_string(), 99.0);
+        map.insert("   ".to_string(), 4.0);
+        map.insert("bad-nan".to_string(), f32::NAN);
+
+        let saved = store
+            .save_appearance_with_displays(
+                BackdropTuning {
+                    tile_size_px: 3.0,
+                    ..BackdropTuning::default()
+                },
+                BackdropGlassAppearance::default(),
+                map,
+            )
+            .unwrap();
+        assert_eq!(saved.display_tile_sizes.len(), 3);
+        assert_eq!(saved.display_tile_sizes.get("retina-1"), Some(&3.0));
+        assert_eq!(saved.display_tile_sizes.get("ext-1"), Some(&2.0));
+        assert_eq!(saved.display_tile_sizes.get("ext-huge"), Some(&24.0));
+
+        let reloaded = store.load().unwrap();
+        assert_eq!(reloaded.display_tile_sizes, saved.display_tile_sizes);
+
+        let after_cli_reset = store
+            .update_tuning(BackdropTuningPatch {
+                reset: true,
+                ..BackdropTuningPatch::default()
+            })
+            .unwrap();
+        assert!(after_cli_reset.display_tile_sizes.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }

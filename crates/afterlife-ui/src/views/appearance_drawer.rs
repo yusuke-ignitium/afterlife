@@ -110,8 +110,7 @@ fn render_drawer_header(
                             "Preset",
                             true,
                             |st| {
-                                st.glass = GlassSettings::overworld_exact_defaults();
-                                st.refresh_palette();
+                                st.reset_glass_settings(GlassSettings::overworld_exact_defaults());
                                 st.persist_appearance();
                             },
                             cx,
@@ -123,8 +122,7 @@ fn render_drawer_header(
                             "Reset",
                             true,
                             |st| {
-                                st.glass = GlassSettings::default();
-                                st.refresh_palette();
+                                st.reset_glass_settings(GlassSettings::default());
                                 st.persist_appearance();
                             },
                             cx,
