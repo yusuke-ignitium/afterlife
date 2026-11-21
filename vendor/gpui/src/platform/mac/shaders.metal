@@ -596,18 +596,28 @@ vertex ShadowVertexOutput shadow_vertex(
       center,
       half_size,
       corner_radii,
-      float4(sigma, 3.0 * sigma, inv_sqrt2_sigma, inv_2sigma2),
+      float4(sigma, margin, inv_sqrt2_sigma, inv_2sigma2),
       float3(shadow.content_mask.bottom_fade, mask_bottom_y, inv_sqrt2pi_sigma),
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
-static inline float blur_along_x_fast(float x, float y, float inv_sqrt2_sigma,
-                                      float corner, float2 half_size) {
-  float delta = min(half_size.y - corner - abs(y), 0.0);
+static inline half2 erf_fast_vec2_half(half2 x) {
+  half2 ax = min(abs(x), half2(4.0h));
+  half2 p = fma(ax, fma(ax, fma(ax, fma(ax, 0.078108h, 0.000972h), 0.230389h), 0.278393h), 1.0h);
+  half2 inv_p = 1.0h / p;
+  half2 inv_p2 = inv_p * inv_p;
+  half2 r = 1.0h - (inv_p2 * inv_p2);
+  return copysign(r, x);
+}
+
+static inline half blur_along_x_fast_half(float abs_x, float y, float inv_sqrt2_sigma,
+                                          float corner, float2 half_size) {
+  float delta = min(half_size.y - corner - abs(y), 0.0f);
   float curved =
-      half_size.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
-  float2 integral = 0.5 + 0.5 * erf((x + float2(-curved, curved)) * inv_sqrt2_sigma);
-  return integral.y - integral.x;
+      half_size.x - corner + sqrt(max(0.0f, corner * corner - delta * delta));
+  half2 e = erf_fast_vec2_half(half2((abs_x - curved) * inv_sqrt2_sigma,
+                                     (abs_x + curved) * inv_sqrt2_sigma));
+  return 0.5h * (e.y - e.x);
 }
 
 fragment half4 shadow_fragment(ShadowFragmentInput input [[stage_in]]) {
@@ -615,62 +625,324 @@ fragment half4 shadow_fragment(ShadowFragmentInput input [[stage_in]]) {
   float2 point = input.position.xy - input.center;
   float2 abs_p = abs(point);
 
-  float corner_radius = (point.x < 0.0)
-      ? ((point.y < 0.0) ? input.corner_radii.x : input.corner_radii.w)
-      : ((point.y < 0.0) ? input.corner_radii.y : input.corner_radii.z);
+  float corner_radius = (point.x < 0.0f)
+      ? ((point.y < 0.0f) ? input.corner_radii.x : input.corner_radii.w)
+      : ((point.y < 0.0f) ? input.corner_radii.y : input.corner_radii.z);
 
   float sigma = input.blur_params.x;
-  float alpha;
-  if (sigma <= 0.0) {
+  half alpha;
+  if (sigma <= 0.0f) {
     float r = min(corner_radius, min(half_size.x, half_size.y));
     float2 q = abs_p - half_size + r;
-    float distance = min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0))) - r;
-    alpha = saturate(0.5 - distance);
+    float distance = min(max(q.x, q.y), 0.0f) + length(max(q, float2(0.0f))) - r;
+    alpha = half(saturate(0.5f - distance));
   } else {
-    float three_sigma = input.blur_params.y;
+    float cutoff = input.blur_params.y;
     float inv_sqrt2_sigma = input.blur_params.z;
 
-    float2 straight_limit = half_size - corner_radius - three_sigma;
-    float2 inner_limit = half_size - three_sigma;
+    float2 straight_limit = half_size - corner_radius - cutoff;
+    float2 inner_limit = half_size - cutoff;
 
     if (abs_p.x <= inner_limit.x && abs_p.y <= inner_limit.y &&
         (abs_p.x <= straight_limit.x || abs_p.y <= straight_limit.y)) {
-      alpha = 1.0;
+      alpha = 1.0h;
     } else if (abs_p.y <= straight_limit.y) {
-      float2 ix = 0.5 + 0.5 * erf((point.x + float2(-half_size.x, half_size.x)) * inv_sqrt2_sigma);
-      alpha = ix.y - ix.x;
+      half2 e = erf_fast_vec2_half(half2((abs_p.x - half_size.x) * inv_sqrt2_sigma,
+                                         (abs_p.x + half_size.x) * inv_sqrt2_sigma));
+      alpha = 0.5h * (e.y - e.x);
     } else if (abs_p.x <= straight_limit.x) {
-      float low = point.y - half_size.y;
-      float high = point.y + half_size.y;
-      float start = clamp(-three_sigma, low, high);
-      float end = clamp(three_sigma, low, high);
-      float2 ey = erf(float2(end, start) * inv_sqrt2_sigma);
-      alpha = 0.5 * (ey.x - ey.y);
+      float start = clamp(-cutoff, abs_p.y - half_size.y, abs_p.y + half_size.y);
+      float end = clamp(cutoff, abs_p.y - half_size.y, abs_p.y + half_size.y);
+      half2 ey = erf_fast_vec2_half(half2(end * inv_sqrt2_sigma, start * inv_sqrt2_sigma));
+      alpha = 0.5h * (ey.x - ey.y);
     } else {
-      float low = point.y - half_size.y;
-      float high = point.y + half_size.y;
-      float start = clamp(-three_sigma, low, high);
-      float end = clamp(three_sigma, low, high);
-
-      float step = (end - start) * 0.25;
-      float y = start + step * 0.5;
-      float inv_2sigma2 = input.blur_params.w;
-      float weight_scale = input.mask_params.z * step;
-      alpha = 0.0;
-      for (int i = 0; i < 4; i++) {
-        alpha += blur_along_x_fast(point.x, point.y - y, inv_sqrt2_sigma,
-                                   corner_radius, half_size) *
-                 exp(-(y * y) * inv_2sigma2) * weight_scale;
-        y += step;
+      float low = abs_p.y - half_size.y;
+      float high = abs_p.y + half_size.y;
+      float start = clamp(-cutoff, low, high);
+      float end = clamp(cutoff, low, high);
+      float span = end - start;
+      if (span <= 0.0f) {
+        alpha = 0.0h;
+      } else {
+        float step = span * 0.25f;
+        float y = start + step * 0.5f;
+        float inv_2sigma2 = input.blur_params.w;
+        half weight_scale = half(input.mask_params.z * step);
+        half acc = 0.0h;
+        for (int i = 0; i < 4; i++) {
+          half w = half(fast::exp(-(y * y) * inv_2sigma2));
+          acc = fma(blur_along_x_fast_half(abs_p.x, abs_p.y - y, inv_sqrt2_sigma,
+                                           corner_radius, half_size),
+                    w, acc);
+          y += step;
+        }
+        alpha = acc * weight_scale;
       }
     }
   }
 
   float fade = input.mask_params.x;
-  float mask_fade = (fade <= 0.5)
-      ? 1.0
-      : smoothstep(0.0, fade, input.mask_params.y - input.position.y);
-  return input.color * half4(1.0h, 1.0h, 1.0h, half(alpha * mask_fade));
+  half mask_fade = (fade <= 0.5f)
+      ? 1.0h
+      : half(smoothstep(0.0f, fade, input.mask_params.y - input.position.y));
+  return input.color * half4(1.0h, 1.0h, 1.0h, alpha * mask_fade);
+}
+
+struct ShadowSolidVertexOutput {
+  float4 position [[position]];
+  half4 color [[flat]];
+  float2 mask_params [[flat]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct ShadowSolidFragmentInput {
+  float4 position [[position]];
+  half4 color [[flat]];
+  float2 mask_params [[flat]];
+};
+
+struct ShadowEdgeVertexOutput {
+  float4 position [[position]];
+  half4 color [[flat]];
+  float4 edge_params [[flat]];
+  float4 mask_cutoff [[flat]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct ShadowEdgeFragmentInput {
+  float4 position [[position]];
+  half4 color [[flat]];
+  float4 edge_params [[flat]];
+  float4 mask_cutoff [[flat]];
+};
+
+static inline Bounds_ScaledPixels make_sub_bounds(float x0, float y0, float x1, float y1) {
+  Bounds_ScaledPixels b;
+  b.origin.x = x0;
+  b.origin.y = y0;
+  b.size.width = max(x1 - x0, 0.0f);
+  b.size.height = max(y1 - y0, 0.0f);
+  return b;
+}
+
+static inline void compute_shadow_9slice(
+    Shadow shadow,
+    float margin,
+    thread float &ox0, thread float &oy0, thread float &ox1, thread float &oy1,
+    thread float &ix0, thread float &iy0, thread float &ix1, thread float &iy1) {
+  float2 orig = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
+  float2 sz = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+  float2 half_size = sz * 0.5f;
+  float2 center = orig + half_size;
+  ox0 = floor(orig.x - margin);
+  oy0 = floor(orig.y - margin);
+  ox1 = ceil(orig.x + sz.x + margin);
+  oy1 = ceil(orig.y + sz.y + margin);
+  if (shadow.blur_radius <= 0.0f) {
+    ix0 = ox0;
+    ix1 = ox0;
+    iy0 = oy0;
+    iy1 = oy0;
+    return;
+  }
+  float max_r = max(
+      max(shadow.corner_radii.top_left, shadow.corner_radii.top_right),
+      max(shadow.corner_radii.bottom_right, shadow.corner_radii.bottom_left));
+  float sx = max(half_size.x - max_r - margin, 0.0f);
+  float sy = max(half_size.y - max_r - margin, 0.0f);
+  ix0 = clamp(ceil(center.x - sx), ox0, ox1);
+  ix1 = clamp(floor(center.x + sx), ix0, ox1);
+  iy0 = clamp(ceil(center.y - sy), oy0, oy1);
+  iy1 = clamp(floor(center.y + sy), iy0, oy1);
+}
+
+vertex ShadowSolidVertexOutput shadow_solid_vertex(
+    uint unit_vertex_id [[vertex_id]], uint shadow_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
+    constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+  Shadow shadow = shadows[shadow_id];
+  float sigma = shadow.blur_radius;
+  float4 rgba_color = hsla_to_rgba(shadow.color);
+  float sigma_mult = (rgba_color.a <= 0.12f) ? 2.4f : ((rgba_color.a <= 0.25f) ? 2.65f : 3.0f);
+  float margin = sigma_mult * sigma;
+
+  float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
+  compute_shadow_9slice(shadow, margin, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+
+  float mask_bottom_y =
+      shadow.content_mask.bounds.origin.y + shadow.content_mask.bounds.size.height;
+  if (ix1 <= ix0 || iy1 <= iy0) {
+    return ShadowSolidVertexOutput{
+        float4(2.0f, 2.0f, 0.0f, 1.0f),
+        half4(rgba_color),
+        float2(shadow.content_mask.bottom_fade, mask_bottom_y),
+        {-1.0f, -1.0f, -1.0f, -1.0f}};
+  }
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  Bounds_ScaledPixels bounds = make_sub_bounds(ix0, iy0, ix1, iy1);
+  float4 device_position = to_device_position(unit_vertex, bounds, viewport_size);
+  float4 clip_distance =
+      distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
+  return ShadowSolidVertexOutput{
+      device_position,
+      half4(rgba_color),
+      float2(shadow.content_mask.bottom_fade, mask_bottom_y),
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment half4 shadow_solid_fragment(ShadowSolidFragmentInput input [[stage_in]]) {
+  float fade = input.mask_params.x;
+  half mask_fade = (fade <= 0.5f)
+      ? 1.0h
+      : half(smoothstep(0.0f, fade, input.mask_params.y - input.position.y));
+  return input.color * half4(1.0h, 1.0h, 1.0h, mask_fade);
+}
+
+vertex ShadowEdgeVertexOutput shadow_edge_vertex(
+    uint vertex_id [[vertex_id]], uint shadow_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
+    constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+  Shadow shadow = shadows[shadow_id];
+  float sigma = shadow.blur_radius;
+  float4 rgba_color = hsla_to_rgba(shadow.color);
+  float sigma_mult = (rgba_color.a <= 0.12f) ? 2.4f : ((rgba_color.a <= 0.25f) ? 2.65f : 3.0f);
+  float margin = sigma_mult * sigma;
+
+  float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
+  compute_shadow_9slice(shadow, margin, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+
+  uint sub = vertex_id / 6u;
+  float rx0, ry0, rx1, ry1;
+  float axis_flag;
+  if (sub == 0u) {
+    rx0 = ix0; ry0 = oy0; rx1 = ix1; ry1 = iy0; axis_flag = 1.0f;
+  } else if (sub == 1u) {
+    rx0 = ix0; ry0 = iy1; rx1 = ix1; ry1 = oy1; axis_flag = 1.0f;
+  } else if (sub == 2u) {
+    rx0 = ox0; ry0 = iy0; rx1 = ix0; ry1 = iy1; axis_flag = 0.0f;
+  } else {
+    rx0 = ix1; ry0 = iy0; rx1 = ox1; ry1 = iy1; axis_flag = 0.0f;
+  }
+
+  float mask_bottom_y =
+      shadow.content_mask.bounds.origin.y + shadow.content_mask.bounds.size.height;
+  if (sigma <= 0.0f || rx1 <= rx0 || ry1 <= ry0) {
+    return ShadowEdgeVertexOutput{
+        float4(2.0f, 2.0f, 0.0f, 1.0f),
+        half4(rgba_color),
+        float4(0.0f),
+        float4(0.0f),
+        {-1.0f, -1.0f, -1.0f, -1.0f}};
+  }
+
+  float2 orig = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
+  float2 sz = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+  float2 half_size = sz * 0.5f;
+  float2 center = orig + half_size;
+  float inv_sqrt2_sigma = 0.70710678f / max(sigma, 1e-4f);
+  float c_axis = (axis_flag > 0.5f) ? center.y : center.x;
+  float h_axis = (axis_flag > 0.5f) ? half_size.y : half_size.x;
+
+  float2 unit_vertex = unit_vertices[vertex_id % 6u];
+  Bounds_ScaledPixels bounds = make_sub_bounds(rx0, ry0, rx1, ry1);
+  float4 device_position = to_device_position(unit_vertex, bounds, viewport_size);
+  float4 clip_distance =
+      distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
+  return ShadowEdgeVertexOutput{
+      device_position,
+      half4(rgba_color),
+      float4(c_axis, h_axis, inv_sqrt2_sigma, axis_flag),
+      float4(shadow.content_mask.bottom_fade, mask_bottom_y, margin, 0.0f),
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment half4 shadow_edge_fragment(ShadowEdgeFragmentInput input [[stage_in]]) {
+  float coord = (input.edge_params.w > 0.5f) ? input.position.y : input.position.x;
+  float abs_p = abs(coord - input.edge_params.x);
+  float h = input.edge_params.y;
+  float inv_s = input.edge_params.z;
+  half2 e = erf_fast_vec2_half(half2((abs_p - h) * inv_s, (abs_p + h) * inv_s));
+  half alpha = 0.5h * (e.y - e.x);
+  float fade = input.mask_cutoff.x;
+  half mask_fade = (fade <= 0.5f)
+      ? 1.0h
+      : half(smoothstep(0.0f, fade, input.mask_cutoff.y - input.position.y));
+  return input.color * half4(1.0h, 1.0h, 1.0h, alpha * mask_fade);
+}
+
+vertex ShadowVertexOutput shadow_corner_vertex(
+    uint vertex_id [[vertex_id]], uint shadow_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
+    constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+  Shadow shadow = shadows[shadow_id];
+  float sigma = shadow.blur_radius;
+  float4 rgba_color = hsla_to_rgba(shadow.color);
+  float sigma_mult = (rgba_color.a <= 0.12f) ? 2.4f : ((rgba_color.a <= 0.25f) ? 2.65f : 3.0f);
+  float margin = sigma_mult * sigma;
+
+  float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
+  compute_shadow_9slice(shadow, margin, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+
+  uint sub = vertex_id / 6u;
+  float rx0, ry0, rx1, ry1;
+  if (sub == 0u) {
+    rx0 = ox0; ry0 = oy0; rx1 = ix0; ry1 = iy0;
+  } else if (sub == 1u) {
+    rx0 = ix1; ry0 = oy0; rx1 = ox1; ry1 = iy0;
+  } else if (sub == 2u) {
+    rx0 = ox0; ry0 = iy1; rx1 = ix0; ry1 = oy1;
+  } else {
+    rx0 = ix1; ry0 = iy1; rx1 = ox1; ry1 = oy1;
+  }
+
+  float2 orig = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
+  float2 sz = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+  float2 half_size = sz * 0.5f;
+  float2 center = orig + half_size;
+  float mask_bottom_y =
+      shadow.content_mask.bounds.origin.y + shadow.content_mask.bounds.size.height;
+  float safe_sigma = max(sigma, 1e-4f);
+  float inv_sqrt2_sigma = 0.70710678f / safe_sigma;
+  float inv_2sigma2 = 0.5f / (safe_sigma * safe_sigma);
+  float inv_sqrt2pi_sigma = 0.39894228f / safe_sigma;
+  float4 corner_radii = float4(
+      shadow.corner_radii.top_left,
+      shadow.corner_radii.top_right,
+      shadow.corner_radii.bottom_right,
+      shadow.corner_radii.bottom_left);
+
+  if (rx1 <= rx0 || ry1 <= ry0) {
+    return ShadowVertexOutput{
+        float4(2.0f, 2.0f, 0.0f, 1.0f),
+        half4(rgba_color),
+        center,
+        half_size,
+        corner_radii,
+        float4(sigma, margin, inv_sqrt2_sigma, inv_2sigma2),
+        float3(shadow.content_mask.bottom_fade, mask_bottom_y, inv_sqrt2pi_sigma),
+        {-1.0f, -1.0f, -1.0f, -1.0f}};
+  }
+
+  float2 unit_vertex = unit_vertices[vertex_id % 6u];
+  Bounds_ScaledPixels bounds = make_sub_bounds(rx0, ry0, rx1, ry1);
+  float4 device_position = to_device_position(unit_vertex, bounds, viewport_size);
+  float4 clip_distance =
+      distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
+  return ShadowVertexOutput{
+      device_position,
+      half4(rgba_color),
+      center,
+      half_size,
+      corner_radii,
+      float4(sigma, margin, inv_sqrt2_sigma, inv_2sigma2),
+      float3(shadow.content_mask.bottom_fade, mask_bottom_y, inv_sqrt2pi_sigma),
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 struct UnderlineVertexOutput {
@@ -1694,14 +1966,212 @@ kernel void particle_tile_unpack_to_tex_kernel(
 
 constant bool kWaveHasImage [[function_constant(0)]];
 
+struct LiveVideoBufferInfo {
+  uint width;
+  uint height;
+  uint bytes_per_pixel;
+  uint has_alpha;
+};
+
+static inline float4 sample_live_video_linear(
+    device const uchar *pixels,
+    uint src_w,
+    uint src_h,
+    uint bpp,
+    uint has_alpha,
+    float2 uv) {
+  float fx = clamp(uv.x * float(src_w) - 0.5f, 0.0f, float(src_w - 1u));
+  float fy = clamp(uv.y * float(src_h) - 0.5f, 0.0f, float(src_h - 1u));
+  uint x0 = uint(fx);
+  uint y0 = uint(fy);
+  uint x1 = min(x0 + 1u, src_w - 1u);
+  uint y1 = min(y0 + 1u, src_h - 1u);
+  float tx = fx - float(x0);
+  float ty = fy - float(y0);
+
+  if (bpp == 4u) {
+    device const uchar4 *px4 = reinterpret_cast<device const uchar4 *>(pixels);
+    float4 p00 = float4(px4[y0 * src_w + x0]);
+    float4 p10 = float4(px4[y0 * src_w + x1]);
+    float4 p01 = float4(px4[y1 * src_w + x0]);
+    float4 p11 = float4(px4[y1 * src_w + x1]);
+    float4 rgba = mix(mix(p00, p10, tx), mix(p01, p11, tx), ty) * (1.0f / 255.0f);
+    return float4(rgba.rgb, (has_alpha != 0u) ? rgba.a : 1.0f);
+  }
+
+  uint i00 = (y0 * src_w + x0) * 3u;
+  uint i10 = (y0 * src_w + x1) * 3u;
+  uint i01 = (y1 * src_w + x0) * 3u;
+  uint i11 = (y1 * src_w + x1) * 3u;
+
+  float3 c00 = float3(pixels[i00], pixels[i00 + 1u], pixels[i00 + 2u]);
+  float3 c10 = float3(pixels[i10], pixels[i10 + 1u], pixels[i10 + 2u]);
+  float3 c01 = float3(pixels[i01], pixels[i01 + 1u], pixels[i01 + 2u]);
+  float3 c11 = float3(pixels[i11], pixels[i11 + 1u], pixels[i11 + 2u]);
+  float3 rgb = mix(mix(c00, c10, tx), mix(c01, c11, tx), ty) * (1.0f / 255.0f);
+  return float4(rgb, 1.0f);
+}
+
+static inline half4 compute_shaded_tile(
+    uint2 gid,
+    constant ParticleWaveUniforms *uniforms,
+    half4 facet,
+    bool has_img,
+    half4 img) {
+  float tileSize = max(round(uniforms->tile_size), 2.0f);
+  float subpixelShift = (tileSize <= 2.5f) ? 0.35f : 0.0f;
+  float2 fragPx = (float2(gid) + 0.5f) * tileSize - float2(subpixelShift);
+  float t = uniforms->time_sec;
+  float p1 = fma(fragPx.x, 0.00185f, fma(fragPx.y, 0.00105f, t * -0.6139f));
+  float p2 = fma(fragPx.x, 0.00120f, fma(fragPx.y, -0.00195f, t * 0.44185f));
+  float wave = fma(fast::sin(p1), 0.58f, fast::cos(p2) * 0.42f);
+
+  half hx = facet.a;
+  half align = saturate(fast::cos(half(wave * 1.25f) + (hx - 0.5h) * 1.35h));
+  half a2 = align * align;
+  half a3 = a2 * align;
+  half a4 = a2 * a2;
+  half a10 = a4 * a4 * a2;
+  half softGlow = saturate(half((wave + 0.25f) * (1.0f / 1.15f)));
+  softGlow = softGlow * softGlow * (3.0h - 2.0h * softGlow);
+  half glint = a3 * fma(softGlow, 0.80h, 0.20h);
+  half sharpSpark = a10 * softGlow;
+
+  half3 bevel_rgb = facet.rgb * fma(softGlow, 0.045h, glint * 0.14h);
+  half3 flat_extra = half3(0.010h, 0.014h, 0.022h) * fma(hx, 0.5h, 0.5h);
+
+  if (has_img) {
+    half img_scale = half(clamp(uniforms->image_peak_luminance, 0.0f, 1.0f) * 0.85f);
+    half facetShade = fma(hx, 0.45h, 0.65h);
+    half waveMod = fma(softGlow, 0.70h, fma(glint, 0.85h, 0.30h));
+    half alphaScale = img.a * img_scale;
+    bevel_rgb = fma(img.rgb, half3(facetShade * waveMod * alphaScale), bevel_rgb);
+    flat_extra = fma(img.rgb, half3(sharpSpark * 0.28h * alphaScale), flat_extra);
+  }
+
+  bevel_rgb += flat_extra * (1.0h / 0.97h);
+  return half4(bevel_rgb, sharpSpark);
+}
+
+kernel void particle_tile_unpack_shade_kernel(
+    device uint *tile_grid [[buffer(0)]],
+    texture2d<half, access::read> facet_lut_tex [[texture(0)]],
+    texture2d<half, access::write> tile_lit_tex [[texture(1)]],
+    constant ParticleWaveUniforms *uniforms [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= uniforms->grid_w || gid.y >= uniforms->grid_h) {
+    return;
+  }
+  uint idx = gid.y * uniforms->grid_w + gid.x;
+  uint packed = tile_grid[idx];
+  tile_grid[idx] = 0u;
+  half4 img = half4(0.0h);
+  if (packed != 0u) {
+    img = half4(
+        half((packed >> 16) & 0xFFu),
+        half((packed >> 8) & 0xFFu),
+        half(packed & 0xFFu),
+        half((packed >> 24) & 0xFFu)) * (1.0h / 255.0h);
+  }
+  half4 facet = facet_lut_tex.read(gid);
+  tile_lit_tex.write(compute_shaded_tile(gid, uniforms, facet, true, img), gid);
+}
+
+kernel void particle_tile_shade_kernel(
+    texture2d<half, access::read> facet_lut_tex [[texture(0)]],
+    texture2d<half, access::read> tile_img_tex [[texture(1)]],
+    texture2d<half, access::write> tile_lit_tex [[texture(2)]],
+    constant ParticleWaveUniforms *uniforms [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= uniforms->grid_w || gid.y >= uniforms->grid_h) {
+    return;
+  }
+  half4 facet = facet_lut_tex.read(gid);
+  half4 img = kWaveHasImage ? tile_img_tex.read(gid) : half4(0.0h);
+  tile_lit_tex.write(compute_shaded_tile(gid, uniforms, facet, kWaveHasImage, img), gid);
+}
+
+kernel void particle_tile_live_buf_shade_kernel(
+    texture2d<half, access::read> facet_lut_tex [[texture(0)]],
+    texture2d<half, access::write> tile_lit_tex [[texture(1)]],
+    constant ParticleWaveUniforms *uniforms [[buffer(0)]],
+    device const uchar *live_pixels [[buffer(1)]],
+    constant LiveVideoBufferInfo &info [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= uniforms->grid_w || gid.y >= uniforms->grid_h) {
+    return;
+  }
+  half4 facet = facet_lut_tex.read(gid);
+  float peakCap = clamp(uniforms->image_peak_luminance, 0.0f, 1.0f);
+  half4 img = half4(0.0h);
+  if (peakCap > 0.001f && info.width > 0u && info.height > 0u) {
+    float tileSize = max(round(uniforms->tile_size), 2.0f);
+    float2 srcPx = (float2(float(gid.x), float(gid.y)) + 0.5f) * tileSize;
+    float2 res = float2(uniforms->viewport_w, uniforms->viewport_h);
+    float2 imgSize = float2(float(info.width), float(info.height));
+    float imgAspect = imgSize.x / max(imgSize.y, 1.0f);
+    float viewAspect = res.x / max(res.y, 1.0f);
+    float drawW;
+    float drawH;
+    float2 origin;
+    bool heightFit = imgAspect <= viewAspect;
+    if (heightFit) {
+      drawH = res.y;
+      drawW = drawH * imgAspect;
+      origin = float2(res.x - drawW, 0.0f);
+    } else {
+      drawW = res.x;
+      drawH = drawW / max(imgAspect, 0.001f);
+      origin = float2(0.0f, (res.y - drawH) * 0.5f);
+    }
+    float2 uv = (srcPx - origin) / float2(drawW, drawH);
+    float4 s = float4(0.0f);
+    if (uv.x >= 0.0f && uv.x <= 1.0f && uv.y >= 0.0f && uv.y <= 1.0f) {
+      if (info.width == uniforms->grid_w && info.height == uniforms->grid_h &&
+          abs(origin.x) < 1.0f && abs(origin.y) < 1.0f) {
+        if (info.bytes_per_pixel == 4u) {
+          device const uchar4 *px4 = reinterpret_cast<device const uchar4 *>(live_pixels);
+          float4 p = float4(px4[gid.y * info.width + gid.x]) * (1.0f / 255.0f);
+          s = float4(p.rgb, (info.has_alpha != 0u) ? p.a : 1.0f);
+        } else {
+          uint idx = (gid.y * info.width + gid.x) * 3u;
+          float3 rgb = float3(live_pixels[idx], live_pixels[idx + 1u], live_pixels[idx + 2u]) * (1.0f / 255.0f);
+          s = float4(rgb, 1.0f);
+        }
+      } else {
+        s = sample_live_video_linear(
+            live_pixels, info.width, info.height, info.bytes_per_pixel, info.has_alpha, uv);
+      }
+      if (uniforms->fit_cover > 0.5f) {
+        if (heightFit && origin.x > 1.0f) {
+          s.a *= smoothstep(0.0f, 0.06f, uv.x);
+        } else if (!heightFit && origin.y > 1.0f) {
+          s.a *= smoothstep(0.0f, 0.06f, uv.y) * smoothstep(0.0f, 0.06f, 1.0f - uv.y);
+        }
+      }
+    }
+    if (s.a > 0.05f) {
+      float imgLuma = dot(s.rgb, float3(0.299f, 0.587f, 0.114f));
+      float imgSat = clamp(uniforms->image_saturation, 0.0f, 1.5f);
+      float3 imgAdj = max(mix(float3(imgLuma), s.rgb, imgSat), float3(0.0f));
+      imgAdj *= max(uniforms->image_brightness, 0.0f);
+      float imgPeak = max(imgAdj.r, max(imgAdj.g, imgAdj.b));
+      if (imgPeak > 1e-4f) {
+        float mapped = peakCap * (1.0f - fast::exp(-imgPeak / peakCap));
+        imgAdj *= (mapped / imgPeak);
+      }
+      img = half4(half3(saturate(imgAdj / peakCap)), half(saturate(s.a)));
+    }
+  }
+  tile_lit_tex.write(compute_shaded_tile(gid, uniforms, facet, true, img), gid);
+}
+
 struct ParticleWaveVertexOutput {
   float4 position [[position]];
   float2 grid_pos;
-  float2 wave_phase;
   half3 base_col [[flat]];
   half3 base_col_grout [[flat]];
   half inv_grout_tile [[flat]];
-  half img_scale [[flat]];
   half brightness [[flat]];
   uint2 max_cell [[flat]];
   float clip_distance [[clip_distance]][4];
@@ -1710,11 +2180,9 @@ struct ParticleWaveVertexOutput {
 struct ParticleWaveFragmentInput {
   float4 position [[position]];
   float2 grid_pos;
-  float2 wave_phase;
   half3 base_col [[flat]];
   half3 base_col_grout [[flat]];
   half inv_grout_tile [[flat]];
-  half img_scale [[flat]];
   half brightness [[flat]];
   uint2 max_cell [[flat]];
 };
@@ -1739,26 +2207,19 @@ vertex ParticleWaveVertexOutput particle_wave_vertex(
   float tileSize = max(round(uniforms->tile_size), 2.0);
   float2 subpixelShift = (tileSize <= 2.5f) ? float2(0.35f) : float2(0.0f);
   float2 grid_pos = (fragPx + subpixelShift) / tileSize;
-  float t = uniforms->time_sec;
-  float2 wave_phase = float2(
-      fma(fragPx.x, 0.00185f, fma(fragPx.y, 0.00105f, t * -0.6139f)),
-      fma(fragPx.x, 0.00120f, fma(fragPx.y, -0.00195f, t * 0.44185f)));
 
   half3 baseCol = half3(hsla_to_rgba(quad.background.solid).rgb);
   half brightness = half(max(quad.background.gradient_angle_or_pattern_height, 0.0));
   half groutWidth = half(min(1.35f, tileSize * 0.24f));
   half inv_grout_tile = half(tileSize) / groutWidth;
-  half img_scale = half(clamp(uniforms->image_peak_luminance, 0.0f, 1.0f) * 0.85f);
   uint2 max_cell = uint2(max(uniforms->grid_w, 1u) - 1u, max(uniforms->grid_h, 1u) - 1u);
 
   return ParticleWaveVertexOutput{
       device_position,
       grid_pos,
-      wave_phase,
       baseCol,
       baseCol * 0.86h,
       inv_grout_tile,
-      img_scale,
       brightness,
       max_cell,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
@@ -1766,8 +2227,7 @@ vertex ParticleWaveVertexOutput particle_wave_vertex(
 
 fragment half4 particle_wave_fragment(
     ParticleWaveFragmentInput input [[stage_in]],
-    texture2d<half, access::read> facet_lut_tex [[texture(0)]],
-    texture2d<half, access::read> tile_img_tex [[texture(1)]]) {
+    texture2d<half, access::read> tile_lit_tex [[texture(0)]]) {
   float2 gridPos = input.grid_pos;
   float2 cell = floor(gridPos);
   half2 local = half2(gridPos - cell);
@@ -1776,35 +2236,11 @@ fragment half4 particle_wave_fragment(
   half groutT = saturate(min(edgeFrac.x, edgeFrac.y) * input.inv_grout_tile);
   half tileMask = groutT * groutT * (3.0h - 2.0h * groutT);
 
-  uint2 cellU = min(uint2(max(cell, float2(0.0))), input.max_cell);
-  half4 facet = facet_lut_tex.read(cellU);
-  half hx = facet.a;
-
-  float wave = fma(fast::sin(input.wave_phase.x), 0.58f, fast::cos(input.wave_phase.y) * 0.42f);
-  half align = saturate(fast::cos(half(wave * 1.25f) + (hx - 0.5h) * 1.35h));
-  half a2 = align * align;
-  half a3 = a2 * align;
-  half a4 = a2 * a2;
-  half a10 = a4 * a4 * a2;
-  half softGlow = saturate(half((wave + 0.25f) * (1.0f / 1.15f)));
-  softGlow = softGlow * softGlow * (3.0h - 2.0h * softGlow);
-  half glint = a3 * fma(softGlow, 0.80h, 0.20h);
-  half sharpSpark = a10 * softGlow;
-
+  uint2 cellU = min(uint2(max(cell, float2(0.0f))), input.max_cell);
+  half4 lit = tile_lit_tex.read(cellU);
   half bevel = 1.06h - 0.12h * local.y - 0.06h * local.x;
-
-  half3 tileRgb = input.base_col + half3(0.010h, 0.014h, 0.022h) * fma(hx, 0.5h, 0.5h);
-  tileRgb += facet.rgb * (fma(softGlow, 0.045h, glint * 0.14h) * bevel);
-  tileRgb += half3(0.072h, 0.082h, 0.096h) * sharpSpark;
-
-  if (kWaveHasImage) {
-    half4 img = tile_img_tex.read(cellU);
-    half facetShade = fma(hx, 0.45h, 0.65h);
-    half waveMod = fma(softGlow, 0.70h, fma(glint, 0.85h, 0.30h));
-    half coeff = (facetShade * bevel * waveMod + sharpSpark * 0.28h) * (img.a * input.img_scale);
-    tileRgb = fma(img.rgb, half3(coeff), tileRgb);
-  }
-
+  half3 tileRgb = fma(lit.rgb, half3(bevel),
+                      fma(half3(0.072h, 0.082h, 0.096h), half3(lit.a), input.base_col));
   half3 finalCol = mix(input.base_col_grout, tileRgb, tileMask) * input.brightness;
   return half4(saturate(finalCol), 1.0h);
 }
@@ -2394,6 +2830,447 @@ fragment half4 liquid_glass_synced_fragment(
   float fade = input.mask_inv_res.x;
   if (fade > 0.5) {
     mask_fade = half(smoothstep(0.0, fade, input.mask_inv_res.y - fragPx.y));
+  }
+  half outA = mix(tint.a, 1.0h, bgVis) * glassMask;
+  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade;
+  return half4(col, outA);
+}
+
+fragment half4 liquid_glass_synced_sharp_fragment(
+    LiquidGlassSyncedFragmentInput input [[stage_in]],
+    constant float *time_sec [[buffer(3)]],
+    texture2d<half> backdrop_tex [[texture(0)]],
+    sampler backdrop_samp [[sampler(0)]],
+    half4 dst [[color(0)]]) {
+  float2 fragPx = input.position.xy;
+
+  if (fragPx.x > input.inner_rect.x && fragPx.y > input.inner_rect.y &&
+      fragPx.x < input.inner_rect.z && fragPx.y < input.inner_rect.w) {
+    half4 tint = input.tint;
+    half bgVis = saturate(dst.a);
+    half3 backdropRgb = bgVis > 0.001h ? dst.rgb : tint.rgb;
+    half3 col = mix(backdropRgb, tint.rgb, tint.a);
+    half mask_fade = 1.0h;
+    float fade = input.mask_inv_res.x;
+    if (fade > 0.5) {
+      mask_fade = half(smoothstep(0.0, fade, input.mask_inv_res.y - fragPx.y));
+    }
+    half outA = mix(tint.a, 1.0h, bgVis) * mask_fade;
+    return half4(mix(dst.rgb, col, outA), saturate(outA + dst.a));
+  }
+
+  float2 rel = fragPx - input.pcenter;
+  float r = (rel.x < 0.0)
+      ? ((rel.y < 0.0) ? input.corner_radii.x : input.corner_radii.w)
+      : ((rel.y < 0.0) ? input.corner_radii.y : input.corner_radii.z);
+
+  float2 q = abs(rel) - input.phalf + r;
+  float d = min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0))) - r;
+  half glassMask = half(1.0 - smoothstep(-1.0, 1.0, d));
+  if (glassMask <= 0.001h) {
+    return dst;
+  }
+
+  float dispScale = input.glass_params.x;
+  float reach = input.glass_params.y;
+  float inv_reach = input.glass_params.z;
+
+  float bend = 0.0;
+  float2 dispPx = float2(0.0);
+  if (-d < reach && dispScale > 0.001) {
+    float ex;
+    float ey;
+    if (q.x >= q.y) {
+      ex = 1.0;
+      ey = fast::exp((q.y - q.x) * inv_reach);
+    } else {
+      ex = fast::exp((q.x - q.y) * inv_reach);
+      ey = 1.0;
+    }
+    float2 gradN = normalize(float2((rel.x >= 0.0 ? 1.0 : -1.0) * ex,
+                                    (rel.y >= 0.0 ? 1.0 : -1.0) * ey) + float2(1e-5));
+    float xDepth = saturate(-d * inv_reach);
+    float omx = 1.0 - xDepth;
+    float omx3 = omx * omx * omx;
+    float omx4 = omx3 * omx;
+    float denom = max(1.0 - omx4, 1e-4);
+    float inv_s = rsqrt(denom);
+    float slope = omx3 * inv_s * sqrt(inv_s);
+    float inv = rsqrt(fma(slope, slope, 1.0));
+    float sinI = slope * inv;
+    float sinT = sinI * 0.6666667;
+    float cosT = sqrt(max(1.0 - sinT * sinT, 0.0));
+    bend = fma(sinI, cosT, -inv * sinT);
+    dispPx = -gradN * (bend * dispScale * float(glassMask));
+  }
+
+  float2 invRes = input.mask_inv_res.zw;
+  float2 uvMin = float2(0.0005);
+  float2 uvMax = float2(0.9995);
+  float2 refractUV = clamp((fragPx + dispPx) * invRes, uvMin, uvMax);
+  half4 bgSample = backdrop_tex.sample(backdrop_samp, refractUV, level(0.0));
+
+  float chroma = input.extra_params.x;
+  if (chroma > 0.001 && bend > 0.0001) {
+    float k = chroma * 0.6;
+    float2 rUV = clamp((fragPx + dispPx * (1.0 - k)) * invRes, uvMin, uvMax);
+    float2 bUV = clamp((fragPx + dispPx * (1.0 + k)) * invRes, uvMin, uvMax);
+    half rCh = backdrop_tex.sample(backdrop_samp, rUV, level(0.0)).r;
+    half bCh = backdrop_tex.sample(backdrop_samp, bUV, level(0.0)).b;
+    bgSample.rgb = half3(rCh, bgSample.g, bCh);
+  }
+
+  half4 tint = input.tint;
+  half bgVis = saturate(bgSample.a);
+  half3 backdropRgb = bgVis > 0.001h ? bgSample.rgb : tint.rgb;
+  half3 col = mix(backdropRgb, tint.rgb, tint.a);
+  col += half3(0.72h, 0.86h, 1.0h) * (half(bend) * 0.015h * glassMask);
+
+  half edgeGlow = 0.0h;
+  half razor = half((1.0 - smoothstep(0.0, 1.25, -d)) * step(d, 0.0));
+  if (razor > 0.001h) {
+    float t = *time_sec;
+    float p1 = fma(fragPx.x, 0.00185, fma(fragPx.y, 0.00105, t * -0.6139));
+    float p2 = fma(fragPx.x, 0.00120, fma(fragPx.y, -0.00195, t * 0.44185));
+    float wave = fma(fast::sin(p1), 0.58, fast::cos(p2) * 0.42);
+    half waveCrest = half(smoothstep(-0.35, 0.90, wave));
+    float2 waveGrad = normalize(
+      float2(0.00185, 0.00105) * (fast::cos(p1) * 0.58)
+      - float2(0.00120, -0.00195) * (fast::sin(p2) * 0.42)
+      + float2(1e-5)
+    );
+    float2 edgeDir = normalize(rel + float2(1e-5));
+    half dirRaw = half(saturate(dot(edgeDir, waveGrad) * 0.5 + 0.5));
+    float topY = input.pcenter.y - input.phalf.y;
+    half yNorm = half(saturate((fragPx.y - topY) * input.extra_params.w));
+    half oneMinusY = 1.0h - yNorm;
+    half topFade = oneMinusY * oneMinusY;
+
+    half3 syncHue = saturate(backdropRgb * 2.8h + half3(0.10h));
+    half3 tintHue = saturate(tint.rgb * 3.2h + half3(0.28h));
+    half3 tintC = mix(syncHue, half3(0.92h, 0.94h, 0.98h), 0.28h);
+    half specCtrl = half(saturate(input.extra_params.y));
+    half amp = 0.16h + specCtrl * 0.56h;
+    float edgeTintKind = input.extra_params.z;
+    if (edgeTintKind > 0.75) {
+      tintC = mix(syncHue, tintHue, 0.72h);
+      amp = 0.28h + specCtrl * 0.68h;
+    } else if (edgeTintKind > 0.25) {
+      tintC = mix(syncHue, tintHue, 0.70h);
+      amp = 0.28h + specCtrl * 0.68h;
+    }
+    half glint = topFade * 0.30h + (dirRaw * dirRaw * dirRaw) * (0.30h + 0.85h * waveCrest);
+    half e = razor * (0.10h + glint * amp);
+    col = col + tintC * e * glassMask;
+    edgeGlow = e;
+  }
+
+  half mask_fade = 1.0h;
+  float fade = input.mask_inv_res.x;
+  if (fade > 0.5) {
+    mask_fade = half(smoothstep(0.0, fade, input.mask_inv_res.y - fragPx.y));
+  }
+  half outA = mix(tint.a, 1.0h, bgVis) * glassMask;
+  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade;
+  return half4(mix(dst.rgb, col, outA), saturate(outA + dst.a));
+}
+
+struct LiquidGlassInteriorVertexOutput {
+  float4 position [[position]];
+  half4 tint [[flat]];
+  float2 mask_params [[flat]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct LiquidGlassInteriorFragmentInput {
+  float4 position [[position]];
+  half4 tint [[flat]];
+  float2 mask_params [[flat]];
+};
+
+static inline void compute_glass_inner_bounds(
+    Quad quad,
+    constant Size_DevicePixels *viewport_size,
+    thread float &ox0, thread float &oy0, thread float &ox1, thread float &oy1,
+    thread float &ix0, thread float &iy0, thread float &ix1, thread float &iy1) {
+  float2 origin = float2(quad.bounds.origin.x, quad.bounds.origin.y);
+  float2 psize = float2(quad.bounds.size.width, quad.bounds.size.height);
+  float2 phalf = psize * 0.5f;
+  float min_half = min(phalf.x, phalf.y);
+  float max_r = max(
+      max(min(quad.corner_radii.top_left, min_half), min(quad.corner_radii.top_right, min_half)),
+      max(min(quad.corner_radii.bottom_right, min_half), min(quad.corner_radii.bottom_left, min_half)));
+  float reach = clamp(quad.background.colors[0].percentage * 2.0f, 1.0f, max(min_half, 1.0f));
+  float reach_eff = max(reach, 2.0f);
+  float safe_inset = max(reach_eff, 0.29289322f * max_r + 0.70710678f * reach_eff) + 1.5f;
+  float2 vp = max(float2((float)viewport_size->width, (float)viewport_size->height), float2(1.0f));
+  float2 vp_guard = max(vp * 0.0005f + 1.0f, float2(2.0f));
+  float2 inner_min = max(origin + safe_inset, vp_guard);
+  float2 inner_max = min(origin + psize - safe_inset, vp - vp_guard);
+
+  ox0 = floor(origin.x);
+  oy0 = floor(origin.y);
+  ox1 = ceil(origin.x + psize.x);
+  oy1 = ceil(origin.y + psize.y);
+  ix0 = clamp(ceil(inner_min.x), ox0, ox1);
+  iy0 = clamp(ceil(inner_min.y), oy0, oy1);
+  ix1 = clamp(floor(inner_max.x), ix0, ox1);
+  iy1 = clamp(floor(inner_max.y), iy0, oy1);
+}
+
+vertex LiquidGlassInteriorVertexOutput liquid_glass_synced_interior_vertex(
+    uint unit_vertex_id [[vertex_id]], uint quad_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(QuadInputIndex_Vertices)]],
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(QuadInputIndex_ViewportSize)]]) {
+  Quad quad = quads[quad_id];
+  half4 tint = half4(hsla_to_rgba(quad.background.solid));
+  float mask_bottom_y =
+      quad.content_mask.bounds.origin.y + quad.content_mask.bounds.size.height;
+
+  float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
+  compute_glass_inner_bounds(quad, viewport_size, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+  if (ix1 <= ix0 || iy1 <= iy0) {
+    return LiquidGlassInteriorVertexOutput{
+        float4(2.0f, 2.0f, 0.0f, 1.0f),
+        tint,
+        float2(quad.content_mask.bottom_fade, mask_bottom_y),
+        {-1.0f, -1.0f, -1.0f, -1.0f}};
+  }
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  Bounds_ScaledPixels bounds = make_sub_bounds(ix0, iy0, ix1, iy1);
+  float4 device_position = to_device_position(unit_vertex, bounds, viewport_size);
+  float4 clip_distance =
+      distance_from_clip_rect(unit_vertex, bounds, quad.content_mask.bounds);
+  return LiquidGlassInteriorVertexOutput{
+      device_position,
+      tint,
+      float2(quad.content_mask.bottom_fade, mask_bottom_y),
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment half4 liquid_glass_synced_interior_fragment(
+    LiquidGlassInteriorFragmentInput input [[stage_in]],
+    half4 dst [[color(0)]]) {
+  half4 tint = input.tint;
+  half bgVis = saturate(dst.a);
+  half3 backdropRgb = bgVis > 0.001h ? dst.rgb : tint.rgb;
+  half3 col = mix(backdropRgb, tint.rgb, tint.a);
+  half mask_fade = 1.0h;
+  float fade = input.mask_params.x;
+  if (fade > 0.5f) {
+    mask_fade = half(smoothstep(0.0f, fade, input.mask_params.y - input.position.y));
+  }
+  half outA = mix(tint.a, 1.0h, bgVis) * mask_fade;
+  return half4(mix(dst.rgb, col, outA), saturate(outA + dst.a));
+}
+
+vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_rim_vertex(
+    uint vertex_id [[vertex_id]], uint quad_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(QuadInputIndex_Vertices)]],
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(QuadInputIndex_ViewportSize)]]) {
+  Quad quad = quads[quad_id];
+  half4 tint = half4(hsla_to_rgba(quad.background.solid));
+
+  float2 psize = float2(quad.bounds.size.width, quad.bounds.size.height);
+  float2 phalf = psize * 0.5f;
+  float2 pcenter = float2(quad.bounds.origin.x, quad.bounds.origin.y) + phalf;
+  float min_half = min(phalf.x, phalf.y);
+  float4 corner_radii = float4(
+      min(quad.corner_radii.top_left, min_half),
+      min(quad.corner_radii.top_right, min_half),
+      min(quad.corner_radii.bottom_right, min_half),
+      min(quad.corner_radii.bottom_left, min_half));
+
+  float dispScale = quad.background.gradient_angle_or_pattern_height * 2.0f;
+  float refractReach = quad.background.colors[0].percentage * 2.0f;
+  float reach = clamp(refractReach, 1.0f, max(min_half, 1.0f));
+  float inv_reach = 1.0f / reach;
+  float blurPx = quad.background.colors[1].percentage * 2.0f;
+
+  float chroma = quad.background.colors[0].color.s;
+  float highlightAlpha = quad.background.colors[0].color.a;
+  float edgeTintKind = quad.background.colors[1].color.s;
+  float inv_psize_y_085 = 1.0f / max(psize.y * 0.85f, 1.0f);
+
+  float2 vp = max(float2((float)viewport_size->width, (float)viewport_size->height), float2(1.0f));
+  float2 inv_res = 1.0f / vp;
+  float mask_bottom_y =
+      quad.content_mask.bounds.origin.y + quad.content_mask.bounds.size.height;
+
+  float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
+  compute_glass_inner_bounds(quad, viewport_size, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+
+  uint sub = vertex_id / 6u;
+  float rx0, ry0, rx1, ry1;
+  bool has_hole = (ix1 > ix0) && (iy1 > iy0);
+  if (!has_hole) {
+    if (sub == 0u) {
+      rx0 = ox0; ry0 = oy0; rx1 = ox1; ry1 = oy1;
+    } else {
+      rx0 = ox0; ry0 = oy0; rx1 = ox0; ry1 = oy0;
+    }
+  } else if (sub == 0u) {
+    rx0 = ox0; ry0 = oy0; rx1 = ox1; ry1 = iy0;
+  } else if (sub == 1u) {
+    rx0 = ox0; ry0 = iy1; rx1 = ox1; ry1 = oy1;
+  } else if (sub == 2u) {
+    rx0 = ox0; ry0 = iy0; rx1 = ix0; ry1 = iy1;
+  } else {
+    rx0 = ix1; ry0 = iy0; rx1 = ox1; ry1 = iy1;
+  }
+
+  if (rx1 <= rx0 || ry1 <= ry0) {
+    return LiquidGlassSyncedVertexOutput{
+        float4(2.0f, 2.0f, 0.0f, 1.0f),
+        tint,
+        pcenter,
+        phalf,
+        corner_radii,
+        float4(dispScale, reach, inv_reach, blurPx),
+        float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
+        float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
+        float4(0.0f),
+        {-1.0f, -1.0f, -1.0f, -1.0f}};
+  }
+
+  float2 unit_vertex = unit_vertices[vertex_id % 6u];
+  Bounds_ScaledPixels bounds = make_sub_bounds(rx0, ry0, rx1, ry1);
+  float4 device_position = to_device_position(unit_vertex, bounds, viewport_size);
+  float4 clip_distance =
+      distance_from_clip_rect(unit_vertex, bounds, quad.content_mask.bounds);
+  return LiquidGlassSyncedVertexOutput{
+      device_position,
+      tint,
+      pcenter,
+      phalf,
+      corner_radii,
+      float4(dispScale, reach, inv_reach, blurPx),
+      float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
+      float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
+      float4(0.0f),
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment half4 liquid_glass_synced_rim_fragment(
+    LiquidGlassSyncedFragmentInput input [[stage_in]],
+    constant float *time_sec [[buffer(3)]],
+    texture2d<half> backdrop_tex [[texture(0)]],
+    sampler backdrop_samp [[sampler(0)]]) {
+  float2 fragPx = input.position.xy;
+  float2 rel = fragPx - input.pcenter;
+  float r = (rel.x < 0.0f)
+      ? ((rel.y < 0.0f) ? input.corner_radii.x : input.corner_radii.w)
+      : ((rel.y < 0.0f) ? input.corner_radii.y : input.corner_radii.z);
+
+  float2 q = abs(rel) - input.phalf + r;
+  float d = min(max(q.x, q.y), 0.0f) + length(max(q, float2(0.0f))) - r;
+  half glassMask = half(1.0f - smoothstep(-1.0f, 1.0f, d));
+  if (glassMask <= 0.001h) {
+    discard_fragment();
+  }
+
+  float dispScale = input.glass_params.x;
+  float reach = input.glass_params.y;
+  float inv_reach = input.glass_params.z;
+
+  float bend = 0.0f;
+  float2 dispPx = float2(0.0f);
+  if (-d < reach && dispScale > 0.001f) {
+    float ex;
+    float ey;
+    if (q.x >= q.y) {
+      ex = 1.0f;
+      ey = fast::exp((q.y - q.x) * inv_reach);
+    } else {
+      ex = fast::exp((q.x - q.y) * inv_reach);
+      ey = 1.0f;
+    }
+    float2 gradN = normalize(float2((rel.x >= 0.0f ? 1.0f : -1.0f) * ex,
+                                    (rel.y >= 0.0f ? 1.0f : -1.0f) * ey) + float2(1e-5f));
+    float xDepth = saturate(-d * inv_reach);
+    float omx = 1.0f - xDepth;
+    float omx3 = omx * omx * omx;
+    float omx4 = omx3 * omx;
+    float denom = max(1.0f - omx4, 1e-4f);
+    float inv_s = rsqrt(denom);
+    float slope = omx3 * inv_s * sqrt(inv_s);
+    float inv = rsqrt(fma(slope, slope, 1.0f));
+    float sinI = slope * inv;
+    float sinT = sinI * 0.6666667f;
+    float cosT = sqrt(max(1.0f - sinT * sinT, 0.0f));
+    bend = fma(sinI, cosT, -inv * sinT);
+    dispPx = -gradN * (bend * dispScale * float(glassMask));
+  }
+
+  float2 invRes = input.mask_inv_res.zw;
+  float2 uvMin = float2(0.0005f);
+  float2 uvMax = float2(0.9995f);
+  float2 refractUV = clamp((fragPx + dispPx) * invRes, uvMin, uvMax);
+  half4 bgSample = backdrop_tex.sample(backdrop_samp, refractUV, level(0.0));
+
+  float chroma = input.extra_params.x;
+  if (chroma > 0.001f && bend > 0.0001f) {
+    float k = chroma * 0.6f;
+    float2 rUV = clamp((fragPx + dispPx * (1.0f - k)) * invRes, uvMin, uvMax);
+    float2 bUV = clamp((fragPx + dispPx * (1.0f + k)) * invRes, uvMin, uvMax);
+    half rCh = backdrop_tex.sample(backdrop_samp, rUV, level(0.0)).r;
+    half bCh = backdrop_tex.sample(backdrop_samp, bUV, level(0.0)).b;
+    bgSample.rgb = half3(rCh, bgSample.g, bCh);
+  }
+
+  half4 tint = input.tint;
+  half bgVis = saturate(bgSample.a);
+  half3 backdropRgb = bgVis > 0.001h ? bgSample.rgb : tint.rgb;
+  half3 col = mix(backdropRgb, tint.rgb, tint.a);
+  col += half3(0.72h, 0.86h, 1.0h) * (half(bend) * 0.015h * glassMask);
+
+  half edgeGlow = 0.0h;
+  half razor = half((1.0f - smoothstep(0.0f, 1.25f, -d)) * step(d, 0.0f));
+  if (razor > 0.001h) {
+    float t = *time_sec;
+    float p1 = fma(fragPx.x, 0.00185f, fma(fragPx.y, 0.00105f, t * -0.6139f));
+    float p2 = fma(fragPx.x, 0.00120f, fma(fragPx.y, -0.00195f, t * 0.44185f));
+    float wave = fma(fast::sin(p1), 0.58f, fast::cos(p2) * 0.42f);
+    half waveCrest = half(smoothstep(-0.35f, 0.90f, wave));
+    float2 waveGrad = normalize(
+      float2(0.00185f, 0.00105f) * (fast::cos(p1) * 0.58f)
+      - float2(0.00120f, -0.00195f) * (fast::sin(p2) * 0.42f)
+      + float2(1e-5f)
+    );
+    float2 edgeDir = normalize(rel + float2(1e-5f));
+    half dirRaw = half(saturate(dot(edgeDir, waveGrad) * 0.5f + 0.5f));
+    float topY = input.pcenter.y - input.phalf.y;
+    half yNorm = half(saturate((fragPx.y - topY) * input.extra_params.w));
+    half oneMinusY = 1.0h - yNorm;
+    half topFade = oneMinusY * oneMinusY;
+
+    half3 syncHue = saturate(backdropRgb * 2.8h + half3(0.10h));
+    half3 tintHue = saturate(tint.rgb * 3.2h + half3(0.28h));
+    half3 tintC = mix(syncHue, half3(0.92h, 0.94h, 0.98h), 0.28h);
+    half specCtrl = half(saturate(input.extra_params.y));
+    half amp = 0.16h + specCtrl * 0.56h;
+    float edgeTintKind = input.extra_params.z;
+    if (edgeTintKind > 0.75f) {
+      tintC = mix(syncHue, tintHue, 0.72h);
+      amp = 0.28h + specCtrl * 0.68h;
+    } else if (edgeTintKind > 0.25f) {
+      tintC = mix(syncHue, tintHue, 0.70h);
+      amp = 0.28h + specCtrl * 0.68h;
+    }
+    half glint = topFade * 0.30h + (dirRaw * dirRaw * dirRaw) * (0.30h + 0.85h * waveCrest);
+    half e = razor * (0.10h + glint * amp);
+    col = col + tintC * e * glassMask;
+    edgeGlow = e;
+  }
+
+  half mask_fade = 1.0h;
+  float fade = input.mask_inv_res.x;
+  if (fade > 0.5f) {
+    mask_fade = half(smoothstep(0.0f, fade, input.mask_inv_res.y - fragPx.y));
   }
   half outA = mix(tint.a, 1.0h, bgVis) * glassMask;
   outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade;

@@ -19,6 +19,9 @@
   let serverReachable = false;
   let lastSentWidth = 0;
   let lastSentHeight = 0;
+  let lastCapturedVideo = null;
+  let lastCapturedTime = -1;
+  let lastSentAt = 0;
   let hasSentFrame = false;
   let inFlight = false;
   let timerId = null;
@@ -148,11 +151,11 @@
     let needW;
     let needH;
     if (videoAspect > gridAspect) {
-      needH = gridH;
-      needW = gridH * videoAspect;
-    } else {
       needW = gridW;
       needH = gridW / videoAspect;
+    } else {
+      needH = gridH;
+      needW = gridH * videoAspect;
     }
 
     const scale = Math.min(1, videoW / needW, videoH / needH, maxW / needW, maxH / needH);
@@ -238,6 +241,9 @@
     hasSentFrame = false;
     lastSentWidth = 0;
     lastSentHeight = 0;
+    lastCapturedVideo = null;
+    lastCapturedTime = -1;
+    lastSentAt = 0;
     const p = ensurePort();
     if (!p) {
       return;
@@ -310,11 +316,23 @@
         return;
       }
 
+      if (
+        hasSentFrame &&
+        video === lastCapturedVideo &&
+        video.currentTime === lastCapturedTime &&
+        dims.width === lastSentWidth &&
+        dims.height === lastSentHeight &&
+        startedAt - lastSentAt < 600
+      ) {
+        return;
+      }
+
       const context = ensureCanvas(dims.width, dims.height);
       if (!context) {
         return;
       }
 
+      const capturedTime = video.currentTime;
       let dataUrl;
       try {
         context.drawImage(video, 0, 0, dims.width, dims.height);
@@ -340,6 +358,9 @@
       applyServerMetadata(result.data);
       if (result.data && result.data.accepted) {
         hasSentFrame = true;
+        lastCapturedVideo = video;
+        lastCapturedTime = capturedTime;
+        lastSentAt = performance.now();
         lastSentWidth = dims.width;
         lastSentHeight = dims.height;
       }

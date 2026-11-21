@@ -176,6 +176,16 @@ pub struct LivePerfSnapshot {
     pub blit_full_frame_ratio_avg: f64,
     /// Rolling average instance buffer bytes uploaded per frame.
     pub instance_bytes_avg: f64,
+    /// Cumulative live video frames ingested from external mirror sources.
+    pub live_video_frames_received: u64,
+    /// Latest live video frame width and height in pixels.
+    pub live_video_dims_px: [u32; 2],
+    /// Rolling live video encoded payload bytes average.
+    pub live_video_payload_bytes_avg: f64,
+    /// Rolling CPU time spent decoding incoming live video frames (microseconds).
+    pub live_video_decode_us: MetricSummary,
+    /// Rolling main-thread CPU time spent uploading live video frames to Metal (microseconds).
+    pub live_video_upload_us: MetricSummary,
 }
 
 struct PerfCollector {
@@ -196,6 +206,11 @@ struct PerfCollector {
     live_gpu_allocated_peak_bytes: u64,
     live_dropped_18ms: u64,
     live_dropped_33ms: u64,
+    live_video_frames_received: u64,
+    live_video_dims_px: [u32; 2],
+    live_video_payload_bytes: VecDeque<u64>,
+    live_video_decode_us: VecDeque<u64>,
+    live_video_upload_us: VecDeque<u64>,
 }
 
 impl Default for PerfCollector {
@@ -218,6 +233,11 @@ impl Default for PerfCollector {
             live_gpu_allocated_peak_bytes: 0,
             live_dropped_18ms: 0,
             live_dropped_33ms: 0,
+            live_video_frames_received: 0,
+            live_video_dims_px: [0, 0],
+            live_video_payload_bytes: VecDeque::with_capacity(LIVE_RING_CAP),
+            live_video_decode_us: VecDeque::with_capacity(LIVE_RING_CAP),
+            live_video_upload_us: VecDeque::with_capacity(LIVE_RING_CAP),
         }
     }
 }
@@ -402,6 +422,36 @@ pub fn record_window_draw(sample: WindowDrawSample) {
     }
 }
 
+/// Record live video frame ingest and decode latency (microseconds).
+pub fn record_live_video_decode(width: u32, height: u32, payload_bytes: u64, decode_us: u64) {
+    if !LIVE_ENABLED.load(Ordering::Relaxed) && !BENCH_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut guard = COLLECTOR.lock();
+    guard.live_video_frames_received = guard.live_video_frames_received.saturating_add(1);
+    guard.live_video_dims_px = [width, height];
+    if guard.live_video_payload_bytes.len() >= LIVE_RING_CAP {
+        guard.live_video_payload_bytes.pop_front();
+    }
+    guard.live_video_payload_bytes.push_back(payload_bytes);
+    if guard.live_video_decode_us.len() >= LIVE_RING_CAP {
+        guard.live_video_decode_us.pop_front();
+    }
+    guard.live_video_decode_us.push_back(decode_us);
+}
+
+/// Record main-thread CPU time spent syncing/uploading a live video frame to Metal (microseconds).
+pub fn record_live_video_upload(upload_us: u64) {
+    if !LIVE_ENABLED.load(Ordering::Relaxed) && !BENCH_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut guard = COLLECTOR.lock();
+    if guard.live_video_upload_us.len() >= LIVE_RING_CAP {
+        guard.live_video_upload_us.pop_front();
+    }
+    guard.live_video_upload_us.push_back(upload_us);
+}
+
 /// Drain and return all accumulated CPU-side Metal frame samples.
 pub fn drain_metal_samples() -> Vec<MetalFrameSample> {
     let mut guard = COLLECTOR.lock();
@@ -552,6 +602,15 @@ pub fn live_snapshot() -> LivePerfSnapshot {
         .sum::<f64>()
         / mf;
 
+    let lv_payload_avg = if guard.live_video_payload_bytes.is_empty() {
+        0.0
+    } else {
+        guard.live_video_payload_bytes.iter().map(|&v| v as f64).sum::<f64>()
+            / guard.live_video_payload_bytes.len() as f64
+    };
+    let lv_decode: Vec<u64> = guard.live_video_decode_us.iter().copied().collect();
+    let lv_upload: Vec<u64> = guard.live_video_upload_us.iter().copied().collect();
+
     LivePerfSnapshot {
         live_enabled,
         total_frames_presented: guard.total_frames_presented,
@@ -582,5 +641,10 @@ pub fn live_snapshot() -> LivePerfSnapshot {
         blit_count_avg,
         blit_full_frame_ratio_avg,
         instance_bytes_avg,
+        live_video_frames_received: guard.live_video_frames_received,
+        live_video_dims_px: guard.live_video_dims_px,
+        live_video_payload_bytes_avg: lv_payload_avg,
+        live_video_decode_us: summarize_u64(&lv_decode, 1.0),
+        live_video_upload_us: summarize_u64(&lv_upload, 1.0),
     }
 }

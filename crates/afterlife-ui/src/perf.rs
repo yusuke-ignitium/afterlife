@@ -257,6 +257,13 @@ pub fn live_runtime_metrics_json() -> Value {
             "blit_full_frame_ratio_avg": round3(live.blit_full_frame_ratio_avg),
             "instance_bytes_avg": live.instance_bytes_avg.round() as u64,
         },
+        "live_video": {
+            "frames_received": live.live_video_frames_received,
+            "dims_px": live.live_video_dims_px,
+            "payload_kb_avg": round2(live.live_video_payload_bytes_avg / 1024.0),
+            "decode_us": summary_value(live.live_video_decode_us),
+            "upload_us": summary_value(live.live_video_upload_us),
+        },
     })
 }
 

@@ -748,6 +748,27 @@ struct ParticleTileGridCacheKey {
     phase_stage: u8,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LiveVideoBufferInfo {
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+    has_alpha: u32,
+}
+
+struct LiveVideoGpuState {
+    generation: u64,
+    buffers: [metal::Buffer; 2],
+    capacity: usize,
+    active_slot: usize,
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+    has_alpha: u32,
+    updated_at: Instant,
+}
+
 pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
@@ -755,14 +776,16 @@ pub(crate) struct MetalRenderer {
     command_queue: CommandQueue,
     paths_rasterization_pipeline_state: metal::RenderPipelineState,
     path_sprites_pipeline_state: metal::RenderPipelineState,
-    shadows_pipeline_state: metal::RenderPipelineState,
+    shadow_solid_pipeline_state: metal::RenderPipelineState,
+    shadow_edge_pipeline_state: metal::RenderPipelineState,
+    shadow_corner_pipeline_state: metal::RenderPipelineState,
     quads_pipeline_state: metal::RenderPipelineState,
     solid_quads_pipeline_state: metal::RenderPipelineState,
     liquid_glass_pipeline_state: metal::RenderPipelineState,
-    liquid_glass_synced_sharp_pipeline_state: metal::RenderPipelineState,
+    liquid_glass_synced_interior_pipeline_state: metal::RenderPipelineState,
+    liquid_glass_synced_rim_pipeline_state: metal::RenderPipelineState,
     liquid_glass_synced_blur_pipeline_state: metal::RenderPipelineState,
     particle_wave_pipeline_state: metal::RenderPipelineState,
-    particle_wave_no_image_pipeline_state: metal::RenderPipelineState,
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
@@ -791,7 +814,7 @@ pub(crate) struct MetalRenderer {
     backdrop_pending_override: Option<(u64, metal::Texture, [f32; 3])>,
     backdrop_active_override: Option<(u64, metal::Texture, [f32; 3])>,
     backdrop_live_video_seen_gen: u64,
-    backdrop_live_video: Option<(u64, metal::Texture, [f32; 3], Instant)>,
+    backdrop_live_video: Option<LiveVideoGpuState>,
     backdrop_active_source: ActiveBackdropSource,
     backdrop_phase_stage: u8,
     backdrop_phase_elapsed: f32,
@@ -800,11 +823,16 @@ pub(crate) struct MetalRenderer {
     particle_tile_scatter_pipeline: metal::ComputePipelineState,
     particle_tile_hold_pipeline: metal::ComputePipelineState,
     particle_tile_unpack_pipeline: metal::ComputePipelineState,
+    particle_tile_unpack_shade_pipeline: metal::ComputePipelineState,
     particle_facet_lut_pipeline: metal::ComputePipelineState,
+    particle_tile_shade_pipeline: metal::ComputePipelineState,
+    particle_tile_shade_no_image_pipeline: metal::ComputePipelineState,
+    particle_tile_live_buf_shade_pipeline: metal::ComputePipelineState,
     particle_tile_grid_buffer: metal::Buffer,
     particle_tile_grid_capacity: usize,
     particle_tile_grid_needs_clear: bool,
     particle_tile_img_texture: Option<metal::Texture>,
+    particle_tile_lit_texture: Option<metal::Texture>,
     particle_tile_grid_cache_key: Option<ParticleTileGridCacheKey>,
     particle_facet_lut_texture: Option<metal::Texture>,
     particle_facet_lut_cache_key: Option<FacetLutCacheKey>,
@@ -902,11 +930,27 @@ impl MetalRenderer {
             "path_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
-        let shadows_pipeline_state = build_pipeline_state(
+        let shadow_solid_pipeline_state = build_pipeline_state(
             &device,
             &library,
-            "shadows",
-            "shadow_vertex",
+            "shadow_solid",
+            "shadow_solid_vertex",
+            "shadow_solid_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
+        let shadow_edge_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "shadow_edge",
+            "shadow_edge_vertex",
+            "shadow_edge_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
+        let shadow_corner_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "shadow_corner",
+            "shadow_corner_vertex",
             "shadow_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
@@ -934,15 +978,31 @@ impl MetalRenderer {
             "liquid_glass_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
-        let liquid_glass_synced_sharp_pipeline_state = build_pipeline_state_with_bool_constant(
+        let liquid_glass_synced_interior_pipeline_state = {
+            let desc = metal::RenderPipelineDescriptor::new();
+            desc.set_label("liquid_glass_synced_interior");
+            let vfn = library
+                .get_function("liquid_glass_synced_interior_vertex", None)
+                .expect("could not find liquid_glass_synced_interior_vertex");
+            let ffn = library
+                .get_function("liquid_glass_synced_interior_fragment", None)
+                .expect("could not find liquid_glass_synced_interior_fragment");
+            desc.set_vertex_function(Some(&vfn));
+            desc.set_fragment_function(Some(&ffn));
+            let ca = desc.color_attachments().object_at(0).unwrap();
+            ca.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            ca.set_blending_enabled(false);
+            device
+                .new_render_pipeline_state(&desc)
+                .expect("could not create liquid_glass_synced_interior pipeline")
+        };
+        let liquid_glass_synced_rim_pipeline_state = build_pipeline_state(
             &device,
             &library,
-            "liquid_glass_synced_sharp",
-            "liquid_glass_synced_vertex",
-            "liquid_glass_synced_fragment",
+            "liquid_glass_synced_rim",
+            "liquid_glass_synced_rim_vertex",
+            "liquid_glass_synced_rim_fragment",
             MTLPixelFormat::BGRA8Unorm,
-            1,
-            false,
         );
         let liquid_glass_synced_blur_pipeline_state = build_pipeline_state_with_bool_constant(
             &device,
@@ -954,26 +1014,25 @@ impl MetalRenderer {
             1,
             true,
         );
-        let particle_wave_pipeline_state = build_opaque_pipeline_state_with_bool_constant(
-            &device,
-            &library,
-            "particle_wave",
-            "particle_wave_vertex",
-            "particle_wave_fragment",
-            MTLPixelFormat::BGRA8Unorm,
-            0,
-            true,
-        );
-        let particle_wave_no_image_pipeline_state = build_opaque_pipeline_state_with_bool_constant(
-            &device,
-            &library,
-            "particle_wave_no_image",
-            "particle_wave_vertex",
-            "particle_wave_fragment",
-            MTLPixelFormat::BGRA8Unorm,
-            0,
-            false,
-        );
+        let particle_wave_pipeline_state = {
+            let desc = metal::RenderPipelineDescriptor::new();
+            desc.set_label("particle_wave");
+            let vfn = library
+                .get_function("particle_wave_vertex", None)
+                .expect("could not find particle_wave_vertex function");
+            let ffn = library
+                .get_function("particle_wave_fragment", None)
+                .expect("could not find particle_wave_fragment function");
+            desc.set_vertex_function(Some(&vfn));
+            desc.set_fragment_function(Some(&ffn));
+            desc.color_attachments()
+                .object_at(0)
+                .unwrap()
+                .set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            device
+                .new_render_pipeline_state(&desc)
+                .expect("could not create particle_wave render pipeline state")
+        };
         let sampler_desc = metal::SamplerDescriptor::new();
         sampler_desc.set_min_filter(metal::MTLSamplerMinMagFilter::Linear);
         sampler_desc.set_mag_filter(metal::MTLSamplerMinMagFilter::Linear);
@@ -1057,12 +1116,50 @@ impl MetalRenderer {
         let particle_tile_unpack_pipeline = device
             .new_compute_pipeline_state_with_function(&unpack_fn)
             .expect("could not create particle_tile_unpack_pipeline");
+        let unpack_shade_fn = library
+            .get_function("particle_tile_unpack_shade_kernel", None)
+            .expect("could not find particle_tile_unpack_shade_kernel function");
+        let particle_tile_unpack_shade_pipeline = device
+            .new_compute_pipeline_state_with_function(&unpack_shade_fn)
+            .expect("could not create particle_tile_unpack_shade_pipeline");
         let facet_lut_fn = library
             .get_function("particle_facet_lut_kernel", None)
             .expect("could not find particle_facet_lut_kernel function");
         let particle_facet_lut_pipeline = device
             .new_compute_pipeline_state_with_function(&facet_lut_fn)
             .expect("could not create particle_facet_lut_pipeline");
+        let shade_const_true = metal::FunctionConstantValues::new();
+        let true_val = true;
+        shade_const_true.set_constant_value_at_index(
+            &true_val as *const bool as *const std::ffi::c_void,
+            metal::MTLDataType::Bool,
+            0,
+        );
+        let shade_fn = library
+            .get_function("particle_tile_shade_kernel", Some(shade_const_true))
+            .expect("could not find particle_tile_shade_kernel (with image)");
+        let particle_tile_shade_pipeline = device
+            .new_compute_pipeline_state_with_function(&shade_fn)
+            .expect("could not create particle_tile_shade_pipeline");
+        let shade_const_false = metal::FunctionConstantValues::new();
+        let false_val = false;
+        shade_const_false.set_constant_value_at_index(
+            &false_val as *const bool as *const std::ffi::c_void,
+            metal::MTLDataType::Bool,
+            0,
+        );
+        let shade_no_img_fn = library
+            .get_function("particle_tile_shade_kernel", Some(shade_const_false))
+            .expect("could not find particle_tile_shade_kernel (no image)");
+        let particle_tile_shade_no_image_pipeline = device
+            .new_compute_pipeline_state_with_function(&shade_no_img_fn)
+            .expect("could not create particle_tile_shade_no_image_pipeline");
+        let live_buf_shade_fn = library
+            .get_function("particle_tile_live_buf_shade_kernel", None)
+            .expect("could not find particle_tile_live_buf_shade_kernel");
+        let particle_tile_live_buf_shade_pipeline = device
+            .new_compute_pipeline_state_with_function(&live_buf_shade_fn)
+            .expect("could not create particle_tile_live_buf_shade_pipeline");
         let downsample_fn = library
             .get_function("backdrop_downsample_rect_kernel", None)
             .expect("could not find backdrop_downsample_rect_kernel function");
@@ -1081,14 +1178,16 @@ impl MetalRenderer {
             command_queue,
             paths_rasterization_pipeline_state,
             path_sprites_pipeline_state,
-            shadows_pipeline_state,
+            shadow_solid_pipeline_state,
+            shadow_edge_pipeline_state,
+            shadow_corner_pipeline_state,
             quads_pipeline_state,
             solid_quads_pipeline_state,
             liquid_glass_pipeline_state,
-            liquid_glass_synced_sharp_pipeline_state,
+            liquid_glass_synced_interior_pipeline_state,
+            liquid_glass_synced_rim_pipeline_state,
             liquid_glass_synced_blur_pipeline_state,
             particle_wave_pipeline_state,
-            particle_wave_no_image_pipeline_state,
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
@@ -1125,11 +1224,16 @@ impl MetalRenderer {
             particle_tile_scatter_pipeline,
             particle_tile_hold_pipeline,
             particle_tile_unpack_pipeline,
+            particle_tile_unpack_shade_pipeline,
             particle_facet_lut_pipeline,
+            particle_tile_shade_pipeline,
+            particle_tile_shade_no_image_pipeline,
+            particle_tile_live_buf_shade_pipeline,
             particle_tile_grid_buffer,
             particle_tile_grid_capacity,
             particle_tile_grid_needs_clear: true,
             particle_tile_img_texture: None,
+            particle_tile_lit_texture: None,
             particle_tile_grid_cache_key: None,
             particle_facet_lut_texture: None,
             particle_facet_lut_cache_key: None,
@@ -1492,16 +1596,25 @@ impl MetalRenderer {
         };
 
         let batches: Vec<PrimitiveBatch<'_>> = scene.batches().collect();
+        let mut already_shaded = false;
         let compute_dispatched = self.dispatch_particle_tile_scatter(
             command_buffer,
             viewport_size,
             gpu_prof.as_mut(),
+            &mut already_shaded,
         );
         self.ensure_particle_facet_lut(
             &batches,
             command_buffer,
             gpu_prof.as_mut(),
         );
+        if !already_shaded {
+            self.dispatch_particle_tile_shade(
+                &batches,
+                command_buffer,
+                gpu_prof.as_mut(),
+            );
+        }
         if let Some(p) = perf.as_mut() {
             p.compute_scatter_dispatched = compute_dispatched;
             p.backdrop_images_loaded = (self.backdrop_image_textures.len()
@@ -1567,30 +1680,34 @@ impl MetalRenderer {
         render_pass_idx += 1;
 
         let items = schedule_draw_items(&batches, vw_f, vh_f);
+        let last_glass_idx = items
+            .iter()
+            .rposition(|it| matches!(it, DrawItem::Quads { mode: 1 | 3, .. }))
+            .unwrap_or(0);
 
         for (item_idx, item) in items.iter().enumerate() {
+            let track_dirty = backdrop_seeded && item_idx < last_glass_idx;
             let ok = match *item {
                 DrawItem::Shadows(shadows) => {
                     if let Some(p) = perf.as_mut() {
                         p.shadows += shadows.len() as u32;
                     }
-                    for s in shadows {
-                        // Match `shadow_vertex` which expands `shadow.bounds` by `3 * blur_radius`
-                        // clipped to `content_mask.bounds`, so backdrop blits capture drop shadows
-                        // around card rims and borders without leaving seams.
-                        let margin = 3.0 * s.blur_radius.0;
-                        let expanded = Bounds {
-                            origin: point(
-                                ScaledPixels(s.bounds.origin.x.0 - margin),
-                                ScaledPixels(s.bounds.origin.y.0 - margin),
-                            ),
-                            size: size(
-                                ScaledPixels(s.bounds.size.width.0 + margin * 2.0),
-                                ScaledPixels(s.bounds.size.height.0 + margin * 2.0),
-                            ),
+                    if track_dirty {
+                        for s in shadows {
+                            let margin = 3.0 * s.blur_radius.0;
+                            let expanded = Bounds {
+                                origin: point(
+                                    ScaledPixels(s.bounds.origin.x.0 - margin),
+                                    ScaledPixels(s.bounds.origin.y.0 - margin),
+                                ),
+                                size: size(
+                                    ScaledPixels(s.bounds.size.width.0 + margin * 2.0),
+                                    ScaledPixels(s.bounds.size.height.0 + margin * 2.0),
+                                ),
+                            }
+                            .intersect(&s.content_mask.bounds);
+                            push_dirty(&mut dirty_rects, expanded, 0.0);
                         }
-                        .intersect(&s.content_mask.bounds);
-                        push_dirty(&mut dirty_rects, expanded, 0.0);
                     }
                     if dump_detail {
                         let px_sum: f64 = shadows
@@ -1623,27 +1740,31 @@ impl MetalRenderer {
                         let chunk_blur_rects: Vec<Bounds<ScaledPixels>> = chunk
                             .iter()
                             .filter(|q| q.background.colors[1].percentage * 2.0 > 0.5)
-                            .map(|q| glass_sample_rect(q, vw_f, vh_f))
+                            .map(|q| glass_sample_rect(q, vw_f, vh_f, false))
                             .filter(rect_non_empty)
                             .collect();
                         let chunk_needs_blur = !chunk_blur_rects.is_empty();
 
                         if !backdrop_seeded {
                             let mut all_glass_rects: Vec<Bounds<ScaledPixels>> =
-                                Vec::with_capacity(32);
+                                Vec::with_capacity(64);
                             for it in &items[item_idx..] {
                                 if let DrawItem::Quads { quads: qs, mode: m } = *it
                                     && (m == 1 || m == 3)
                                 {
                                     for q in qs {
-                                        let sr = glass_sample_rect(q, vw_f, vh_f);
-                                        if rect_non_empty(&sr) {
-                                            all_glass_rects.push(sr);
-                                        }
+                                        push_glass_sample_rects(
+                                            q,
+                                            m,
+                                            vw_f,
+                                            vh_f,
+                                            true,
+                                            &mut all_glass_rects,
+                                        );
                                     }
                                 }
                             }
-                            let clusters = coalesce_copy_regions(&all_glass_rects, 48.0, 6);
+                            let clusters = coalesce_copy_regions(&all_glass_rects, 4.0, 20);
                             if !clusters.is_empty() {
                                 if dump_detail && let Some(prof) = gpu_prof.as_mut() {
                                     prof.update_last_render_summary(std::mem::take(&mut rp_log));
@@ -1692,32 +1813,41 @@ impl MetalRenderer {
                             let mut needs_blit = false;
                             let mut hit_reason = String::new();
                             if !dirty_rects.is_empty() {
+                                let mut chunk_rects: Vec<Bounds<ScaledPixels>> =
+                                    Vec::with_capacity(4);
                                 'check_hit: for q in chunk {
-                                    let padded = glass_sample_rect(q, vw_f, vh_f);
-                                    if !rect_non_empty(&padded) {
-                                        continue;
-                                    }
-                                    for dirty in &dirty_rects {
-                                        if dirty.intersects(&padded) {
-                                            needs_blit = true;
-                                            if dump_detail {
-                                                let blur_px =
-                                                    q.background.colors[1].percentage * 2.0;
-                                                hit_reason = format!(
-                                                    "glass({:.0},{:.0} {:.0}x{:.0} blur={:.1}) hit dirty({:.0},{:.0} {:.0}x{:.0}) total_dirty={}",
-                                                    q.bounds.origin.x.0,
-                                                    q.bounds.origin.y.0,
-                                                    q.bounds.size.width.0,
-                                                    q.bounds.size.height.0,
-                                                    blur_px,
-                                                    dirty.origin.x.0,
-                                                    dirty.origin.y.0,
-                                                    dirty.size.width.0,
-                                                    dirty.size.height.0,
-                                                    dirty_rects.len()
-                                                );
+                                    chunk_rects.clear();
+                                    push_glass_sample_rects(
+                                        q,
+                                        mode,
+                                        vw_f,
+                                        vh_f,
+                                        false,
+                                        &mut chunk_rects,
+                                    );
+                                    for padded in &chunk_rects {
+                                        for dirty in &dirty_rects {
+                                            if dirty.intersects(padded) {
+                                                needs_blit = true;
+                                                if dump_detail {
+                                                    let blur_px =
+                                                        q.background.colors[1].percentage * 2.0;
+                                                    hit_reason = format!(
+                                                        "glass({:.0},{:.0} {:.0}x{:.0} blur={:.1}) hit dirty({:.0},{:.0} {:.0}x{:.0}) total_dirty={}",
+                                                        q.bounds.origin.x.0,
+                                                        q.bounds.origin.y.0,
+                                                        q.bounds.size.width.0,
+                                                        q.bounds.size.height.0,
+                                                        blur_px,
+                                                        dirty.origin.x.0,
+                                                        dirty.origin.y.0,
+                                                        dirty.size.width.0,
+                                                        dirty.size.height.0,
+                                                        dirty_rects.len()
+                                                    );
+                                                }
+                                                break 'check_hit;
                                             }
-                                            break 'check_hit;
                                         }
                                     }
                                 }
@@ -1728,6 +1858,7 @@ impl MetalRenderer {
                                     &items,
                                     item_idx,
                                     chunk,
+                                    mode,
                                     &dirty_rects,
                                     vw_f,
                                     vh_f,
@@ -1742,7 +1873,7 @@ impl MetalRenderer {
                                         }
                                     }
                                 }
-                                let clusters = coalesce_copy_regions(&intersections, 24.0, 8);
+                                let clusters = coalesce_copy_regions(&intersections, 4.0, 12);
                                 if !clusters.is_empty() {
                                     if dump_detail && let Some(prof) = gpu_prof.as_mut() {
                                         prof.update_last_render_summary(std::mem::take(
@@ -1860,8 +1991,10 @@ impl MetalRenderer {
                             viewport_size,
                             command_encoder,
                         );
-                        for q in chunk {
-                            push_dirty(&mut dirty_rects, q.bounds, 0.0);
+                        if item_idx < last_glass_idx {
+                            for q in chunk {
+                                push_dirty(&mut dirty_rects, q.bounds, 0.0);
+                            }
                         }
                         ok
                     } else if mode == 2 {
@@ -1879,8 +2012,10 @@ impl MetalRenderer {
                                 px_sum / 1e6
                             ));
                         }
-                        for q in chunk {
-                            push_dirty(&mut dirty_rects, q.bounds, 0.0);
+                        if track_dirty {
+                            for q in chunk {
+                                push_dirty(&mut dirty_rects, q.bounds, 0.0);
+                            }
                         }
                         self.draw_particle_wave_quads(
                             chunk,
@@ -1922,8 +2057,10 @@ impl MetalRenderer {
                             }
                             rp_log.push_str(") ");
                         }
-                        for q in chunk {
-                            push_dirty(&mut dirty_rects, q.bounds, 0.0);
+                        if track_dirty {
+                            for q in chunk {
+                                push_dirty(&mut dirty_rects, q.bounds, 0.0);
+                            }
                         }
                         self.draw_quads(
                             chunk,
@@ -2006,10 +2143,12 @@ impl MetalRenderer {
                     if dump_detail {
                         rp_log.push_str(&format!("mono={} ", sprites.len()));
                     }
-                    let mut line_rects: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(32);
-                    coalesce_text_lines(sprites, &mut line_rects);
-                    for r in line_rects {
-                        push_dirty(&mut dirty_rects, r, 0.0);
+                    if track_dirty {
+                        let mut line_rects: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(32);
+                        coalesce_text_lines(sprites, &mut line_rects);
+                        for r in line_rects {
+                            push_dirty(&mut dirty_rects, r, 0.0);
+                        }
                     }
                     self.draw_monochrome_sprites(
                         texture_id,
@@ -2030,8 +2169,10 @@ impl MetalRenderer {
                     if dump_detail {
                         rp_log.push_str(&format!("poly={} ", sprites.len()));
                     }
-                    for s in sprites {
-                        push_dirty(&mut dirty_rects, s.bounds, 0.0);
+                    if track_dirty {
+                        for s in sprites {
+                            push_dirty(&mut dirty_rects, s.bounds, 0.0);
+                        }
                     }
                     self.draw_polychrome_sprites(
                         texture_id,
@@ -2187,29 +2328,6 @@ impl MetalRenderer {
         }
         align_offset(instance_offset);
 
-        command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
-        command_encoder.set_vertex_buffer(
-            ShadowInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_buffer(
-            ShadowInputIndex::Shadows as u64,
-            Some(&instance_buffer.metal_buffer),
-            *instance_offset as u64,
-        );
-        command_encoder.set_fragment_buffer(
-            ShadowInputIndex::Shadows as u64,
-            Some(&instance_buffer.metal_buffer),
-            *instance_offset as u64,
-        );
-
-        command_encoder.set_vertex_bytes(
-            ShadowInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-
         let shadow_bytes_len = mem::size_of_val(shadows);
         let buffer_contents =
             unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
@@ -2227,12 +2345,32 @@ impl MetalRenderer {
             );
         }
 
-        command_encoder.draw_primitives_instanced(
-            metal::MTLPrimitiveType::Triangle,
+        let count = shadows.len() as u64;
+        command_encoder.set_vertex_buffer(
+            ShadowInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
             0,
-            6,
-            shadows.len() as u64,
         );
+        command_encoder.set_vertex_buffer(
+            ShadowInputIndex::Shadows as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            ShadowInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+
+        command_encoder.set_render_pipeline_state(&self.shadow_solid_pipeline_state);
+        command_encoder.draw_primitives_instanced(metal::MTLPrimitiveType::Triangle, 0, 6, count);
+
+        command_encoder.set_render_pipeline_state(&self.shadow_edge_pipeline_state);
+        command_encoder.draw_primitives_instanced(metal::MTLPrimitiveType::Triangle, 0, 24, count);
+
+        command_encoder.set_render_pipeline_state(&self.shadow_corner_pipeline_state);
+        command_encoder.draw_primitives_instanced(metal::MTLPrimitiveType::Triangle, 0, 24, count);
+
         *instance_offset = next_offset;
         true
     }
@@ -2513,19 +2651,20 @@ impl MetalRenderer {
         }
         align_offset(instance_offset);
 
-        let pipeline = if use_synced_pipeline {
-            let chunk_has_blur = quads
-                .iter()
-                .any(|q| q.background.colors[1].percentage * 2.0 > 0.5);
-            if chunk_has_blur {
-                &self.liquid_glass_synced_blur_pipeline_state
-            } else {
-                &self.liquid_glass_synced_sharp_pipeline_state
-            }
-        } else {
-            &self.liquid_glass_pipeline_state
-        };
-        command_encoder.set_render_pipeline_state(pipeline);
+        let quad_bytes_len = mem::size_of_val(quads);
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
+
+        let next_offset = *instance_offset + quad_bytes_len;
+        if next_offset > instance_buffer.size {
+            return false;
+        }
+
+        unsafe {
+            ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
+        }
+
+        let count = quads.len() as u64;
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -2541,6 +2680,50 @@ impl MetalRenderer {
             mem::size_of_val(&viewport_size) as u64,
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
+
+        let chunk_has_blur = use_synced_pipeline
+            && quads
+                .iter()
+                .any(|q| q.background.colors[1].percentage * 2.0 > 0.5);
+
+        if use_synced_pipeline && !chunk_has_blur {
+            command_encoder
+                .set_render_pipeline_state(&self.liquid_glass_synced_interior_pipeline_state);
+            command_encoder.draw_primitives_instanced(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                6,
+                count,
+            );
+
+            command_encoder
+                .set_render_pipeline_state(&self.liquid_glass_synced_rim_pipeline_state);
+            let time_sec = self.start_time.elapsed().as_secs_f32();
+            command_encoder.set_fragment_bytes(
+                3,
+                mem::size_of::<f32>() as u64,
+                &time_sec as *const f32 as *const _,
+            );
+            if let Some(backdrop_tex) = &self.backdrop_texture {
+                command_encoder.set_fragment_texture(0, Some(backdrop_tex));
+            }
+            command_encoder.set_fragment_sampler_state(0, Some(&self.backdrop_sampler));
+            command_encoder.draw_primitives_instanced(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                24,
+                count,
+            );
+            *instance_offset = next_offset;
+            return true;
+        }
+
+        let pipeline = if use_synced_pipeline {
+            &self.liquid_glass_synced_blur_pipeline_state
+        } else {
+            &self.liquid_glass_pipeline_state
+        };
+        command_encoder.set_render_pipeline_state(pipeline);
         if !use_synced_pipeline {
             command_encoder.set_fragment_buffer(
                 QuadInputIndex::Quads as u64,
@@ -2564,24 +2747,11 @@ impl MetalRenderer {
         }
         command_encoder.set_fragment_sampler_state(0, Some(&self.backdrop_sampler));
 
-        let quad_bytes_len = mem::size_of_val(quads);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
-        let next_offset = *instance_offset + quad_bytes_len;
-        if next_offset > instance_buffer.size {
-            return false;
-        }
-
-        unsafe {
-            ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
-        }
-
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
-            quads.len() as u64,
+            count,
         );
         *instance_offset = next_offset;
         true
@@ -2599,20 +2769,25 @@ impl MetalRenderer {
         }
     }
 
-    fn ensure_particle_2d_texture(
+    fn ensure_particle_2d_texture_with_format(
         device: &metal::DeviceRef,
         slot: &mut Option<metal::Texture>,
         w: u32,
         h: u32,
+        pixel_format: MTLPixelFormat,
     ) -> bool {
         let needs_alloc = match slot {
-            Some(tex) => tex.width() != w as u64 || tex.height() != h as u64,
+            Some(tex) => {
+                tex.width() != w.max(1) as u64
+                    || tex.height() != h.max(1) as u64
+                    || tex.pixel_format() != pixel_format
+            }
             None => true,
         };
         if needs_alloc {
             let desc = metal::TextureDescriptor::new();
             desc.set_texture_type(metal::MTLTextureType::D2);
-            desc.set_pixel_format(MTLPixelFormat::RGBA8Unorm);
+            desc.set_pixel_format(pixel_format);
             desc.set_width(w.max(1) as u64);
             desc.set_height(h.max(1) as u64);
             desc.set_usage(
@@ -2624,6 +2799,102 @@ impl MetalRenderer {
         } else {
             false
         }
+    }
+
+    fn ensure_particle_2d_texture(
+        device: &metal::DeviceRef,
+        slot: &mut Option<metal::Texture>,
+        w: u32,
+        h: u32,
+    ) -> bool {
+        Self::ensure_particle_2d_texture_with_format(device, slot, w, h, MTLPixelFormat::RGBA8Unorm)
+    }
+
+    fn dispatch_particle_tile_shade(
+        &mut self,
+        batches: &[PrimitiveBatch<'_>],
+        command_buffer: &metal::CommandBufferRef,
+        profiler: Option<&mut FrameGpuProfiler>,
+    ) {
+        let has_wave = batches.iter().any(|b| {
+            if let PrimitiveBatch::Quads(qs) = b {
+                qs.iter().any(|q| q.background.tag == BackgroundTag::ParticleWave)
+            } else {
+                false
+            }
+        });
+        if !has_wave {
+            return;
+        }
+        let Some(ref lut_tex) = self.particle_facet_lut_texture else {
+            return;
+        };
+        let grid_w = self.current_particle_uniforms.grid_w.max(1);
+        let grid_h = self.current_particle_uniforms.grid_h.max(1);
+        Self::ensure_particle_2d_texture_with_format(
+            &self.device,
+            &mut self.particle_tile_lit_texture,
+            grid_w,
+            grid_h,
+            MTLPixelFormat::RGBA16Float,
+        );
+        let Some(ref lit_tex) = self.particle_tile_lit_texture else {
+            return;
+        };
+
+        let tg = metal::MTLSize::new(16, 16, 1);
+        let grid = metal::MTLSize::new(grid_w as u64, grid_h as u64, 1);
+        let compute = unsafe { attach_compute_timestamps(command_buffer, profiler) };
+
+        if matches!(self.backdrop_active_source, ActiveBackdropSource::LiveVideo(_))
+            && self.backdrop_phase_stage == 0
+            && self.current_particle_uniforms.has_image > 0.5
+            && let Some(ref lv) = self.backdrop_live_video
+        {
+            let info = LiveVideoBufferInfo {
+                width: lv.width,
+                height: lv.height,
+                bytes_per_pixel: lv.bytes_per_pixel,
+                has_alpha: lv.has_alpha,
+            };
+            compute.set_compute_pipeline_state(&self.particle_tile_live_buf_shade_pipeline);
+            compute.set_texture(0, Some(lut_tex));
+            compute.set_texture(1, Some(lit_tex));
+            compute.set_bytes(
+                0,
+                mem::size_of::<ParticleWaveUniforms>() as u64,
+                &self.current_particle_uniforms as *const ParticleWaveUniforms as *const _,
+            );
+            compute.set_buffer(1, Some(&lv.buffers[lv.active_slot]), 0);
+            compute.set_bytes(
+                2,
+                mem::size_of::<LiveVideoBufferInfo>() as u64,
+                &info as *const LiveVideoBufferInfo as *const _,
+            );
+            compute.dispatch_threads(grid, tg);
+            compute.end_encoding();
+            return;
+        }
+
+        let has_image = self.current_particle_uniforms.has_image > 0.5
+            && self.particle_tile_img_texture.is_some();
+        if has_image {
+            compute.set_compute_pipeline_state(&self.particle_tile_shade_pipeline);
+            compute.set_texture(0, Some(lut_tex));
+            compute.set_texture(1, self.particle_tile_img_texture.as_deref());
+            compute.set_texture(2, Some(lit_tex));
+        } else {
+            compute.set_compute_pipeline_state(&self.particle_tile_shade_no_image_pipeline);
+            compute.set_texture(0, Some(lut_tex));
+            compute.set_texture(2, Some(lit_tex));
+        }
+        compute.set_bytes(
+            0,
+            mem::size_of::<ParticleWaveUniforms>() as u64,
+            &self.current_particle_uniforms as *const ParticleWaveUniforms as *const _,
+        );
+        compute.dispatch_threads(grid, tg);
+        compute.end_encoding();
     }
 
     fn ensure_particle_facet_lut(
@@ -2754,61 +3025,77 @@ impl MetalRenderer {
         }
         let current_gen = crate::particle_wave_live_video_gen();
         if current_gen != self.backdrop_live_video_seen_gen {
+            let upload_started = Instant::now();
             let (locked_gen, frame_opt) = crate::particle_wave_live_video_frame();
             self.backdrop_live_video_seen_gen = locked_gen;
             match frame_opt {
                 Some(frame) if frame.updated_at.elapsed() <= LIVE_VIDEO_STALE_TIMEOUT => {
-                    let w = frame.width as u64;
-                    let h = frame.height as u64;
-                    let can_reuse = self.backdrop_live_video.as_ref().is_some_and(|(_, tex, _, _)| {
-                        tex.width() == w && tex.height() == h
-                    });
-                    if can_reuse
-                        && let Some((ref mut gen_slot, ref tex, ref mut dims, ref mut ts)) =
-                            self.backdrop_live_video
-                    {
-                        tex.replace_region(
-                            metal::MTLRegion::new_2d(0, 0, w, h),
-                            0,
-                            frame.rgba.as_ptr() as *const _,
-                            w * 4,
-                        );
-                        *gen_slot = locked_gen;
-                        *dims = [frame.width as f32, frame.height as f32, 1.0];
-                        *ts = frame.updated_at;
+                    let byte_len = frame.pixels.len();
+                    let bpp = frame.format.bytes_per_pixel() as u32;
+                    let has_alpha = u32::from(frame.format.has_alpha());
+                    let storage = if self.device.has_unified_memory() {
+                        MTLResourceOptions::StorageModeShared
+                            | MTLResourceOptions::CPUCacheModeWriteCombined
                     } else {
-                        let desc = metal::TextureDescriptor::new();
-                        desc.set_texture_type(metal::MTLTextureType::D2);
-                        desc.set_pixel_format(MTLPixelFormat::RGBA8Unorm);
-                        desc.set_width(w);
-                        desc.set_height(h);
-                        desc.set_usage(metal::MTLTextureUsage::ShaderRead);
-                        desc.set_storage_mode(if self.device.has_unified_memory() {
-                            metal::MTLStorageMode::Shared
-                        } else {
-                            metal::MTLStorageMode::Managed
+                        MTLResourceOptions::StorageModeManaged
+                    };
+                    if let Some(ref mut lv) = self.backdrop_live_video
+                        && lv.capacity >= byte_len
+                    {
+                        lv.active_slot ^= 1;
+                        let buf = &lv.buffers[lv.active_slot];
+                        unsafe {
+                            ptr::copy_nonoverlapping(
+                                frame.pixels.as_ptr(),
+                                buf.contents() as *mut u8,
+                                byte_len,
+                            );
+                        }
+                        if !self.device.has_unified_memory() {
+                            buf.did_modify_range(NSRange::new(0, byte_len as u64));
+                        }
+                        lv.generation = locked_gen;
+                        lv.width = frame.width;
+                        lv.height = frame.height;
+                        lv.bytes_per_pixel = bpp;
+                        lv.has_alpha = has_alpha;
+                        lv.updated_at = frame.updated_at;
+                    } else {
+                        let alloc_len = byte_len.max(4096);
+                        let b0 = self.device.new_buffer(alloc_len as u64, storage);
+                        let b1 = self.device.new_buffer(alloc_len as u64, storage);
+                        unsafe {
+                            ptr::copy_nonoverlapping(
+                                frame.pixels.as_ptr(),
+                                b0.contents() as *mut u8,
+                                byte_len,
+                            );
+                        }
+                        if !self.device.has_unified_memory() {
+                            b0.did_modify_range(NSRange::new(0, byte_len as u64));
+                        }
+                        self.backdrop_live_video = Some(LiveVideoGpuState {
+                            generation: locked_gen,
+                            buffers: [b0, b1],
+                            capacity: alloc_len,
+                            active_slot: 0,
+                            width: frame.width,
+                            height: frame.height,
+                            bytes_per_pixel: bpp,
+                            has_alpha,
+                            updated_at: frame.updated_at,
                         });
-                        let tex = self.device.new_texture(&desc);
-                        tex.replace_region(
-                            metal::MTLRegion::new_2d(0, 0, w, h),
-                            0,
-                            frame.rgba.as_ptr() as *const _,
-                            w * 4,
-                        );
-                        self.backdrop_live_video = Some((
-                            locked_gen,
-                            tex,
-                            [frame.width as f32, frame.height as f32, 1.0],
-                            frame.updated_at,
-                        ));
                     }
+                    crate::perf_telemetry::record_live_video_upload(
+                        upload_started.elapsed().as_micros() as u64,
+                    );
                 }
                 _ => {
                     self.backdrop_live_video = None;
                 }
             }
-        } else if let Some((_, _, _, updated_at)) = self.backdrop_live_video
-            && updated_at.elapsed() > LIVE_VIDEO_STALE_TIMEOUT
+        } else if let Some(ref lv) = self.backdrop_live_video
+            && lv.updated_at.elapsed() > LIVE_VIDEO_STALE_TIMEOUT
         {
             self.backdrop_live_video = None;
         }
@@ -2857,7 +3144,9 @@ impl MetalRenderer {
         command_buffer: &metal::CommandBufferRef,
         viewport_size: Size<DevicePixels>,
         mut profiler: Option<&mut FrameGpuProfiler>,
+        already_shaded: &mut bool,
     ) -> bool {
+        *already_shaded = false;
         let time_sec = self.start_time.elapsed().as_secs_f32();
         let vw = viewport_size.width.0.max(1) as f32;
         let vh = viewport_size.height.0.max(1) as f32;
@@ -2898,8 +3187,8 @@ impl MetalRenderer {
 
         let desired_source = if let Some((pending_gen, _, _)) = self.backdrop_pending_override {
             ActiveBackdropSource::Override(pending_gen)
-        } else if let Some((live_gen, _, _, _)) = self.backdrop_live_video {
-            ActiveBackdropSource::LiveVideo(live_gen)
+        } else if let Some(ref lv) = self.backdrop_live_video {
+            ActiveBackdropSource::LiveVideo(lv.generation)
         } else if custom_count > 0 {
             self.backdrop_image_index %= custom_count;
             ActiveBackdropSource::Custom(self.backdrop_image_index)
@@ -3111,6 +3400,36 @@ impl MetalRenderer {
             }
         }
 
+        if matches!(self.backdrop_active_source, ActiveBackdropSource::LiveVideo(_)) {
+            let Some(ref lv) = self.backdrop_live_video else {
+                self.backdrop_active_source = ActiveBackdropSource::None;
+                self.release_particle_grid_buffer();
+                self.current_particle_uniforms =
+                    inactive_particle_uniforms(time_sec, vw, vh, tuning);
+                return false;
+            };
+            self.backdrop_phase_stage = 0;
+            self.current_particle_uniforms = ParticleWaveUniforms {
+                time_sec,
+                has_image: 1.0,
+                image_w: lv.width as f32,
+                image_h: lv.height as f32,
+                phase_mode: 0.0,
+                phase_progress: 0.0,
+                grid_w,
+                grid_h,
+                viewport_w: vw,
+                viewport_h: vh,
+                tile_size,
+                fit_cover: 1.0,
+                image_brightness: tuning.image_brightness,
+                image_peak_luminance: tuning.image_peak_luminance,
+                image_saturation: tuning.image_saturation,
+                _pad0: 0.0,
+            };
+            return false;
+        }
+
         let active_tex_and_dims: Option<(&metal::Texture, [f32; 3])> = match self
             .backdrop_active_source
         {
@@ -3118,10 +3437,6 @@ impl MetalRenderer {
                 .backdrop_active_override
                 .as_ref()
                 .map(|(_, tex, dims)| (tex, *dims)),
-            ActiveBackdropSource::LiveVideo(_) => self
-                .backdrop_live_video
-                .as_ref()
-                .map(|(_, tex, dims, _)| (tex, *dims)),
             ActiveBackdropSource::Custom(idx) if idx < self.backdrop_image_textures.len() => {
                 Some((
                     &self.backdrop_image_textures[idx],
@@ -3267,6 +3582,39 @@ impl MetalRenderer {
 
         compute.memory_barrier_with_resources(&[&self.particle_tile_grid_buffer]);
 
+        let can_fuse_shade = self
+            .particle_facet_lut_texture
+            .as_ref()
+            .is_some_and(|t| t.width() as u32 == grid_w && t.height() as u32 == grid_h);
+        if can_fuse_shade {
+            Self::ensure_particle_2d_texture_with_format(
+                &self.device,
+                &mut self.particle_tile_lit_texture,
+                grid_w,
+                grid_h,
+                MTLPixelFormat::RGBA16Float,
+            );
+        }
+        if can_fuse_shade
+            && let Some(ref lut_tex) = self.particle_facet_lut_texture
+            && let Some(ref lit_tex) = self.particle_tile_lit_texture
+        {
+            compute.set_compute_pipeline_state(&self.particle_tile_unpack_shade_pipeline);
+            compute.set_buffer(0, Some(&self.particle_tile_grid_buffer), 0);
+            compute.set_texture(0, Some(lut_tex));
+            compute.set_texture(1, Some(lit_tex));
+            compute.set_bytes(
+                1,
+                mem::size_of::<ParticleWaveUniforms>() as u64,
+                &uniforms as *const ParticleWaveUniforms as *const _,
+            );
+            compute.dispatch_threads(grid, tg);
+            compute.end_encoding();
+            self.particle_tile_grid_cache_key = cache_key;
+            *already_shaded = true;
+            return true;
+        }
+
         compute.set_compute_pipeline_state(&self.particle_tile_unpack_pipeline);
         compute.set_buffer(0, Some(&self.particle_tile_grid_buffer), 0);
         compute.set_texture(0, Some(tile_img_tex));
@@ -3294,13 +3642,7 @@ impl MetalRenderer {
         }
         align_offset(instance_offset);
 
-        let has_image = self.current_particle_uniforms.has_image > 0.5
-            && self.particle_tile_img_texture.is_some();
-        if has_image {
-            command_encoder.set_render_pipeline_state(&self.particle_wave_pipeline_state);
-        } else {
-            command_encoder.set_render_pipeline_state(&self.particle_wave_no_image_pipeline_state);
-        }
+        command_encoder.set_render_pipeline_state(&self.particle_wave_pipeline_state);
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -3321,11 +3663,8 @@ impl MetalRenderer {
             mem::size_of::<ParticleWaveUniforms>() as u64,
             &self.current_particle_uniforms as *const ParticleWaveUniforms as *const _,
         );
-        if let Some(ref lut_tex) = self.particle_facet_lut_texture {
-            command_encoder.set_fragment_texture(0, Some(lut_tex));
-        }
-        if has_image && let Some(ref img_tex) = self.particle_tile_img_texture {
-            command_encoder.set_fragment_texture(1, Some(img_tex));
+        if let Some(ref lit_tex) = self.particle_tile_lit_texture {
+            command_encoder.set_fragment_texture(0, Some(lit_tex));
         }
 
         let quad_bytes_len = mem::size_of_val(quads);
@@ -3752,17 +4091,106 @@ impl MetalRenderer {
     }
 }
 
-fn glass_sample_rect(q: &Quad, vw: f32, vh: f32) -> Bounds<ScaledPixels> {
+fn glass_max_sample_depth(q: &Quad) -> f32 {
+    let pw = q.bounds.size.width.0;
+    let ph = q.bounds.size.height.0;
+    let min_half = (pw * 0.5).min(ph * 0.5);
+    let reach = (q.background.colors[0].percentage * 2.0).clamp(1.0, min_half.max(1.0));
+    let reach_eff = reach.max(2.0);
+    let disp_scale = (q.background.gradient_angle_or_pattern_height * 2.0).max(0.0);
+    let chroma = q.background.colors[0].color.s.max(0.0);
+    let max_disp = disp_scale * (1.0 + chroma * 0.6);
+    reach_eff.max(0.76 * max_disp + 0.14 * reach_eff)
+}
+
+fn push_glass_sample_rects(
+    q: &Quad,
+    mode: u8,
+    vw: f32,
+    vh: f32,
+    include_overhang: bool,
+    out: &mut Vec<Bounds<ScaledPixels>>,
+) {
+    let full = glass_sample_rect(q, vw, vh, include_overhang);
+    if !rect_non_empty(&full) {
+        return;
+    }
     let blur_px = q.background.colors[1].percentage * 2.0;
-    let margin = if blur_px > 0.5 {
+    if mode != 3 || blur_px > 0.5 {
+        out.push(full);
+        return;
+    }
+    let ox = q.bounds.origin.x.0;
+    let oy = q.bounds.origin.y.0;
+    let pw = q.bounds.size.width.0;
+    let ph = q.bounds.size.height.0;
+    let min_half = (pw * 0.5).min(ph * 0.5);
+    let max_r = q
+        .corner_radii
+        .top_left
+        .0
+        .min(min_half)
+        .max(q.corner_radii.top_right.0.min(min_half))
+        .max(q.corner_radii.bottom_right.0.min(min_half))
+        .max(q.corner_radii.bottom_left.0.min(min_half));
+    let peak_reach = glass_max_sample_depth(q);
+    let hole_inset = peak_reach
+        .max(0.29289322 * max_r + 0.70710678 * peak_reach)
+        + 3.0;
+    let vp_guard_x = (vw * 0.0005 + 1.0).max(2.0);
+    let vp_guard_y = (vh * 0.0005 + 1.0).max(2.0);
+    let hole_x0 = (ox + hole_inset).max(vp_guard_x).ceil();
+    let hole_y0 = (oy + hole_inset).max(vp_guard_y).ceil();
+    let hole_x1 = (ox + pw - hole_inset).min(vw - vp_guard_x).floor();
+    let hole_y1 = (oy + ph - hole_inset).min(vh - vp_guard_y).floor();
+
+    if hole_x1 - hole_x0 < 48.0
+        || hole_y1 - hole_y0 < 48.0
+        || (hole_x1 - hole_x0) * (hole_y1 - hole_y0) < 40_000.0
+    {
+        out.push(full);
+        return;
+    }
+
+    let hole = Bounds {
+        origin: point(ScaledPixels(hole_x0), ScaledPixels(hole_y0)),
+        size: size(
+            ScaledPixels(hole_x1 - hole_x0),
+            ScaledPixels(hole_y1 - hole_y0),
+        ),
+    };
+    subtract_single_rect(full, hole, out);
+}
+
+fn glass_sample_rect(
+    q: &Quad,
+    vw: f32,
+    vh: f32,
+    include_overhang: bool,
+) -> Bounds<ScaledPixels> {
+    let blur_px = q.background.colors[1].percentage * 2.0;
+    let base_margin = if blur_px > 0.5 {
         (blur_px * 2.0 + 16.0).ceil()
     } else {
         2.0
     };
-    let x0 = (q.bounds.origin.x.0 - margin).max(0.0).min(vw);
-    let y0 = (q.bounds.origin.y.0 - margin).max(0.0).min(vh);
-    let x1 = (q.bounds.bottom_right().x.0 + margin).max(x0).min(vw);
-    let y1 = (q.bounds.bottom_right().y.0 + margin).max(y0).min(vh);
+    let (overhang_x, overhang_y) = if include_overhang {
+        let peak_reach = glass_max_sample_depth(q);
+        let pw = q.bounds.size.width.0;
+        let ph = q.bounds.size.height.0;
+        (
+            (peak_reach - pw).max(0.0).ceil(),
+            (peak_reach - ph).max(0.0).ceil(),
+        )
+    } else {
+        (0.0, 0.0)
+    };
+    let margin_x = base_margin + overhang_x;
+    let margin_y = base_margin + overhang_y;
+    let x0 = (q.bounds.origin.x.0 - margin_x).max(0.0).min(vw);
+    let y0 = (q.bounds.origin.y.0 - margin_y).max(0.0).min(vh);
+    let x1 = (q.bounds.bottom_right().x.0 + margin_x).max(x0).min(vw);
+    let y1 = (q.bounds.bottom_right().y.0 + margin_y).max(y0).min(vh);
     Bounds {
         origin: point(ScaledPixels(x0), ScaledPixels(y0)),
         size: size(ScaledPixels(x1 - x0), ScaledPixels(y1 - y0)),
@@ -3831,32 +4259,70 @@ fn subtract_copied_from_dirty(
     dirty: &mut Vec<Bounds<ScaledPixels>>,
     copied: &[Bounds<ScaledPixels>],
 ) {
-    let mut next: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(dirty.len() + 8);
+    const SOFT_SPLIT_LIMIT: usize = 128;
+    let mut next: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(dirty.len().min(64) + 8);
     for &c in copied {
-        next.clear();
-        for &d in dirty.iter() {
-            subtract_single_rect(d, c, &mut next);
+        if dirty.is_empty() {
+            break;
         }
-        std::mem::swap(dirty, &mut next);
-    }
-    while dirty.len() > 64 {
-        let mut best_i = 0usize;
-        let mut best_j = 1usize;
-        let mut best_cost = f32::INFINITY;
-        for i in 0..dirty.len() {
-            let ai = rect_area(&dirty[i]);
-            for j in (i + 1)..dirty.len() {
-                let u = dirty[i].union(&dirty[j]);
-                let cost = rect_area(&u) - ai - rect_area(&dirty[j]);
-                if cost < best_cost {
-                    best_cost = cost;
-                    best_i = i;
-                    best_j = j;
+        next.clear();
+        let allow_split = dirty.len() < SOFT_SPLIT_LIMIT;
+        for &d in dirty.iter() {
+            if !d.intersects(&c) {
+                next.push(d);
+                continue;
+            }
+            if rect_contains(&c, &d) {
+                continue;
+            }
+            if allow_split && next.len() < SOFT_SPLIT_LIMIT {
+                subtract_single_rect(d, c, &mut next);
+            } else {
+                let ax0 = d.origin.x.0;
+                let ay0 = d.origin.y.0;
+                let ax1 = d.bottom_right().x.0;
+                let ay1 = d.bottom_right().y.0;
+                let cx0 = c.origin.x.0;
+                let cy0 = c.origin.y.0;
+                let cx1 = c.bottom_right().x.0;
+                let cy1 = c.bottom_right().y.0;
+                let trimmed = if cx0 <= ax0 && cx1 >= ax1 {
+                    if cy0 <= ay0 && cy1 < ay1 {
+                        Bounds {
+                            origin: point(ScaledPixels(ax0), ScaledPixels(cy1)),
+                            size: size(ScaledPixels(ax1 - ax0), ScaledPixels(ay1 - cy1)),
+                        }
+                    } else if cy1 >= ay1 && cy0 > ay0 {
+                        Bounds {
+                            origin: point(ScaledPixels(ax0), ScaledPixels(ay0)),
+                            size: size(ScaledPixels(ax1 - ax0), ScaledPixels(cy0 - ay0)),
+                        }
+                    } else {
+                        d
+                    }
+                } else if cy0 <= ay0 && cy1 >= ay1 {
+                    if cx0 <= ax0 && cx1 < ax1 {
+                        Bounds {
+                            origin: point(ScaledPixels(cx1), ScaledPixels(ay0)),
+                            size: size(ScaledPixels(ax1 - cx1), ScaledPixels(ay1 - ay0)),
+                        }
+                    } else if cx1 >= ax1 && cx0 > ax0 {
+                        Bounds {
+                            origin: point(ScaledPixels(ax0), ScaledPixels(ay0)),
+                            size: size(ScaledPixels(cx0 - ax0), ScaledPixels(ay1 - ay0)),
+                        }
+                    } else {
+                        d
+                    }
+                } else {
+                    d
+                };
+                if rect_non_empty(&trimmed) {
+                    next.push(trimmed);
                 }
             }
         }
-        dirty[best_i] = dirty[best_i].union(&dirty[best_j]);
-        dirty.swap_remove(best_j);
+        std::mem::swap(dirty, &mut next);
     }
 }
 
@@ -3865,15 +4331,18 @@ fn coalesce_copy_regions(
     cluster_pad: f32,
     max_regions: usize,
 ) -> Vec<Bounds<ScaledPixels>> {
+    const MAX_MERGE_WASTE_PX: f32 = 48_000.0;
     let mut clusters: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(max_regions.min(rects.len()));
     for &d in rects {
         if !rect_non_empty(&d) {
             continue;
         }
-        let mut merged = false;
-        for c in &mut clusters {
+        let d_area = rect_area(&d);
+        let mut best_merge: Option<(usize, f32)> = None;
+        let mut contained = false;
+        for (idx, c) in clusters.iter().enumerate() {
             if rect_contains(c, &d) {
-                merged = true;
+                contained = true;
                 break;
             }
             let exp = Bounds {
@@ -3887,42 +4356,65 @@ fn coalesce_copy_regions(
                 ),
             };
             if exp.intersects(&d) {
-                *c = c.union(&d);
-                merged = true;
-                break;
-            }
-        }
-        if !merged {
-            if clusters.len() >= max_regions {
-                let mut best_idx = 0usize;
-                let mut best_cost = f32::INFINITY;
-                for (idx, c) in clusters.iter().enumerate() {
-                    let u = c.union(&d);
-                    let cost = rect_area(&u) - rect_area(c);
-                    if cost < best_cost {
-                        best_cost = cost;
-                        best_idx = idx;
+                let u = c.union(&d);
+                let u_area = rect_area(&u);
+                let c_area = rect_area(c);
+                let waste = (u_area - c_area - d_area).max(0.0);
+                if waste <= MAX_MERGE_WASTE_PX || u_area <= (c_area + d_area) * 1.18 {
+                    if best_merge.is_none_or(|(_, bw)| waste < bw) {
+                        best_merge = Some((idx, waste));
                     }
                 }
-                clusters[best_idx] = clusters[best_idx].union(&d);
-            } else {
-                clusters.push(d);
             }
         }
-    }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        'outer: for i in 0..clusters.len() {
-            for j in (i + 1)..clusters.len() {
-                if clusters[i].intersects(&clusters[j]) {
-                    clusters[i] = clusters[i].union(&clusters[j]);
-                    clusters.swap_remove(j);
-                    changed = true;
-                    break 'outer;
+        if contained {
+            continue;
+        }
+        if let Some((idx, _)) = best_merge {
+            clusters[idx] = clusters[idx].union(&d);
+        } else if clusters.len() >= max_regions {
+            let mut best_idx = 0usize;
+            let mut best_cost = f32::INFINITY;
+            for (idx, c) in clusters.iter().enumerate() {
+                let u = c.union(&d);
+                let cost = rect_area(&u) - rect_area(c);
+                if cost < best_cost {
+                    best_cost = cost;
+                    best_idx = idx;
                 }
             }
+            clusters[best_idx] = clusters[best_idx].union(&d);
+        } else {
+            clusters.push(d);
         }
+    }
+    let mut i = 0;
+    while i < clusters.len() {
+        let mut j = i + 1;
+        while j < clusters.len() {
+            if rect_contains(&clusters[i], &clusters[j]) {
+                clusters.swap_remove(j);
+                continue;
+            }
+            if rect_contains(&clusters[j], &clusters[i]) {
+                clusters[i] = clusters[j];
+                clusters.swap_remove(j);
+                continue;
+            }
+            if clusters[i].intersects(&clusters[j]) {
+                let u = clusters[i].union(&clusters[j]);
+                let u_area = rect_area(&u);
+                let sum_area = rect_area(&clusters[i]) + rect_area(&clusters[j]);
+                let waste = (u_area - sum_area).max(0.0);
+                if waste <= MAX_MERGE_WASTE_PX || u_area <= sum_area * 1.18 {
+                    clusters[i] = u;
+                    clusters.swap_remove(j);
+                    continue;
+                }
+            }
+            j += 1;
+        }
+        i += 1;
     }
     clusters
 }
@@ -4114,7 +4606,7 @@ fn build_item_spatial_mask(
         DrawItem::Quads { quads, mode } => {
             if *mode == 1 || *mode == 3 {
                 for q in *quads {
-                    push(glass_sample_rect(q, vw, vh));
+                    push(glass_sample_rect(q, vw, vh, false));
                 }
             } else {
                 for q in *quads {
@@ -4165,7 +4657,7 @@ fn item_overlaps_glass_exact(
     let g_slice: &[Bounds<ScaledPixels>] = if glass_quads.len() <= 32 {
         let mut count = 0usize;
         for q in glass_quads {
-            let sr = glass_sample_rect(q, vw, vh);
+            let sr = glass_sample_rect(q, vw, vh, false);
             if rect_non_empty(&sr) {
                 g_rects[count] = sr;
                 count += 1;
@@ -4175,7 +4667,7 @@ fn item_overlaps_glass_exact(
     } else {
         g_vec.reserve(glass_quads.len());
         for q in glass_quads {
-            let sr = glass_sample_rect(q, vw, vh);
+            let sr = glass_sample_rect(q, vw, vh, false);
             if rect_non_empty(&sr) {
                 g_vec.push(sr);
             }
@@ -4206,7 +4698,9 @@ fn item_overlaps_glass_exact(
         }),
         DrawItem::Quads { quads, mode } => {
             if *mode == 1 || *mode == 3 {
-                quads.iter().any(|q| hits(&glass_sample_rect(q, vw, vh)))
+                quads
+                    .iter()
+                    .any(|q| hits(&glass_sample_rect(q, vw, vh, false)))
             } else {
                 quads
                     .iter()
@@ -4383,25 +4877,48 @@ fn collect_lookahead_needs_items(
     items: &[DrawItem<'_>],
     cur_item_idx: usize,
     cur_chunk: &[Quad],
+    cur_mode: u8,
     dirty_rects: &[Bounds<ScaledPixels>],
     vw: f32,
     vh: f32,
 ) -> (Vec<Bounds<ScaledPixels>>, Vec<Bounds<ScaledPixels>>) {
-    let mut needs: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(cur_chunk.len() + 16);
+    let mut needs: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(cur_chunk.len() * 4 + 16);
     let mut blur_needs: Vec<Bounds<ScaledPixels>> = Vec::new();
     let inv_cell_w = 64.0 / vw.max(1.0);
     let inv_cell_h = 64.0 / vh.max(1.0);
-    let mut future_dirty = SpatialMask::empty();
+    let mut future_dirty_mask = SpatialMask::empty();
+    let mut future_dirty_rects: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(64);
+    let mut tmp_rects: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(4);
+
+    #[inline]
+    fn push_future(
+        mask: &mut SpatialMask,
+        rects: &mut Vec<Bounds<ScaledPixels>>,
+        b: Bounds<ScaledPixels>,
+        inv_cell_w: f32,
+        inv_cell_h: f32,
+    ) {
+        if rect_non_empty(&b) {
+            mask.add_rect(&b, inv_cell_w, inv_cell_h);
+            rects.push(b);
+        }
+    }
 
     for q in cur_chunk {
-        let sr = glass_sample_rect(q, vw, vh);
-        if rect_non_empty(&sr) {
-            needs.push(sr);
-            if q.background.colors[1].percentage * 2.0 > 0.5 {
+        push_glass_sample_rects(q, cur_mode, vw, vh, false, &mut needs);
+        if q.background.colors[1].percentage * 2.0 > 0.5 {
+            let sr = glass_sample_rect(q, vw, vh, false);
+            if rect_non_empty(&sr) {
                 blur_needs.push(sr);
             }
         }
-        future_dirty.add_rect(&q.bounds, inv_cell_w, inv_cell_h);
+        push_future(
+            &mut future_dirty_mask,
+            &mut future_dirty_rects,
+            q.bounds,
+            inv_cell_w,
+            inv_cell_h,
+        );
     }
 
     for item in &items[(cur_item_idx + 1)..] {
@@ -4409,21 +4926,36 @@ fn collect_lookahead_needs_items(
             DrawItem::Quads { quads, mode } => {
                 if mode == 1 || mode == 3 {
                     for q in quads {
-                        let sr = glass_sample_rect(q, vw, vh);
-                        if rect_non_empty(&sr)
-                            && !future_dirty.intersects_rect(&sr, inv_cell_w, inv_cell_h)
-                            && dirty_rects.iter().any(|dr| dr.intersects(&sr))
-                        {
-                            needs.push(sr);
-                            if q.background.colors[1].percentage * 2.0 > 0.5 {
-                                blur_needs.push(sr);
+                        tmp_rects.clear();
+                        push_glass_sample_rects(q, mode, vw, vh, false, &mut tmp_rects);
+                        let is_blur = q.background.colors[1].percentage * 2.0 > 0.5;
+                        for &sr in &tmp_rects {
+                            let blocked = future_dirty_mask.intersects_rect(&sr, inv_cell_w, inv_cell_h)
+                                && future_dirty_rects.iter().any(|fd| fd.intersects(&sr));
+                            if !blocked && dirty_rects.iter().any(|dr| dr.intersects(&sr)) {
+                                needs.push(sr);
+                                if is_blur {
+                                    blur_needs.push(sr);
+                                }
                             }
                         }
-                        future_dirty.add_rect(&q.bounds, inv_cell_w, inv_cell_h);
+                        push_future(
+                            &mut future_dirty_mask,
+                            &mut future_dirty_rects,
+                            q.bounds,
+                            inv_cell_w,
+                            inv_cell_h,
+                        );
                     }
                 } else {
                     for q in quads {
-                        future_dirty.add_rect(&q.bounds, inv_cell_w, inv_cell_h);
+                        push_future(
+                            &mut future_dirty_mask,
+                            &mut future_dirty_rects,
+                            q.bounds,
+                            inv_cell_w,
+                            inv_cell_h,
+                        );
                     }
                 }
             }
@@ -4441,32 +4973,68 @@ fn collect_lookahead_needs_items(
                         ),
                     }
                     .intersect(&s.content_mask.bounds);
-                    future_dirty.add_rect(&expanded, inv_cell_w, inv_cell_h);
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        expanded,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
                 }
             }
             DrawItem::Paths(paths) => {
                 for p in paths {
-                    future_dirty.add_rect(&p.bounds, inv_cell_w, inv_cell_h);
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        p.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
                 }
             }
             DrawItem::Underlines(underlines) => {
                 for u in underlines {
-                    future_dirty.add_rect(&u.bounds, inv_cell_w, inv_cell_h);
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        u.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
                 }
             }
             DrawItem::MonochromeSprites { sprites, .. } => {
                 for s in sprites {
-                    future_dirty.add_rect(&s.bounds, inv_cell_w, inv_cell_h);
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        s.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
                 }
             }
             DrawItem::PolychromeSprites { sprites, .. } => {
                 for s in sprites {
-                    future_dirty.add_rect(&s.bounds, inv_cell_w, inv_cell_h);
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        s.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
                 }
             }
             DrawItem::Surfaces(surfaces) => {
                 for s in surfaces {
-                    future_dirty.add_rect(&s.bounds, inv_cell_w, inv_cell_h);
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        s.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
                 }
             }
         }
@@ -4527,42 +5095,6 @@ fn new_command_encoder<'a>(
         zfar: 1.0,
     });
     command_encoder
-}
-
-fn build_opaque_pipeline_state_with_bool_constant(
-    device: &metal::DeviceRef,
-    library: &metal::LibraryRef,
-    label: &str,
-    vertex_fn_name: &str,
-    fragment_fn_name: &str,
-    pixel_format: metal::MTLPixelFormat,
-    constant_index: u64,
-    value: bool,
-) -> metal::RenderPipelineState {
-    let vertex_fn = library
-        .get_function(vertex_fn_name, None)
-        .expect("error locating vertex function");
-    let constants = metal::FunctionConstantValues::new();
-    constants.set_constant_value_at_index(
-        &value as *const bool as *const std::ffi::c_void,
-        metal::MTLDataType::Bool,
-        constant_index,
-    );
-    let fragment_fn = library
-        .get_function(fragment_fn_name, Some(constants))
-        .expect("error locating fragment function with constant");
-
-    let descriptor = metal::RenderPipelineDescriptor::new();
-    descriptor.set_label(label);
-    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
-    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
-    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
-    color_attachment.set_pixel_format(pixel_format);
-    color_attachment.set_blending_enabled(false);
-
-    device
-        .new_render_pipeline_state(&descriptor)
-        .expect("could not create render pipeline state")
 }
 
 fn build_pipeline_state_with_bool_constant(
@@ -5156,5 +5688,345 @@ mod offscreen_gpu_bench {
                 }
             }
         }
+
+        let mut shadow_scene = Scene::default();
+        let full_mask = ContentMask {
+            bounds: Bounds {
+                origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(vw as f32), ScaledPixels(vh as f32)),
+            },
+            bottom_fade: ScaledPixels(0.0),
+        };
+        let mut ord = 0u32;
+        shadow_scene.insert_primitive(Quad {
+            order: ord,
+            border_style: BorderStyle::Solid,
+            bounds: full_mask.bounds,
+            content_mask: full_mask.clone(),
+            background: Background::from(Hsla { h: 0.62, s: 0.25, l: 0.05, a: 1.0 }),
+            border_color: Hsla::default(),
+            corner_radii: Corners::default(),
+            border_widths: Edges::default(),
+        });
+        ord += 1;
+        for i in 0..28 {
+            let col = i % 4;
+            let row = i / 4;
+            let b = Bounds {
+                origin: point(ScaledPixels(40.0 + col as f32 * 880.0), ScaledPixels(40.0 + row as f32 * 310.0)),
+                size: size(ScaledPixels(820.0), ScaledPixels(260.0)),
+            };
+            shadow_scene.insert_primitive(Shadow {
+                order: ord,
+                blur_radius: ScaledPixels(18.0),
+                bounds: b,
+                corner_radii: Corners::all(ScaledPixels(24.0)),
+                content_mask: full_mask.clone(),
+                color: Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.22 },
+            });
+            ord += 1;
+            shadow_scene.insert_primitive(Shadow {
+                order: ord,
+                blur_radius: ScaledPixels(52.0),
+                bounds: b,
+                corner_radii: Corners::all(ScaledPixels(24.0)),
+                content_mask: full_mask.clone(),
+                color: Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.14 },
+            });
+            ord += 1;
+        }
+        shadow_scene.finish();
+        for _ in 0..15 {
+            let _ = render_one_frame_sync(&mut renderer, &shadow_scene, &target, viewport, Some(12.345));
+        }
+        crate::perf_telemetry::reset();
+        let mut s_gpu = Vec::with_capacity(40);
+        for _ in 0..40 {
+            let (_, g) = render_one_frame_sync(&mut renderer, &shadow_scene, &target, viewport, Some(12.345));
+            s_gpu.push(g);
+        }
+        s_gpu.sort_unstable();
+        println!(
+            "[OFFSCREEN {:<18}] gpu_p10={:>4}u gpu_p50={:>4}u",
+            "shadows_56_23mpx",
+            s_gpu[s_gpu.len() / 10],
+            s_gpu[s_gpu.len() / 2],
+        );
+        if save_dir.is_some() || check_dir.is_some() {
+            let _ = render_one_frame_sync(&mut renderer, &shadow_scene, &target, viewport, Some(12.345));
+            let pixels = readback_bgra(&target, vw, vh);
+            if let Some(ref d) = save_dir {
+                std::fs::write(format!("{}/shadows_56_23mpx.bgra", d), &pixels)
+                    .expect("failed to write shadow snapshot");
+            }
+            if let Some(ref d) = check_dir {
+                let ref_pixels = std::fs::read(format!("{}/shadows_56_23mpx.bgra", d))
+                    .expect("failed to read ref shadow snapshot");
+                let mut max_diff = 0u8;
+                let mut diff_gt_1_px = 0u64;
+                for (a, b) in pixels.chunks_exact(4).zip(ref_pixels.chunks_exact(4)) {
+                    let md = a[0].abs_diff(b[0]).max(a[1].abs_diff(b[1])).max(a[2].abs_diff(b[2])).max(a[3].abs_diff(b[3]));
+                    max_diff = max_diff.max(md);
+                    if md > 1 {
+                        diff_gt_1_px += 1;
+                    }
+                }
+                println!("  [PIXEL-DIFF shadows_56_23mpx  ] max_diff={} diff>1={}", max_diff, diff_gt_1_px);
+                assert!(max_diff <= 2, "shadow visual regression: max_diff={max_diff}");
+            }
+        }
+
+        crate::set_particle_wave_tuning(ParticleWaveTuning {
+            image_enabled: true,
+            apple_music_artwork_enabled: false,
+            youtube_mirror_enabled: true,
+            tile_size_px: 3.0,
+            image_hold_secs: 60.0,
+            image_brightness: 1.0,
+            image_peak_luminance: 0.42,
+            image_saturation: 1.0,
+        });
+        let yt_scene = build_realistic_scene(vw as f32, vh as f32, 0.0, false);
+        let yt_w = 1342u32;
+        let yt_h = 754u32;
+        let mut yt_rgba = vec![0u8; (yt_w * yt_h * 4) as usize];
+        for y in 0..yt_h {
+            for x in 0..yt_w {
+                let idx = ((y * yt_w + x) * 4) as usize;
+                yt_rgba[idx] = ((x * 255) / yt_w) as u8;
+                yt_rgba[idx + 1] = ((y * 255) / yt_h) as u8;
+                yt_rgba[idx + 2] = (((x + y) * 127) / (yt_w + yt_h)) as u8;
+                yt_rgba[idx + 3] = 255;
+            }
+        }
+        crate::set_particle_wave_live_video_frame(yt_w, yt_h, yt_rgba.clone());
+        for _ in 0..10 {
+            crate::set_particle_wave_live_video_frame(yt_w, yt_h, yt_rgba.clone());
+            let _ = render_one_frame_sync(&mut renderer, &yt_scene, &target, viewport, Some(12.345));
+        }
+        crate::perf_telemetry::reset();
+        let mut yt_enc = Vec::with_capacity(40);
+        let mut yt_gpu = Vec::with_capacity(40);
+        for i in 0..40 {
+            crate::set_particle_wave_live_video_frame(yt_w, yt_h, yt_rgba.clone());
+            let (e, g) = render_one_frame_sync(&mut renderer, &yt_scene, &target, viewport, Some(12.345 + i as f32 * 0.016));
+            yt_enc.push(e);
+            yt_gpu.push(g);
+        }
+        yt_enc.sort_unstable();
+        yt_gpu.sort_unstable();
+        let yt_passes = crate::perf_telemetry::drain_gpu_pass_breakdowns();
+        let mut yt_comp: Vec<u64> = yt_passes.iter().map(|p| p.compute_gpu_us + p.blit_fill_gpu_us).collect();
+        let mut yt_rp0: Vec<u64> = yt_passes.iter().map(|p| p.render_pass_0_gpu_us).collect();
+        let mut yt_blit: Vec<u64> = yt_passes.iter().map(|p| p.blit_backdrop_gpu_us).collect();
+        let mut yt_rp1: Vec<u64> = yt_passes.iter().map(|p| p.render_pass_rest_gpu_us).collect();
+        yt_comp.sort_unstable();
+        yt_rp0.sort_unstable();
+        yt_blit.sort_unstable();
+        yt_rp1.sort_unstable();
+        let p50_yt = |v: &[u64]| if v.is_empty() { 0 } else { v[v.len() / 2] };
+        println!(
+            "[OFFSCREEN {:<18}] enc_p50={:>4}u | gpu_p10={:>4}u gpu_p50={:>4}u | Comp={:>4}u RP0={:>4}u Blit={:>4}u RP1+={:>4}u",
+            "glass_sharp_yt_live",
+            p50_yt(&yt_enc),
+            yt_gpu[yt_gpu.len() / 10],
+            p50_yt(&yt_gpu),
+            p50_yt(&yt_comp),
+            p50_yt(&yt_rp0),
+            p50_yt(&yt_blit),
+            p50_yt(&yt_rp1),
+        );
+        if save_dir.is_some() || check_dir.is_some() {
+            crate::set_particle_wave_live_video_frame(yt_w, yt_h, yt_rgba);
+            let _ = render_one_frame_sync(&mut renderer, &yt_scene, &target, viewport, Some(12.345));
+            let pixels = readback_bgra(&target, vw, vh);
+            if let Some(ref d) = save_dir {
+                std::fs::write(format!("{}/glass_sharp_yt_live.bgra", d), &pixels)
+                    .expect("failed to write yt snapshot");
+            }
+            if let Some(ref d) = check_dir {
+                let ref_pixels = std::fs::read(format!("{}/glass_sharp_yt_live.bgra", d))
+                    .expect("failed to read ref yt snapshot");
+                let mut max_diff = 0u8;
+                let mut diff_gt_1_px = 0u64;
+                for (a, b) in pixels.chunks_exact(4).zip(ref_pixels.chunks_exact(4)) {
+                    let md = a[0].abs_diff(b[0]).max(a[1].abs_diff(b[1])).max(a[2].abs_diff(b[2])).max(a[3].abs_diff(b[3]));
+                    max_diff = max_diff.max(md);
+                    if md > 1 {
+                        diff_gt_1_px += 1;
+                    }
+                }
+                println!("  [PIXEL-DIFF glass_sharp_yt_live] max_diff={} diff>1={}", max_diff, diff_gt_1_px);
+                assert!(max_diff <= 2, "youtube live visual regression: max_diff={max_diff}");
+            }
+        }
+        crate::clear_particle_wave_live_video_frame();
+    }
+
+    #[test]
+    fn test_liquid_glass_never_samples_uncopied_backdrop() {
+        let vw = 2400u32;
+        let vh = 1800u32;
+        let mut renderer = MetalRenderer::new(Arc::new(Mutex::new(InstanceBufferPool::default())));
+        renderer.update_drawable_size(size(
+            DevicePixels(vw as i32),
+            DevicePixels(vh as i32),
+        ));
+        let desc = metal::TextureDescriptor::new();
+        desc.set_texture_type(metal::MTLTextureType::D2);
+        desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        desc.set_width(vw as u64);
+        desc.set_height(vh as u64);
+        desc.set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
+        desc.set_storage_mode(metal::MTLStorageMode::Managed);
+        let target = renderer.device.new_texture(&desc);
+        let viewport = size(DevicePixels(vw as i32), DevicePixels(vh as i32));
+
+        let full_mask = ContentMask {
+            bounds: Bounds {
+                origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(vw as f32), ScaledPixels(vh as f32)),
+            },
+            bottom_fade: ScaledPixels(0.0),
+        };
+
+        let make_glass = |order: u32,
+                          x: f32,
+                          y: f32,
+                          w: f32,
+                          h: f32,
+                          disp_scale: f32,
+                          reach: f32,
+                          chroma: f32| {
+            let mut bg = crate::Background::from(crate::rgba(0x07090e0a));
+            bg.tag = crate::BackgroundTag::LiquidGlass;
+            bg.gradient_angle_or_pattern_height = disp_scale;
+            bg.colors[0].percentage = reach;
+            bg.colors[0].color.s = chroma;
+            bg.colors[0].color.a = 0.24;
+            bg.colors[1].percentage = 0.0;
+            bg.colors[1].color.s = 0.0;
+            Quad {
+                order,
+                border_style: crate::BorderStyle::Solid,
+                bounds: Bounds {
+                    origin: point(ScaledPixels(x), ScaledPixels(y)),
+                    size: size(ScaledPixels(w), ScaledPixels(h)),
+                },
+                content_mask: full_mask.clone(),
+                background: bg,
+                border_color: Hsla::transparent_black(),
+                corner_radii: Corners::all(ScaledPixels(13.2)),
+                border_widths: Edges::all(ScaledPixels(0.0)),
+            }
+        };
+
+        let mut scene = Scene::default();
+        scene.quads.push(Quad {
+            order: 0,
+            border_style: crate::BorderStyle::Solid,
+            bounds: full_mask.bounds,
+            content_mask: full_mask.clone(),
+            background: crate::Background::from(crate::rgba(0x14181cff)),
+            border_color: Hsla::transparent_black(),
+            corner_radii: Corners::all(ScaledPixels(0.0)),
+            border_widths: Edges::all(ScaledPixels(0.0)),
+        });
+        scene
+            .quads
+            .push(make_glass(1, 60.0, 60.0, 2280.0, 1680.0, 193.0, 50.0, 0.0));
+        scene.quads.push(Quad {
+            order: 2,
+            border_style: crate::BorderStyle::Solid,
+            bounds: Bounds {
+                origin: point(ScaledPixels(420.0), ScaledPixels(420.0)),
+                size: size(ScaledPixels(220.0), ScaledPixels(36.0)),
+            },
+            content_mask: full_mask.clone(),
+            background: crate::Background::from(crate::rgba(0x283038ff)),
+            border_color: Hsla::transparent_black(),
+            corner_radii: Corners::all(ScaledPixels(4.0)),
+            border_widths: Edges::all(ScaledPixels(0.0)),
+        });
+        scene
+            .quads
+            .push(make_glass(3, 420.0, 500.0, 1200.0, 180.0, 193.0, 50.0, 0.0));
+        scene
+            .quads
+            .push(make_glass(4, 420.0, 720.0, 1200.0, 180.0, 193.0, 50.0, 0.35));
+        scene
+            .quads
+            .push(make_glass(5, 420.0, 940.0, 1200.0, 120.0, 240.0, 180.0, 0.35));
+        scene
+            .quads
+            .push(make_glass(6, 420.0, 1100.0, 100.0, 400.0, 193.0, 50.0, 0.0));
+        scene.finish();
+
+        let _ = render_one_frame_sync(&mut renderer, &scene, &target, viewport, Some(1.0));
+
+        let poison_tex = renderer
+            .backdrop_texture
+            .as_ref()
+            .expect("backdrop_texture must be allocated");
+        let poison_desc = metal::TextureDescriptor::new();
+        poison_desc.set_texture_type(metal::MTLTextureType::D2);
+        poison_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        poison_desc.set_width(vw as u64);
+        poison_desc.set_height(vh as u64);
+        poison_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+        let staging = renderer.device.new_texture(&poison_desc);
+        let mut magenta = vec![0u8; (vw * vh * 4) as usize];
+        for px in magenta.chunks_exact_mut(4) {
+            px[0] = 255;
+            px[1] = 0;
+            px[2] = 255;
+            px[3] = 255;
+        }
+        staging.replace_region(
+            metal::MTLRegion::new_2d(0, 0, vw as u64, vh as u64),
+            0,
+            magenta.as_ptr() as *const _,
+            (vw * 4) as u64,
+        );
+        let cb = renderer.command_queue.new_command_buffer();
+        let blit = cb.new_blit_command_encoder();
+        blit.copy_from_texture(
+            &staging,
+            0,
+            0,
+            metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            metal::MTLSize {
+                width: vw as u64,
+                height: vh as u64,
+                depth: 1,
+            },
+            poison_tex,
+            0,
+            0,
+            metal::MTLOrigin { x: 0, y: 0, z: 0 },
+        );
+        blit.end_encoding();
+        cb.commit();
+        cb.wait_until_completed();
+
+        let _ = render_one_frame_sync(&mut renderer, &scene, &target, viewport, Some(1.016));
+        let pixels = readback_bgra(&target, vw, vh);
+        let mut magenta_leak_px = 0usize;
+        let mut worst_rg_diff = 0i32;
+        for px in pixels.chunks_exact(4) {
+            let b = px[0] as i32;
+            let g = px[1] as i32;
+            let r = px[2] as i32;
+            let rg = r - g;
+            let bg = b - g;
+            if rg > 30 && bg > 30 {
+                magenta_leak_px += 1;
+                worst_rg_diff = worst_rg_diff.max(rg.min(bg));
+            }
+        }
+        assert_eq!(
+            magenta_leak_px, 0,
+            "LiquidGlass sampled uncopied backdrop_texture ({magenta_leak_px} leaked pixels, worst_rg_diff={worst_rg_diff})"
+        );
     }
 }

@@ -974,15 +974,43 @@ pub fn particle_wave_override_image_active() -> bool {
         .unwrap_or(false)
 }
 
-/// A live RGBA8 video frame streamed in-memory for the mirror-ball backdrop.
+/// Pixel layout of an in-memory live video backdrop frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LiveVideoPixelFormat {
+    /// Tightly packed 3-byte RGB8 (`width * height * 3` bytes, opaque alpha).
+    Rgb8,
+    /// Tightly packed 4-byte RGBA8 (`width * height * 4` bytes).
+    Rgba8,
+}
+
+impl LiveVideoPixelFormat {
+    /// Returns the number of bytes per pixel for this layout.
+    #[inline]
+    pub const fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Rgb8 => 3,
+            Self::Rgba8 => 4,
+        }
+    }
+
+    /// Returns whether this pixel layout carries an active alpha channel.
+    #[inline]
+    pub const fn has_alpha(self) -> bool {
+        matches!(self, Self::Rgba8)
+    }
+}
+
+/// A live video frame streamed in-memory for the mirror-ball backdrop.
 #[derive(Clone, Debug)]
 pub struct ParticleWaveLiveVideoFrame {
     /// Frame width in pixels.
     pub width: u32,
     /// Frame height in pixels.
     pub height: u32,
-    /// Tightly packed RGBA8 pixel data (`width * height * 4` bytes).
-    pub rgba: std::sync::Arc<Vec<u8>>,
+    /// Pixel byte layout of `pixels`.
+    pub format: LiveVideoPixelFormat,
+    /// Tightly packed pixel data (`width * height * format.bytes_per_pixel()` bytes).
+    pub pixels: std::sync::Arc<Vec<u8>>,
     /// Timestamp when this frame was received.
     pub updated_at: std::time::Instant,
 }
@@ -1005,24 +1033,75 @@ fn particle_wave_live_video_cell() -> &'static std::sync::Mutex<LiveVideoState> 
     })
 }
 
-/// Updates the shared in-memory live video frame for the mirror-ball backdrop.
-pub fn set_particle_wave_live_video_frame(width: u32, height: u32, rgba: Vec<u8>) {
-    let expected = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|n| n.checked_mul(4));
-    if width == 0 || height == 0 || expected != Some(rgba.len()) {
+fn live_video_buf_pool() -> &'static std::sync::Mutex<Vec<Vec<u8>>> {
+    static POOL: std::sync::OnceLock<std::sync::Mutex<Vec<Vec<u8>>>> =
+        std::sync::OnceLock::new();
+    POOL.get_or_init(|| std::sync::Mutex::new(Vec::with_capacity(2)))
+}
+
+fn take_live_video_buf(len: usize) -> Vec<u8> {
+    if let Ok(mut pool) = live_video_buf_pool().lock()
+        && let Some(mut buf) = pool.pop()
+    {
+        if buf.len() < len {
+            buf.resize(len, 0);
+        } else {
+            buf.truncate(len);
+        }
+        return buf;
+    }
+    vec![0u8; len]
+}
+
+fn recycle_live_video_buf(buf: Vec<u8>) {
+    if buf.capacity() > 16 * 1024 * 1024 {
         return;
     }
-    if let Ok(mut guard) = particle_wave_live_video_cell().lock() {
+    if let Ok(mut pool) = live_video_buf_pool().lock()
+        && pool.len() < 2
+    {
+        pool.push(buf);
+    }
+}
+
+fn store_live_video_frame(
+    width: u32,
+    height: u32,
+    format: LiveVideoPixelFormat,
+    pixels: Vec<u8>,
+) {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(format.bytes_per_pixel()));
+    if width == 0 || height == 0 || expected != Some(pixels.len()) {
+        return;
+    }
+    let old = if let Ok(mut guard) = particle_wave_live_video_cell().lock() {
         guard.generation = guard.generation.wrapping_add(1).max(1);
-        guard.frame = Some(ParticleWaveLiveVideoFrame {
+        let prev = guard.frame.replace(ParticleWaveLiveVideoFrame {
             width,
             height,
-            rgba: std::sync::Arc::new(rgba),
+            format,
+            pixels: std::sync::Arc::new(pixels),
             updated_at: std::time::Instant::now(),
         });
         LIVE_VIDEO_GEN.store(guard.generation, std::sync::atomic::Ordering::Release);
+        prev
+    } else {
+        None
+    };
+    if let Some(old_frame) = old
+        && let Ok(buf) = std::sync::Arc::try_unwrap(old_frame.pixels)
+    {
+        recycle_live_video_buf(buf);
     }
+}
+
+/// Updates the shared in-memory live video frame for the mirror-ball backdrop.
+pub fn set_particle_wave_live_video_frame(width: u32, height: u32, rgba: Vec<u8>) {
+    let payload_len = rgba.len() as u64;
+    store_live_video_frame(width, height, LiveVideoPixelFormat::Rgba8, rgba);
+    crate::perf_telemetry::record_live_video_decode(width, height, payload_len, 0);
 }
 
 /// Decodes an encoded image payload (JPEG/WebP/PNG) and updates the shared live video frame.
@@ -1032,6 +1111,29 @@ pub fn set_particle_wave_live_video_encoded(
     max_width: u32,
     max_height: u32,
 ) -> Result<(u32, u32), String> {
+    let started = std::time::Instant::now();
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8 {
+        use image::ImageDecoder;
+        if let Ok(decoder) = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes)) {
+            let (w, h) = decoder.dimensions();
+            if !(min_dim..=max_width).contains(&w) || !(min_dim..=max_height).contains(&h) {
+                return Err(format!(
+                    "decoded frame {w}x{h} out of allowed bounds {min_dim}..={max_width}x{min_dim}..={max_height}"
+                ));
+            }
+            if decoder.color_type() == image::ColorType::Rgb8 {
+                let total = decoder.total_bytes() as usize;
+                let mut buf = take_live_video_buf(total);
+                decoder
+                    .read_image(&mut buf)
+                    .map_err(|e| format!("failed to decode live video jpeg: {e}"))?;
+                store_live_video_frame(w, h, LiveVideoPixelFormat::Rgb8, buf);
+                let decode_us = started.elapsed().as_micros() as u64;
+                crate::perf_telemetry::record_live_video_decode(w, h, bytes.len() as u64, decode_us);
+                return Ok((w, h));
+            }
+        }
+    }
     let img = image::load_from_memory(bytes)
         .map_err(|e| format!("failed to decode live video frame: {e}"))?;
     let w = img.width();
@@ -1041,8 +1143,14 @@ pub fn set_particle_wave_live_video_encoded(
             "decoded frame {w}x{h} out of allowed bounds {min_dim}..={max_width}x{min_dim}..={max_height}"
         ));
     }
-    let rgba = img.to_rgba8().into_raw();
-    set_particle_wave_live_video_frame(w, h, rgba);
+    let (format, pixels) = match img {
+        image::DynamicImage::ImageRgb8(rgb) => (LiveVideoPixelFormat::Rgb8, rgb.into_raw()),
+        image::DynamicImage::ImageRgba8(rgba) => (LiveVideoPixelFormat::Rgba8, rgba.into_raw()),
+        other => (LiveVideoPixelFormat::Rgba8, other.to_rgba8().into_raw()),
+    };
+    store_live_video_frame(w, h, format, pixels);
+    let decode_us = started.elapsed().as_micros() as u64;
+    crate::perf_telemetry::record_live_video_decode(w, h, bytes.len() as u64, decode_us);
     Ok((w, h))
 }
 
