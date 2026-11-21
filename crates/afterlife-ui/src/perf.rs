@@ -1,4 +1,6 @@
-use gpui::perf_telemetry::{self, MetalFrameSample, MetricSummary, WindowDrawSample};
+use gpui::perf_telemetry::{
+    self, GpuPassBreakdown, MetalFrameSample, MetricSummary, WindowDrawSample,
+};
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -12,6 +14,7 @@ pub enum PerfScenario {
     IdleLiquidGlass,
     IdleLiquidGlassImagesOn,
     IdleAppearanceDrawer,
+    LiveDetailSheet,
     IdleWireframe,
     InteractiveChurn,
     InactivePowerSave,
@@ -23,6 +26,7 @@ impl PerfScenario {
             Self::IdleLiquidGlass => "idle_liquid_glass",
             Self::IdleLiquidGlassImagesOn => "idle_liquid_glass_images_on",
             Self::IdleAppearanceDrawer => "idle_appearance_drawer",
+            Self::LiveDetailSheet => "live_detail_sheet",
             Self::IdleWireframe => "idle_wireframe",
             Self::InteractiveChurn => "interactive_churn",
             Self::InactivePowerSave => "inactive_power_save",
@@ -33,6 +37,7 @@ impl PerfScenario {
         match s {
             "idle_liquid_glass_images_on" => Self::IdleLiquidGlassImagesOn,
             "idle_appearance_drawer" => Self::IdleAppearanceDrawer,
+            "live_detail_sheet" => Self::LiveDetailSheet,
             "idle_wireframe" => Self::IdleWireframe,
             "interactive_churn" => Self::InteractiveChurn,
             "inactive_power_save" => Self::InactivePowerSave,
@@ -236,6 +241,13 @@ pub fn live_runtime_metrics_json() -> Value {
             "draw_cpu_us": summary_value(live.draw_cpu_us),
             "encode_us": summary_value(live.encode_us),
             "gpu_us": summary_value(live.gpu_us),
+            "gpu_passes": {
+                "compute_us": summary_value(live.gpu_compute_us),
+                "blit_fill_us": summary_value(live.gpu_blit_fill_us),
+                "blit_backdrop_us": summary_value(live.gpu_blit_backdrop_us),
+                "render_pass_0_us": summary_value(live.gpu_render_pass_0_us),
+                "render_pass_rest_us": summary_value(live.gpu_render_pass_rest_us),
+            },
             "gpu_allocated_mb": round2(live.gpu_allocated_mb),
             "gpu_allocated_mb_peak": round2(live.gpu_allocated_mb_peak),
             "backdrop_images_loaded": live.backdrop_images_loaded,
@@ -327,6 +339,7 @@ impl PerfSession {
             let ttff_ms = perf_telemetry::ttff_us().map(|us| round2(us as f64 / 1000.0));
             let metal_samples = perf_telemetry::drain_metal_samples();
             let gpu_timings_us = perf_telemetry::drain_gpu_timings_us();
+            let gpu_pass_breakdowns = perf_telemetry::drain_gpu_pass_breakdowns();
             let window_draws = perf_telemetry::drain_window_draw_samples();
             let report = build_report_value(
                 &st.config,
@@ -341,6 +354,7 @@ impl PerfSession {
                 &window_draws,
                 &metal_samples,
                 &gpu_timings_us,
+                &gpu_pass_breakdowns,
             );
             let json_body = serde_json::to_string_pretty(&report).unwrap_or_default() + "\n";
             if let Some(parent) = st.config.out_path.parent() {
@@ -411,6 +425,7 @@ fn build_report_value(
     window_draws: &[WindowDrawSample],
     metal_samples: &[MetalFrameSample],
     gpu_timings_us: &[u64],
+    gpu_pass_breakdowns: &[GpuPassBreakdown],
 ) -> Value {
     let wall_sec = (wall_ms / 1000.0).max(0.001);
     let user_ms = end_proc.user_us.saturating_sub(start_proc.user_us) as f64 / 1000.0;
@@ -433,6 +448,26 @@ fn build_report_value(
         .map(|s| s.draw_total_us.saturating_sub(s.next_drawable_us))
         .collect();
     let encode_us: Vec<u64> = metal_samples.iter().map(|s| s.encode_us).collect();
+    let gpu_compute_us: Vec<u64> = gpu_pass_breakdowns
+        .iter()
+        .map(|s| s.compute_gpu_us)
+        .collect();
+    let gpu_blit_fill_us: Vec<u64> = gpu_pass_breakdowns
+        .iter()
+        .map(|s| s.blit_fill_gpu_us)
+        .collect();
+    let gpu_blit_backdrop_us: Vec<u64> = gpu_pass_breakdowns
+        .iter()
+        .map(|s| s.blit_backdrop_gpu_us)
+        .collect();
+    let gpu_rp0_us: Vec<u64> = gpu_pass_breakdowns
+        .iter()
+        .map(|s| s.render_pass_0_gpu_us)
+        .collect();
+    let gpu_rprest_us: Vec<u64> = gpu_pass_breakdowns
+        .iter()
+        .map(|s| s.render_pass_rest_gpu_us)
+        .collect();
     let present_intervals_us: Vec<u64> = metal_samples
         .iter()
         .map(|s| s.present_interval_us)
@@ -567,6 +602,13 @@ fn build_report_value(
             "draw_cpu_us": summary_value(compute_stats_u64(&draw_cpu_us, 1.0)),
             "encode_us": summary_value(compute_stats_u64(&encode_us, 1.0)),
             "gpu_us": summary_value(compute_stats_u64(gpu_timings_us, 1.0)),
+            "gpu_passes": {
+                "compute_us": summary_value(compute_stats_u64(&gpu_compute_us, 1.0)),
+                "blit_fill_us": summary_value(compute_stats_u64(&gpu_blit_fill_us, 1.0)),
+                "blit_backdrop_us": summary_value(compute_stats_u64(&gpu_blit_backdrop_us, 1.0)),
+                "render_pass_0_us": summary_value(compute_stats_u64(&gpu_rp0_us, 1.0)),
+                "render_pass_rest_us": summary_value(compute_stats_u64(&gpu_rprest_us, 1.0)),
+            },
             "gpu_allocated_mb_avg": round2(avg_gpu_alloc_bytes / (1024.0 * 1024.0)),
             "gpu_allocated_mb_peak": to_mb(peak_gpu_alloc_bytes),
             "backdrop_images_loaded": backdrop_images_loaded,

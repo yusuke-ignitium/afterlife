@@ -159,8 +159,14 @@ impl Render for AfterlifeApp {
             } else {
                 let present_when_inactive =
                     self.perf.is_some() || !st.pause_animation_when_inactive;
-                window
-                    .set_continuous_present(Some(Duration::from_millis(14)), present_when_inactive);
+                let interval = if self.perf.is_some()
+                    && std::env::var_os("AFTERLIFE_PERF_UNCAP").is_some()
+                {
+                    Duration::from_millis(1)
+                } else {
+                    Duration::from_millis(14)
+                };
+                window.set_continuous_present(Some(interval), present_when_inactive);
             }
         } else {
             window.set_continuous_present(None, false);

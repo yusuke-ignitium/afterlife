@@ -253,12 +253,16 @@ impl AppState {
     pub fn new() -> Self {
         let ephemeral = std::env::var("AFTERLIFE_EPHEMERAL").is_ok()
             || std::env::var("AFTERLIFE_PERF_SCENARIO").is_ok();
+        let perf_use_live_data = std::env::var("AFTERLIFE_PERF_USE_LIVE_DATA").is_ok();
         let backdrop_store = (!ephemeral).then(BackdropStore::open_default);
 
         let style = UiStyle::LiquidGlass;
         let mut glass = GlassSettings::default();
         let mut pause_animation_when_inactive = false;
-        if let Some(ref store) = backdrop_store {
+        let load_backdrop_store = backdrop_store
+            .clone()
+            .or_else(|| perf_use_live_data.then(BackdropStore::open_default));
+        if let Some(ref store) = load_backdrop_store {
             match store.load() {
                 Ok(backdrop) => {
                     apply_backdrop_config(&mut glass, &mut pause_animation_when_inactive, &backdrop)
@@ -287,7 +291,7 @@ impl AppState {
                 .unwrap_or_else(|_| "you@local".to_string()),
         };
 
-        let (daemon, engine) = if ephemeral {
+        let (daemon, engine) = if ephemeral && !perf_use_live_data {
             (None, AfterlifeEngine::new_for_owner(owner_id.clone()))
         } else {
             match AppDaemonState::from_config(cfg) {
@@ -298,7 +302,8 @@ impl AppState {
                         .load_workspace(&owner_id)
                         .map(|snap| snap.engine)
                         .unwrap_or_else(|_| AfterlifeEngine::new_for_owner(owner_id.clone()));
-                    (Some(d), eng)
+                    let kept_daemon = (!ephemeral).then_some(d);
+                    (kept_daemon, eng)
                 }
                 Err(e) => {
                     eprintln!(

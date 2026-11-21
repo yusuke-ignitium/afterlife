@@ -79,6 +79,25 @@ pub struct WindowDrawSample {
     pub total_us: u64,
 }
 
+/// Per-frame hardware GPU timing breakdown across Metal passes (microseconds).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GpuPassBreakdown {
+    /// Total command buffer GPU duration (`GPUEndTime - GPUStartTime`) in microseconds.
+    pub total_gpu_us: u64,
+    /// Compute scatter pass GPU duration in microseconds.
+    pub compute_gpu_us: u64,
+    /// Tile-grid buffer clear blit GPU duration in microseconds.
+    pub blit_fill_gpu_us: u64,
+    /// Backdrop copy and mipmap blit GPU duration in microseconds.
+    pub blit_backdrop_gpu_us: u64,
+    /// First render pass (backdrop particle wave) GPU duration in microseconds.
+    pub render_pass_0_gpu_us: u64,
+    /// Subsequent render passes (Liquid Glass, shadows, text) GPU duration in microseconds.
+    pub render_pass_rest_gpu_us: u64,
+    /// Number of Metal passes profiled in this frame.
+    pub pass_count: u32,
+}
+
 /// Summary percentiles for a rolling metric.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MetricSummary {
@@ -125,6 +144,16 @@ pub struct LivePerfSnapshot {
     pub encode_us: MetricSummary,
     /// Rolling hardware GPU command buffer execution duration (microseconds).
     pub gpu_us: MetricSummary,
+    /// Rolling hardware GPU compute pass duration (microseconds).
+    pub gpu_compute_us: MetricSummary,
+    /// Rolling hardware GPU tile-grid blit fill duration (microseconds).
+    pub gpu_blit_fill_us: MetricSummary,
+    /// Rolling hardware GPU backdrop blit/mipmap duration (microseconds).
+    pub gpu_blit_backdrop_us: MetricSummary,
+    /// Rolling hardware GPU render pass 0 (backdrop wave) duration (microseconds).
+    pub gpu_render_pass_0_us: MetricSummary,
+    /// Rolling hardware GPU render passes 1..N (glass/shadows/text) duration (microseconds).
+    pub gpu_render_pass_rest_us: MetricSummary,
     /// Rolling GPUI layout and prepaint duration (microseconds).
     pub gpui_prepaint_us: MetricSummary,
     /// Rolling GPUI element paint duration (microseconds).
@@ -158,9 +187,11 @@ struct PerfCollector {
     last_live_frame_at: Option<Instant>,
     metal_frames: Vec<MetalFrameSample>,
     gpu_timings_us: Vec<u64>,
+    gpu_pass_breakdowns: Vec<GpuPassBreakdown>,
     window_draws: Vec<WindowDrawSample>,
     live_metal: VecDeque<MetalFrameSample>,
     live_gpu_us: VecDeque<u64>,
+    live_gpu_passes: VecDeque<GpuPassBreakdown>,
     live_window_draws: VecDeque<WindowDrawSample>,
     live_gpu_allocated_peak_bytes: u64,
     live_dropped_18ms: u64,
@@ -178,9 +209,11 @@ impl Default for PerfCollector {
             last_live_frame_at: None,
             metal_frames: Vec::new(),
             gpu_timings_us: Vec::new(),
+            gpu_pass_breakdowns: Vec::new(),
             window_draws: Vec::new(),
             live_metal: VecDeque::with_capacity(LIVE_RING_CAP),
             live_gpu_us: VecDeque::with_capacity(LIVE_RING_CAP),
+            live_gpu_passes: VecDeque::with_capacity(LIVE_RING_CAP),
             live_window_draws: VecDeque::with_capacity(LIVE_RING_CAP),
             live_gpu_allocated_peak_bytes: 0,
             live_dropped_18ms: 0,
@@ -248,6 +281,7 @@ pub fn reset() {
     guard.last_bench_frame_at = None;
     guard.metal_frames.clear();
     guard.gpu_timings_us.clear();
+    guard.gpu_pass_breakdowns.clear();
     guard.window_draws.clear();
 }
 
@@ -324,6 +358,28 @@ pub fn record_gpu_timing_us(duration_us: u64) {
     }
 }
 
+/// Record a hardware GPU pass-level timing breakdown reported by Metal's counter sample buffer.
+pub fn record_gpu_pass_breakdown(sample: GpuPassBreakdown) {
+    let bench = BENCH_ENABLED.load(Ordering::Relaxed);
+    let live = LIVE_ENABLED.load(Ordering::Relaxed);
+    if !bench && !live {
+        return;
+    }
+    let mut guard = COLLECTOR.lock();
+    if live {
+        if guard.live_gpu_passes.len() >= LIVE_RING_CAP {
+            guard.live_gpu_passes.pop_front();
+        }
+        guard.live_gpu_passes.push_back(sample);
+    }
+    if bench {
+        if guard.gpu_pass_breakdowns.len() >= 16_384 {
+            guard.gpu_pass_breakdowns.drain(0..4_096);
+        }
+        guard.gpu_pass_breakdowns.push(sample);
+    }
+}
+
 /// Record a GPUI `Window::draw` layout/prepaint/paint breakdown sample.
 pub fn record_window_draw(sample: WindowDrawSample) {
     let bench = BENCH_ENABLED.load(Ordering::Relaxed);
@@ -356,6 +412,12 @@ pub fn drain_metal_samples() -> Vec<MetalFrameSample> {
 pub fn drain_gpu_timings_us() -> Vec<u64> {
     let mut guard = COLLECTOR.lock();
     std::mem::take(&mut guard.gpu_timings_us)
+}
+
+/// Drain and return all accumulated hardware GPU pass-level breakdowns.
+pub fn drain_gpu_pass_breakdowns() -> Vec<GpuPassBreakdown> {
+    let mut guard = COLLECTOR.lock();
+    std::mem::take(&mut guard.gpu_pass_breakdowns)
 }
 
 /// Drain and return all accumulated GPUI `Window::draw` breakdown samples.
@@ -419,6 +481,31 @@ pub fn live_snapshot() -> LivePerfSnapshot {
         .collect();
     let encode: Vec<u64> = guard.live_metal.iter().map(|s| s.encode_us).collect();
     let gpu: Vec<u64> = guard.live_gpu_us.iter().copied().collect();
+    let gpu_compute: Vec<u64> = guard
+        .live_gpu_passes
+        .iter()
+        .map(|s| s.compute_gpu_us)
+        .collect();
+    let gpu_blit_fill: Vec<u64> = guard
+        .live_gpu_passes
+        .iter()
+        .map(|s| s.blit_fill_gpu_us)
+        .collect();
+    let gpu_blit_backdrop: Vec<u64> = guard
+        .live_gpu_passes
+        .iter()
+        .map(|s| s.blit_backdrop_gpu_us)
+        .collect();
+    let gpu_rp0: Vec<u64> = guard
+        .live_gpu_passes
+        .iter()
+        .map(|s| s.render_pass_0_gpu_us)
+        .collect();
+    let gpu_rprest: Vec<u64> = guard
+        .live_gpu_passes
+        .iter()
+        .map(|s| s.render_pass_rest_gpu_us)
+        .collect();
 
     let prepaint: Vec<u64> = guard
         .live_window_draws
@@ -479,6 +566,11 @@ pub fn live_snapshot() -> LivePerfSnapshot {
         draw_cpu_us: summarize_u64(&draw_cpu, 1.0),
         encode_us: summarize_u64(&encode, 1.0),
         gpu_us: summarize_u64(&gpu, 1.0),
+        gpu_compute_us: summarize_u64(&gpu_compute, 1.0),
+        gpu_blit_fill_us: summarize_u64(&gpu_blit_fill, 1.0),
+        gpu_blit_backdrop_us: summarize_u64(&gpu_blit_backdrop, 1.0),
+        gpu_render_pass_0_us: summarize_u64(&gpu_rp0, 1.0),
+        gpu_render_pass_rest_us: summarize_u64(&gpu_rprest, 1.0),
         gpui_prepaint_us: summarize_u64(&prepaint, 1.0),
         gpui_paint_us: summarize_u64(&paint, 1.0),
         gpui_draw_total_us: summarize_u64(&draw_full, 1.0),

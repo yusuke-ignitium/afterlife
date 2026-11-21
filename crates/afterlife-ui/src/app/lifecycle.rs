@@ -70,7 +70,13 @@ pub fn open_main_window(state: &Entity<AppState>, perf: Option<PerfSession>, cx:
         .as_ref()
         .is_some_and(|p| p.scenario() == PerfScenario::InactivePowerSave);
     let window_store = WindowStateStore::from_env(perf.is_some());
-    let saved = window_store.as_ref().and_then(WindowStateStore::load);
+    let saved = window_store.as_ref().and_then(WindowStateStore::load).or_else(|| {
+        std::env::var("AFTERLIFE_PERF_USE_LIVE_DATA")
+            .ok()
+            .and_then(|_| {
+                WindowStateStore::new(afterlife_protocol::default_backdrop_data_dir()).load()
+            })
+    });
     if let Some(ref saved_state) = saved {
         let restored_detail_h = sanitize_detail_height(saved_state.detail_height);
         state.update(cx, |st, _| {
@@ -147,6 +153,9 @@ pub fn run_app() {
                     }
                     PerfScenario::IdleAppearanceDrawer => {
                         st.settings_open = true;
+                    }
+                    PerfScenario::LiveDetailSheet => {
+                        st.detail_open = true;
                     }
                     PerfScenario::IdleWireframe => {
                         st.style = UiStyle::Wireframe;
