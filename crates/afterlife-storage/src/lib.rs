@@ -262,4 +262,110 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn legacy_workspace_with_historical_artifact_uris_loads_cleanly() {
+        let dir = temp_path("legacy_artifact_uris");
+        let db_path = dir.join("afterlife.db");
+        let owner = OwnerId::from("historical-owner");
+
+        let store = SqliteWorkspaceStore::open(&db_path).unwrap();
+        store
+            .execute_command(CommandEnvelope {
+                command_id: CommandId::from("cmd-hist-1"),
+                actor: Actor::local_human(owner.clone()),
+                command: EngineCommand::QueueJob {
+                    title: "Historical URI job".into(),
+                    raw_input: "raw".into(),
+                    target_district_hint: None,
+                    at: 1_763_600_000_000,
+                },
+            })
+            .unwrap();
+        drop(store);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let state_json: String = conn
+            .query_row(
+                "SELECT state_json FROM workspaces WHERE owner_id = ?1",
+                rusqlite::params![owner.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut parsed: serde_json::Value = serde_json::from_str(&state_json).unwrap();
+        parsed["jobs"][0]["artifacts"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": "art-legacy-01",
+                "kind": "snapshot",
+                "label": "legacy-baseline.json",
+                "uri": "evidence://job-001/before-baseline.json",
+                "sha256": null,
+                "produced_at_stage": "baseline_guard",
+                "revision_at_capture": 2
+            }));
+        conn.execute(
+            "UPDATE workspaces SET state_json = ?1 WHERE owner_id = ?2",
+            rusqlite::params![serde_json::to_string(&parsed).unwrap(), owner.as_str()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let reopened = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let snap = reopened.load_workspace(&owner).unwrap();
+        assert_eq!(snap.engine.jobs[0].artifacts.len(), 2);
+        assert_eq!(snap.engine.jobs[0].artifacts[0].uri, "queue-drop.json");
+        assert_eq!(
+            snap.engine.jobs[0].artifacts[1].uri,
+            "evidence://job-001/before-baseline.json"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn blob_store_enforces_size_limit_sanitizes_filenames_and_writes_atomically() {
+        let dir = temp_path("blob_atomic_guards");
+        let blobs = LocalFsBlobStore::new(dir.join("blobs")).unwrap();
+        let owner = OwnerId::from("alice@example.com");
+
+        let oversized = vec![b'x'; afterlife_core::MAX_ARTIFACT_BLOB_BYTES + 1];
+        let err = blobs
+            .put_blob(&owner, "huge.bin", &oversized)
+            .unwrap_err();
+        assert!(matches!(err, PortError::InvalidInput(_)));
+
+        let first = blobs
+            .put_blob(&owner, "../../evil/report (1).json", b"{\"ok\":true}")
+            .unwrap();
+        assert!(first.uri.starts_with("blob://alice_example_com/"));
+        assert!(first.uri.ends_with("/report__1_.json"));
+        let second = blobs
+            .put_blob(&owner, "../../evil/report (1).json", b"{\"ok\":true}")
+            .unwrap();
+        assert_eq!(first, second);
+
+        assert!(blobs.get_blob(&owner, "not-64-hex").unwrap().is_none());
+        assert!(
+            blobs
+                .get_blob(&owner, &first.sha256.to_ascii_uppercase())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            blobs.get_blob(&owner, &first.sha256).unwrap().unwrap(),
+            b"{\"ok\":true}"
+        );
+
+        let owner_dir = dir.join("blobs").join("alice_example_com");
+        let tmp_leftovers: Vec<_> = std::fs::read_dir(&owner_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp-"))
+            .collect();
+        assert!(tmp_leftovers.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

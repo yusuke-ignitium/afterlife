@@ -1,11 +1,14 @@
 use std::{
     collections::{BTreeMap, HashSet},
     env,
+    fs,
     path::Path,
     process::ExitCode,
 };
 
+use afterlife_core::MAX_ARTIFACT_BLOB_BYTES;
 use afterlife_protocol::{BackdropStore, BackdropTuningPatch};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -417,7 +420,21 @@ const TOOLMAP: &[ToolSpec] = &[
                 flag: "--uri",
                 mcp_key: "uri",
                 kind: FlagKind::String,
-                required: true,
+                required: false,
+                repeatable: false,
+            },
+            FlagSpec {
+                flag: "--file",
+                mcp_key: "file",
+                kind: FlagKind::String,
+                required: false,
+                repeatable: false,
+            },
+            FlagSpec {
+                flag: "--content",
+                mcp_key: "content",
+                kind: FlagKind::String,
+                required: false,
                 repeatable: false,
             },
             FlagSpec {
@@ -430,6 +447,23 @@ const TOOLMAP: &[ToolSpec] = &[
             FLAG_FENCING_OPT,
             FLAG_COMMAND_ID,
         ],
+        default_runner: None,
+    },
+    ToolSpec {
+        path: &["artifacts", "read"],
+        mcp_tool: Some("artifacts_read"),
+        mutates: false,
+        positionals: &[
+            PositionalSpec {
+                placeholder: "job_id",
+                mcp_key: "job_id",
+            },
+            PositionalSpec {
+                placeholder: "artifact_id",
+                mcp_key: "artifact_id",
+            },
+        ],
+        flags: &[],
         default_runner: None,
     },
     ToolSpec {
@@ -1202,6 +1236,43 @@ fn print_usage() {
     eprintln!("\nENV: AFTERLIFE_URL (default http://127.0.0.1:4319), AFTERLIFE_TOKEN");
 }
 
+fn prepare_artifact_attach_payload(payload: &mut Map<String, Value>) -> Result<(), CliError> {
+    let file_path = payload
+        .remove("file")
+        .and_then(|v| v.as_str().map(str::to_string));
+    let has_uri = payload.contains_key("uri");
+    let has_content = payload.contains_key("content");
+    let count = usize::from(file_path.is_some()) + usize::from(has_uri) + usize::from(has_content);
+    if count != 1 {
+        return Err(CliError::usage(
+            "artifacts attach requires exactly one of --uri, --file, or --content",
+        ));
+    }
+    if let Some(path) = file_path {
+        let bytes = fs::read(&path)
+            .map_err(|e| CliError::usage(format!("failed reading --file `{path}`: {e}")))?;
+        if bytes.len() > MAX_ARTIFACT_BLOB_BYTES {
+            return Err(CliError::usage(format!(
+                "--file `{path}` exceeds maximum blob size of {} bytes (got {} bytes)",
+                MAX_ARTIFACT_BLOB_BYTES,
+                bytes.len()
+            )));
+        }
+        match String::from_utf8(bytes) {
+            Ok(text) => {
+                payload.insert("content".to_string(), Value::String(text));
+            }
+            Err(e) => {
+                payload.insert(
+                    "content_base64".to_string(),
+                    Value::String(BASE64_STANDARD.encode(e.into_bytes())),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<Option<Value>, CliError> {
     if args.is_empty() || matches!(args[0].as_str(), "-h" | "--help" | "help") {
         print_usage();
@@ -1221,7 +1292,10 @@ fn run(args: &[String]) -> Result<Option<Value>, CliError> {
     let rest = &args[consumed..];
 
     if let Some(tool_name) = spec.mcp_tool {
-        let payload = parse_spec_args(spec, rest)?;
+        let mut payload = parse_spec_args(spec, rest)?;
+        if tool_name == "artifacts_attach" {
+            prepare_artifact_attach_payload(&mut payload)?;
+        }
         return mcp_call_tool(tool_name, Value::Object(payload)).map(Some);
     }
 

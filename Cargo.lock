@@ -37,6 +37,7 @@ dependencies = [
  "afterlife-daemon",
  "afterlife-protocol",
  "axum",
+ "base64",
  "serde_json",
  "tokio",
  "ureq",

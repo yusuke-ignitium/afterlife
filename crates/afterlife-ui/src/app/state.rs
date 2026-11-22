@@ -8,7 +8,8 @@ use std::{
 };
 
 use afterlife_core::{
-    Actor, AfterlifeEngine, CommandId, EngineCommand, Job, JobEvent, JobId, OwnerId, TimestampMs,
+    Actor, AfterlifeEngine, Artifact, ArtifactId, ArtifactKind, CommandId, EngineCommand, Job,
+    JobEvent, JobId, OwnerId, TimestampMs, parse_blob_uri, sanitize_owner_segment,
 };
 use afterlife_daemon::AppDaemonState;
 use afterlife_design::{GlassSettings, Palette, UiStyle};
@@ -268,6 +269,54 @@ impl GlassParamKey {
     }
 }
 
+const MAX_PREVIEW_TEXT_BYTES: usize = 65_536;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArtifactPreviewBody {
+    Text { text: String, truncated: bool },
+    Binary { byte_len: usize },
+    Unavailable(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactPreview {
+    pub artifact_id: ArtifactId,
+    pub label: String,
+    pub kind_label: &'static str,
+    pub uri: String,
+    pub sha256: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub body: ArtifactPreviewBody,
+}
+
+fn artifact_kind_label(kind: ArtifactKind) -> &'static str {
+    match kind {
+        ArtifactKind::RawNote => "Raw Note",
+        ArtifactKind::Issue => "Issue",
+        ArtifactKind::Spec => "Spec",
+        ArtifactKind::SourceCode => "Source Code",
+        ArtifactKind::PullRequest => "Pull Request",
+        ArtifactKind::CiReport => "CI Report",
+        ArtifactKind::Snapshot => "Snapshot",
+        ArtifactKind::VerificationReport => "Verification Report",
+    }
+}
+
+fn format_preview_text(raw: String) -> (String, bool) {
+    let formatted = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+        .unwrap_or(raw);
+    if formatted.len() <= MAX_PREVIEW_TEXT_BYTES {
+        return (formatted, false);
+    }
+    let mut end = MAX_PREVIEW_TEXT_BYTES;
+    while end > 0 && !formatted.is_char_boundary(end) {
+        end -= 1;
+    }
+    (formatted[..end].to_string(), true)
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub engine: Arc<AfterlifeEngine>,
@@ -294,6 +343,7 @@ pub struct AppState {
     pub pause_animation_when_inactive: bool,
     pub fade_ui_after_secs: f32,
     pub collapsed_step_groups: HashSet<(JobId, usize)>,
+    pub preview_artifact: Option<ArtifactPreview>,
 }
 
 impl AppState {
@@ -411,7 +461,103 @@ impl AppState {
             pause_animation_when_inactive,
             fade_ui_after_secs,
             collapsed_step_groups: HashSet::new(),
+            preview_artifact: None,
         }
+    }
+
+    pub fn open_artifact_preview(&mut self, art: &Artifact) {
+        let kind_label = artifact_kind_label(art.kind);
+        let Some(blob) = parse_blob_uri(&art.uri) else {
+            self.preview_artifact = Some(ArtifactPreview {
+                artifact_id: art.id.clone(),
+                label: art.label.clone(),
+                kind_label,
+                uri: art.uri.clone(),
+                sha256: art.sha256.clone(),
+                size_bytes: None,
+                body: ArtifactPreviewBody::Unavailable(
+                    "This artifact is not stored in the Afterlife blob store.".into(),
+                ),
+            });
+            return;
+        };
+
+        let expected_owner = sanitize_owner_segment(self.owner_id.as_str());
+        if blob.owner_segment != expected_owner {
+            self.preview_artifact = Some(ArtifactPreview {
+                artifact_id: art.id.clone(),
+                label: art.label.clone(),
+                kind_label,
+                uri: art.uri.clone(),
+                sha256: Some(blob.sha256),
+                size_bytes: None,
+                body: ArtifactPreviewBody::Unavailable(
+                    "Blob belongs to a different owner and cannot be opened.".into(),
+                ),
+            });
+            return;
+        }
+
+        let Some(daemon) = &self.daemon else {
+            self.preview_artifact = Some(ArtifactPreview {
+                artifact_id: art.id.clone(),
+                label: art.label.clone(),
+                kind_label,
+                uri: art.uri.clone(),
+                sha256: Some(blob.sha256),
+                size_bytes: None,
+                body: ArtifactPreviewBody::Unavailable(
+                    "Local blob store is unavailable in ephemeral mode.".into(),
+                ),
+            });
+            return;
+        };
+
+        let (size_bytes, body) = match daemon.ports.blobs.get_blob(&self.owner_id, &blob.sha256) {
+            Ok(Some(bytes)) => {
+                let len = bytes.len();
+                match String::from_utf8(bytes) {
+                    Ok(text) => {
+                        let (formatted, truncated) = format_preview_text(text);
+                        (
+                            Some(len as u64),
+                            ArtifactPreviewBody::Text {
+                                text: formatted,
+                                truncated,
+                            },
+                        )
+                    }
+                    Err(_) => (
+                        Some(len as u64),
+                        ArtifactPreviewBody::Binary { byte_len: len },
+                    ),
+                }
+            }
+            Ok(None) => (
+                None,
+                ArtifactPreviewBody::Unavailable(
+                    "Stored blob payload was not found for this artifact.".into(),
+                ),
+            ),
+            Err(e) => (
+                None,
+                ArtifactPreviewBody::Unavailable(format!("Failed to read artifact blob: {e}")),
+            ),
+        };
+
+        self.preview_artifact = Some(ArtifactPreview {
+            artifact_id: art.id.clone(),
+            label: art.label.clone(),
+            kind_label,
+            uri: art.uri.clone(),
+            sha256: Some(blob.sha256),
+            size_bytes,
+            body,
+        });
+    }
+
+    pub fn close_artifact_preview(&mut self) {
+        self.preview_artifact = None;
     }
 
     pub fn toggle_step_group(&mut self, job_id: JobId, group_idx: usize) {
@@ -829,5 +975,99 @@ mod tests {
         assert_eq!(st.inactive_fade_delay_secs(), Some(60));
         st.set_glass_param(GlassParamKey::InactiveFadeSecs, -5.0);
         assert_eq!(st.inactive_fade_delay_secs(), None);
+    }
+
+    #[test]
+    fn artifact_preview_loads_owner_blobs_pretty_prints_json_and_blocks_foreign_owner() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("afterlife_ui_preview_{nanos}"));
+        let cfg = AfterlifeConfig::desktop_embedded(dir.to_str().unwrap());
+        let daemon = AppDaemonState::from_config(cfg).unwrap();
+
+        let mut st = AppState::new_ephemeral();
+        st.daemon = Some(daemon.clone());
+
+        let json_blob = daemon
+            .ports
+            .blobs
+            .put_blob(&st.owner_id, "report.json", br#"{"status":"pass","n":3}"#)
+            .unwrap();
+        let json_art = Artifact {
+            id: ArtifactId::from("art-00001"),
+            kind: ArtifactKind::VerificationReport,
+            label: "report.json".into(),
+            uri: json_blob.uri,
+            sha256: Some(json_blob.sha256.clone()),
+            produced_at_stage: None,
+            produced_at_sub_stage: None,
+            revision_at_capture: 2,
+        };
+        st.open_artifact_preview(&json_art);
+        let preview = st.preview_artifact.as_ref().unwrap();
+        assert_eq!(preview.size_bytes, Some(23));
+        assert_eq!(preview.sha256.as_deref(), Some(json_blob.sha256.as_str()));
+        match &preview.body {
+            ArtifactPreviewBody::Text { text, truncated } => {
+                assert!(!truncated);
+                assert!(text.contains("\"status\": \"pass\""));
+                assert!(text.contains('\n'));
+            }
+            other => panic!("expected Text preview, got {other:?}"),
+        }
+
+        let bin_blob = daemon
+            .ports
+            .blobs
+            .put_blob(&st.owner_id, "img.bin", &[0xff, 0xfe, 0x00, 0x01])
+            .unwrap();
+        let bin_art = Artifact {
+            id: ArtifactId::from("art-00002"),
+            kind: ArtifactKind::Snapshot,
+            label: "img.bin".into(),
+            uri: bin_blob.uri,
+            sha256: Some(bin_blob.sha256),
+            produced_at_stage: None,
+            produced_at_sub_stage: None,
+            revision_at_capture: 3,
+        };
+        st.open_artifact_preview(&bin_art);
+        assert_eq!(
+            st.preview_artifact.as_ref().unwrap().body,
+            ArtifactPreviewBody::Binary { byte_len: 4 }
+        );
+
+        let foreign_art = Artifact {
+            id: ArtifactId::from("art-00003"),
+            kind: ArtifactKind::Snapshot,
+            label: "foreign.json".into(),
+            uri: format!(
+                "blob://other-owner/{}/foreign.json",
+                json_blob.sha256
+            ),
+            sha256: Some(json_blob.sha256),
+            produced_at_stage: None,
+            produced_at_sub_stage: None,
+            revision_at_capture: 4,
+        };
+        st.open_artifact_preview(&foreign_art);
+        assert!(matches!(
+            st.preview_artifact.as_ref().unwrap().body,
+            ArtifactPreviewBody::Unavailable(_)
+        ));
+
+        let legacy_art = Artifact::simple("JOB-001-drop", "queue-drop.json", ArtifactKind::RawNote);
+        st.open_artifact_preview(&legacy_art);
+        assert!(matches!(
+            st.preview_artifact.as_ref().unwrap().body,
+            ArtifactPreviewBody::Unavailable(_)
+        ));
+
+        st.close_artifact_preview();
+        assert!(st.preview_artifact.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

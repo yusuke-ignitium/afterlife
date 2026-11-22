@@ -1,9 +1,10 @@
 use std::{sync::Arc, time::Instant};
 
 use afterlife_core::{
-    ArtifactKind, CommandId, DistrictId, EngineCommand, FeedbackId, FeedbackKind, FencingToken,
-    GateVerdict, JobId, JobLocation, PhilosophyVersion, Principle, RunnerId, SpecVersion, StageDef,
-    StageId,
+    ArtifactId, ArtifactKind, CommandId, DistrictId, EngineCommand, FeedbackId, FeedbackKind,
+    FencingToken, GateVerdict, JobId, JobLocation, MAX_ARTIFACT_BLOB_BYTES, PhilosophyVersion,
+    Principle, RunnerId, SpecVersion, StageDef, StageId, engine::policy, parse_blob_uri,
+    sanitize_owner_segment,
 };
 use afterlife_protocol::Scope;
 use axum::{
@@ -12,14 +13,16 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
     AppDaemonState,
     auth::{McpPrincipal, now_ms},
-    rest::dispatch_command,
+    rest::{dispatch_command, transition_error_to_dispatch},
 };
 
 #[derive(Deserialize)]
@@ -227,18 +230,33 @@ pub fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "artifacts_attach",
-            "description": "Attach an artifact reference (issue, spec, source_code, pull_request, ci_report, snapshot, verification_report, raw_note) to a leased Job. http(s)://, linear://, and slack:// URIs render as clickable links.",
+            "description": "Attach an artifact (issue, spec, source_code, pull_request, ci_report, snapshot, verification_report, raw_note) to a leased Job. Provide exactly one of: uri (allowed external URL https://, http://, linear://, slack:// or an existing owner blob:// URI), content (UTF-8 payload persisted to ArtifactBlobStore), or content_base64 (Base64 payload persisted to ArtifactBlobStore).",
             "inputSchema": {
                 "type": "object",
-                "required": ["job_id", "kind", "label", "uri"],
+                "required": ["job_id", "kind", "label"],
                 "properties": {
                     "command_id": { "type": "string" },
                     "job_id": { "type": "string" },
                     "kind": { "type": "string", "enum": ["raw_note", "issue", "spec", "source_code", "pull_request", "ci_report", "snapshot", "verification_report"] },
                     "label": { "type": "string" },
-                    "uri": { "type": "string", "description": "Artifact URI; http(s)://, linear://, and slack:// URIs render as clickable links in the UI." },
+                    "uri": { "type": "string", "description": "Allowed external URL (https://, http://, linear://, slack://) or verified blob://<owner>/<sha256>/<filename> URI. Mutually exclusive with content and content_base64." },
+                    "content": { "type": "string", "description": "UTF-8 artifact content persisted into the owner-isolated ArtifactBlobStore. Mutually exclusive with uri and content_base64." },
+                    "content_base64": { "type": "string", "description": "Base64-encoded binary artifact content persisted into the owner-isolated ArtifactBlobStore. Mutually exclusive with uri and content." },
                     "sha256": { "type": "string" },
                     "fencing_token": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "artifacts_read",
+            "description": "Read metadata and stored blob content (when backed by ArtifactBlobStore) for an Artifact attached to a Job.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id", "artifact_id"],
+                "properties": {
+                    "job_id": { "type": "string" },
+                    "artifact_id": { "type": "string" }
                 },
                 "additionalProperties": false
             }
@@ -996,14 +1014,16 @@ fn handle_tool_call(
             )
         }
         "artifacts_attach" => {
-            let (Some(jid), Some(kind_v), Some(label), Some(uri)) = (
+            let (Some(jid), Some(kind_v), Some(label)) = (
                 args.get("job_id").and_then(|v| v.as_str()),
                 args.get("kind"),
                 args.get("label").and_then(|v| v.as_str()),
-                args.get("uri").and_then(|v| v.as_str()),
             ) else {
                 return rpc_err(id, -32602, "missing required artifact fields");
             };
+            if label.trim().is_empty() {
+                return invalid_arg(id, "label", "must not be empty");
+            }
             let Ok(kind) = serde_json::from_value::<ArtifactKind>(kind_v.clone()) else {
                 return invalid_arg(id, "kind", "invalid artifact kind");
             };
@@ -1015,6 +1035,156 @@ fn handle_tool_call(
                 Ok(v) => v,
                 Err(msg) => return invalid_arg(id, "fencing_token", &msg),
             };
+            let provided_sha = match args.get("sha256") {
+                None | Some(Value::Null) => None,
+                Some(v) => match v.as_str() {
+                    Some(s) => Some(s.to_string()),
+                    None => return invalid_arg(id, "sha256", "must be a string"),
+                },
+            };
+
+            let uri_arg = match args.get("uri") {
+                None | Some(Value::Null) => None,
+                Some(v) => match v.as_str() {
+                    Some(s) => Some(s),
+                    None => return invalid_arg(id, "uri", "must be a string"),
+                },
+            };
+            let content_arg = match args.get("content") {
+                None | Some(Value::Null) => None,
+                Some(v) => match v.as_str() {
+                    Some(s) => Some(s),
+                    None => return invalid_arg(id, "content", "must be a string"),
+                },
+            };
+            let content_b64_arg = match args.get("content_base64") {
+                None | Some(Value::Null) => None,
+                Some(v) => match v.as_str() {
+                    Some(s) => Some(s),
+                    None => return invalid_arg(id, "content_base64", "must be a string"),
+                },
+            };
+
+            let source_count = usize::from(uri_arg.is_some())
+                + usize::from(content_arg.is_some())
+                + usize::from(content_b64_arg.is_some());
+            if source_count != 1 {
+                return invalid_arg(
+                    id,
+                    "uri",
+                    "provide exactly one of 'uri', 'content', or 'content_base64'",
+                );
+            }
+
+            let (final_uri, final_sha) = if let Some(uri) = uri_arg {
+                (uri.to_string(), provided_sha)
+            } else {
+                if !principal.scopes.contains(&Scope::JobsWork) {
+                    return rpc_ok(
+                        id,
+                        tool_text(
+                            json!({ "status": 403, "code": "insufficient_scope", "error": "insufficient_scope" }),
+                            true,
+                        ),
+                    );
+                }
+                let raw_bytes = if let Some(text) = content_arg {
+                    text.as_bytes().to_vec()
+                } else {
+                    match BASE64_STANDARD.decode(content_b64_arg.unwrap()) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            return invalid_arg(
+                                id,
+                                "content_base64",
+                                &format!("invalid base64 payload: {e}"),
+                            );
+                        }
+                    }
+                };
+                if raw_bytes.len() > MAX_ARTIFACT_BLOB_BYTES {
+                    return invalid_arg(
+                        id,
+                        "content",
+                        &format!(
+                            "payload exceeds maximum size of {} bytes (got {} bytes)",
+                            MAX_ARTIFACT_BLOB_BYTES,
+                            raw_bytes.len()
+                        ),
+                    );
+                }
+                if let Some(ref sha) = provided_sha {
+                    let mut hasher = Sha256::new();
+                    hasher.update(&raw_bytes);
+                    let computed = format!("{:x}", hasher.finalize());
+                    if !sha.eq_ignore_ascii_case(&computed) {
+                        return invalid_arg(
+                            id,
+                            "sha256",
+                            "provided sha256 does not match payload digest",
+                        );
+                    }
+                }
+                let job_id_typed = JobId::from(jid);
+                let snap = match state.ports.store.load_workspace(&principal.owner_id) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return rpc_ok(
+                            id,
+                            tool_text(
+                                json!({ "status": 500, "code": "storage_error", "error": e.to_string() }),
+                                true,
+                            ),
+                        );
+                    }
+                };
+                let Some(job) = snap.engine.find_job(&job_id_typed) else {
+                    let err = transition_error_to_dispatch(
+                        afterlife_core::TransitionError::JobNotFound(job_id_typed),
+                    );
+                    return rpc_ok(id, tool_text(err.to_json(), true));
+                };
+                if let JobLocation::InDistrict {
+                    district_id,
+                    stage_id,
+                    ..
+                } = &job.location
+                    && let Some(stage) = snap.engine.find_stage_for_job(job, district_id, stage_id)
+                    && let Err(te) = policy::require_stage_authority(
+                        &principal.actor,
+                        district_id,
+                        stage,
+                        "attach artifact",
+                    )
+                {
+                    let err = transition_error_to_dispatch(te);
+                    return rpc_ok(id, tool_text(err.to_json(), true));
+                }
+                if let Err(te) =
+                    policy::require_mutation_lease(&principal.actor, job, fencing_token, now)
+                {
+                    let err = transition_error_to_dispatch(te);
+                    return rpc_ok(id, tool_text(err.to_json(), true));
+                }
+                let blob_ref = match state
+                    .ports
+                    .blobs
+                    .put_blob(&principal.owner_id, label, &raw_bytes)
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        return rpc_ok(
+                            id,
+                            tool_text(
+                                json!({ "status": 500, "code": "storage_error", "error": e.to_string() }),
+                                true,
+                            ),
+                        );
+                    }
+                };
+                (blob_ref.uri, Some(blob_ref.sha256))
+            };
+
             run_mcp_cmd(
                 state,
                 principal,
@@ -1024,15 +1194,122 @@ fn handle_tool_call(
                     job_id: JobId::from(jid),
                     kind,
                     label: label.to_string(),
-                    uri: uri.to_string(),
-                    sha256: args
-                        .get("sha256")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
+                    uri: final_uri,
+                    sha256: final_sha,
                     fencing_token,
                     at: now,
                 },
             )
+        }
+        "artifacts_read" => {
+            if !principal.scopes.contains(&Scope::JobsRead) {
+                return rpc_ok(
+                    id,
+                    tool_text(
+                        json!({ "status": 403, "code": "insufficient_scope", "error": "insufficient_scope" }),
+                        true,
+                    ),
+                );
+            }
+            let (Some(jid), Some(aid)) = (
+                args.get("job_id").and_then(|v| v.as_str()),
+                args.get("artifact_id").and_then(|v| v.as_str()),
+            ) else {
+                return rpc_err(id, -32602, "missing job_id or artifact_id");
+            };
+            let snap = match state.ports.store.load_workspace(&principal.owner_id) {
+                Ok(s) => s,
+                Err(e) => {
+                    return rpc_ok(
+                        id,
+                        tool_text(
+                            json!({ "status": 500, "code": "storage_error", "error": e.to_string() }),
+                            true,
+                        ),
+                    );
+                }
+            };
+            let job_id_typed = JobId::from(jid);
+            let Some(job) = snap.engine.find_job(&job_id_typed) else {
+                return rpc_ok(
+                    id,
+                    tool_text(
+                        json!({ "status": 404, "code": "job_not_found", "error": format!("job not found: {jid}") }),
+                        true,
+                    ),
+                );
+            };
+            let art_id_typed = ArtifactId::from(aid);
+            let Some(art) = job.artifacts.iter().find(|a| a.id == art_id_typed) else {
+                return rpc_ok(
+                    id,
+                    tool_text(
+                        json!({ "status": 404, "code": "artifact_not_found", "error": format!("artifact not found: {aid}") }),
+                        true,
+                    ),
+                );
+            };
+            if let Some(blob) = parse_blob_uri(&art.uri) {
+                let expected_owner = sanitize_owner_segment(principal.owner_id.as_str());
+                if blob.owner_segment != expected_owner {
+                    return rpc_ok(
+                        id,
+                        tool_text(
+                            json!({ "status": 403, "code": "owner_mismatch", "error": "blob belongs to a different owner" }),
+                            true,
+                        ),
+                    );
+                }
+                match state.ports.blobs.get_blob(&principal.owner_id, &blob.sha256) {
+                    Ok(Some(bytes)) => {
+                        let size_bytes = bytes.len() as u64;
+                        let body = match String::from_utf8(bytes) {
+                            Ok(text) => json!({
+                                "storage": "blob",
+                                "artifact": art,
+                                "sha256": blob.sha256,
+                                "size_bytes": size_bytes,
+                                "encoding": "utf-8",
+                                "content": text,
+                            }),
+                            Err(e) => json!({
+                                "storage": "blob",
+                                "artifact": art,
+                                "sha256": blob.sha256,
+                                "size_bytes": size_bytes,
+                                "encoding": "base64",
+                                "content_base64": BASE64_STANDARD.encode(e.into_bytes()),
+                            }),
+                        };
+                        rpc_ok(id, tool_text(body, false))
+                    }
+                    Ok(None) => rpc_ok(
+                        id,
+                        tool_text(
+                            json!({ "status": 404, "code": "blob_not_found", "error": format!("artifact blob missing: {}", blob.sha256) }),
+                            true,
+                        ),
+                    ),
+                    Err(e) => rpc_ok(
+                        id,
+                        tool_text(
+                            json!({ "status": 500, "code": "storage_error", "error": e.to_string() }),
+                            true,
+                        ),
+                    ),
+                }
+            } else {
+                rpc_ok(
+                    id,
+                    tool_text(
+                        json!({
+                            "storage": "external",
+                            "artifact": art,
+                        }),
+                        false,
+                    ),
+                )
+            }
         }
         "gate_verify_record" => {
             let (Some(jid), Some(verdict_v), Some(summary)) = (

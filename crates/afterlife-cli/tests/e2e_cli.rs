@@ -63,6 +63,7 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
     });
 
     let url_clone = base_url.clone();
+    let tmp_dir_for_cli = tmp_dir.clone();
     tokio::task::spawn_blocking(move || {
         let (ok, health) = run_cli(&url_clone, &["health"]);
         assert!(ok, "health failed: {health}");
@@ -76,7 +77,7 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        assert_eq!(server_tool_names.len(), 16);
+        assert_eq!(server_tool_names.len(), 17);
 
         let (ok, toolmap) = run_cli(&url_clone, &["toolmap"]);
         assert!(ok, "toolmap failed: {toolmap}");
@@ -165,6 +166,29 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
                 .and_then(|arr| arr.first())
                 .and_then(|v| v.as_str())
                 .unwrap_or("spec");
+            let (ok_bad, bad_attach) = run_cli(
+                &url_clone,
+                &[
+                    "artifacts",
+                    "attach",
+                    &job_id,
+                    "--kind",
+                    art_kind,
+                    "--label",
+                    "fake.json",
+                    "--uri",
+                    "evidence://fake/report.json",
+                    "--fencing-token",
+                    &token,
+                ],
+            );
+            assert!(!ok_bad, "fictional URI should be rejected: {bad_attach}");
+            assert_eq!(bad_attach["code"], "invalid_input");
+
+            let evidence_file = tmp_dir_for_cli.join("cli-evidence.json");
+            let evidence_body = format!("{{\"job\":\"{job_id}\",\"kind\":\"{art_kind}\"}}");
+            std::fs::write(&evidence_file, &evidence_body).unwrap();
+            let evidence_path = evidence_file.to_string_lossy().into_owned();
             let (ok, attached) = run_cli(
                 &url_clone,
                 &[
@@ -174,9 +198,9 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
                     "--kind",
                     art_kind,
                     "--label",
-                    "evidence.md",
-                    "--uri",
-                    "https://example.com/evidence.md",
+                    "evidence.json",
+                    "--file",
+                    &evidence_path,
                     "--fencing-token",
                     &token,
                 ],
@@ -186,6 +210,16 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
                 .as_str()
                 .unwrap()
                 .to_string();
+            assert!(
+                attached["events"][0]["uri"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("blob://")
+            );
+            let (ok_read, art_read) = run_cli(&url_clone, &["artifacts", "read", &job_id, &art_id]);
+            assert!(ok_read, "artifacts read failed: {art_read}");
+            assert_eq!(art_read["storage"], "blob");
+            assert_eq!(art_read["content"], evidence_body);
 
             let field_pairs: Vec<String> = ctx["required_step_fields"]
                 .as_array()

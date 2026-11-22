@@ -2,6 +2,7 @@ use crate::{
     engine::{AfterlifeEngine, command::EngineCommand, policy::validate_lease_ttl},
     error::TransitionError,
     ids::FeedbackId,
+    model::{ParsedArtifactUri, parse_artifact_uri},
 };
 
 fn require_non_empty(field: &str, value: &str) -> Result<(), TransitionError> {
@@ -14,18 +15,12 @@ fn require_non_empty(field: &str, value: &str) -> Result<(), TransitionError> {
     Ok(())
 }
 
-fn validate_artifact_uri(uri: &str) -> Result<(), TransitionError> {
+fn validate_artifact_uri(uri: &str) -> Result<ParsedArtifactUri, TransitionError> {
     require_non_empty("uri", uri)?;
-    let lower = uri.trim().to_ascii_lowercase();
-    for forbidden in ["javascript:", "data:", "vbscript:"] {
-        if lower.starts_with(forbidden) {
-            return Err(TransitionError::InvalidInput {
-                field: "uri".into(),
-                reason: format!("forbidden URI scheme '{forbidden}'"),
-            });
-        }
-    }
-    Ok(())
+    parse_artifact_uri(uri).ok_or_else(|| TransitionError::InvalidInput {
+        field: "uri".into(),
+        reason: "must be an allowed external URL (https://, http://, linear://, slack://) or a stored blob URI (blob://<owner>/<sha256>/<filename>)".into(),
+    })
 }
 
 fn validate_sha256(sha: &str) -> Result<(), TransitionError> {
@@ -122,9 +117,17 @@ pub fn validate_command(
             label, uri, sha256, ..
         } => {
             require_non_empty("label", label)?;
-            validate_artifact_uri(uri)?;
+            let parsed = validate_artifact_uri(uri)?;
             if let Some(h) = sha256 {
                 validate_sha256(h)?;
+                if let ParsedArtifactUri::Blob(blob) = &parsed
+                    && !h.eq_ignore_ascii_case(&blob.sha256)
+                {
+                    return Err(TransitionError::InvalidInput {
+                        field: "sha256".into(),
+                        reason: "must match the SHA-256 digest embedded in the blob URI".into(),
+                    });
+                }
             }
             Ok(())
         }

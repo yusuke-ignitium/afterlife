@@ -23,6 +23,7 @@ use crate::{
     perf::PerfSession,
     views::{
         appearance_drawer::render_appearance_drawer,
+        artifact_preview::render_artifact_preview,
         guard_view::render_guard_tab,
         inspector_popover::render_inspector_popover,
         templates_view::render_templates_tab,
@@ -460,6 +461,38 @@ impl Render for AfterlifeApp {
                         .right(SpacePx::S16.px())
                         .opacity(inspector_t * ui_opacity)
                         .child(render_inspector_popover(&st, &motion, cx)),
+                )
+            })
+            .when_some(st.preview_artifact.as_ref(), |d, preview| {
+                d.child(
+                    div()
+                        .id("artifact-preview-backdrop")
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.state.update(cx, |st, _| {
+                                    st.close_artifact_preview();
+                                });
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(|this, _, _, cx| {
+                                this.state.update(cx, |st, _| {
+                                    st.close_artifact_preview();
+                                });
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        )
+                        .child(render_artifact_preview(&st, preview, window_height, cx)),
                 )
             });
 

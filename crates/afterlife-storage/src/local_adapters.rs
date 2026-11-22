@@ -1,26 +1,22 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
-use afterlife_core::OwnerId;
+use afterlife_core::{
+    MAX_ARTIFACT_BLOB_BYTES, OwnerId, format_blob_uri, is_valid_lower_sha256,
+    sanitize_owner_segment,
+};
 use afterlife_protocol::{
     ArtifactBlobStore, BlobRef, EventBus, EventRecord, PortError, TelemetrySink,
 };
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
-fn sanitize_path_segment(raw: &str) -> String {
-    raw.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
+static BLOB_TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
 pub struct LocalFsBlobStore {
     root: PathBuf,
@@ -42,37 +38,66 @@ impl ArtifactBlobStore for LocalFsBlobStore {
         filename: &str,
         bytes: &[u8],
     ) -> Result<BlobRef, PortError> {
+        if bytes.len() > MAX_ARTIFACT_BLOB_BYTES {
+            return Err(PortError::InvalidInput(format!(
+                "artifact blob exceeds maximum size of {} bytes (got {} bytes)",
+                MAX_ARTIFACT_BLOB_BYTES,
+                bytes.len()
+            )));
+        }
         let mut hasher = Sha256::new();
         hasher.update(bytes);
         let digest = format!("{:x}", hasher.finalize());
 
-        let owner_dir = self.root.join(sanitize_path_segment(owner_id.as_str()));
+        let owner_seg = sanitize_owner_segment(owner_id.as_str());
+        let owner_dir = self.root.join(&owner_seg);
         fs::create_dir_all(&owner_dir)
             .map_err(|e| PortError::Storage(format!("mkdir {}: {e}", owner_dir.display())))?;
         let blob_path = owner_dir.join(&digest);
         if !blob_path.exists() {
-            fs::write(&blob_path, bytes)
-                .map_err(|e| PortError::Storage(format!("write {}: {e}", blob_path.display())))?;
+            let seq = BLOB_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+            let tmp_path = owner_dir.join(format!(".tmp-{}-{}-{seq}", std::process::id(), digest));
+            let write_res = (|| -> std::io::Result<()> {
+                let mut f = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_path)?;
+                f.write_all(bytes)?;
+                f.sync_all()?;
+                Ok(())
+            })();
+            if let Err(e) = write_res {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(PortError::Storage(format!(
+                    "write {}: {e}",
+                    tmp_path.display()
+                )));
+            }
+            if let Err(e) = fs::rename(&tmp_path, &blob_path) {
+                let _ = fs::remove_file(&tmp_path);
+                if !blob_path.exists() {
+                    return Err(PortError::Storage(format!(
+                        "rename {} -> {}: {e}",
+                        tmp_path.display(),
+                        blob_path.display()
+                    )));
+                }
+            }
         }
         Ok(BlobRef {
-            uri: format!(
-                "local://{}/{}/{}",
-                sanitize_path_segment(owner_id.as_str()),
-                digest,
-                filename
-            ),
+            uri: format_blob_uri(owner_id.as_str(), &digest, filename),
             sha256: digest,
             size_bytes: bytes.len() as u64,
         })
     }
 
     fn get_blob(&self, owner_id: &OwnerId, sha256: &str) -> Result<Option<Vec<u8>>, PortError> {
-        if !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !is_valid_lower_sha256(sha256) {
             return Ok(None);
         }
         let blob_path = self
             .root
-            .join(sanitize_path_segment(owner_id.as_str()))
+            .join(sanitize_owner_segment(owner_id.as_str()))
             .join(sha256);
         if !blob_path.exists() {
             return Ok(None);
@@ -119,7 +144,7 @@ impl TelemetrySink for JsonlTelemetrySink {
     fn emit(&self, record: &EventRecord) -> Result<(), PortError> {
         let _guard = self.write_lock.lock().unwrap();
         let dt = Self::utc_date_from_ms(record.event.timestamp_ms());
-        let owner_seg = sanitize_path_segment(record.owner_id.as_str());
+        let owner_seg = sanitize_owner_segment(record.owner_id.as_str());
         let dir = self
             .root
             .join(format!("dt={dt}"))

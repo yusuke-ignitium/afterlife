@@ -9,13 +9,14 @@ name = "afterlife"
 path = "src/main.rs"
 
 [dependencies]
+afterlife-core = { path = "../afterlife-core" }
 afterlife-protocol = { path = "../afterlife-protocol" }
+base64 = "0.22"
 serde_json = "1"
 ureq = "2"
 uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]
-afterlife-core = { path = "../afterlife-core" }
 afterlife-daemon = { path = "../afterlife-daemon" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }

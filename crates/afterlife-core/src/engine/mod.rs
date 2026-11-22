@@ -1194,6 +1194,7 @@ impl AfterlifeEngine {
                     } => (Some(stage_id.clone()), sub_stage_id.clone()),
                     _ => (None, None),
                 };
+                let uri = uri.trim().to_string();
                 let art_id = ArtifactId::new(format!("art-{:05}", self.next_artifact_seq));
                 self.next_artifact_seq += 1;
 

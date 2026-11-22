@@ -13,6 +13,8 @@ use crate::{
     },
 };
 
+pub use crate::model::MAX_ARTIFACT_BLOB_BYTES;
+
 pub const MIN_LEASE_TTL_MS: TimestampMs = 1_000;
 pub const MAX_LEASE_TTL_MS: TimestampMs = 3_600_000;
 

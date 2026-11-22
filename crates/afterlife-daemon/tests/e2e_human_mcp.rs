@@ -577,14 +577,15 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
             .and_then(|arr| arr.first())
             .and_then(|v| v.as_str())
             .unwrap_or("source_code");
+        let payload_text = format!("{{\"job\":\"{job_id}\",\"stage\":\"{stage_id}\"}}");
         let attached = agent
             .call_ok(
                 "artifacts_attach",
                 json!({
                     "job_id": job_id,
                     "kind": art_kind,
-                    "label": format!("{stage_id}-output.rs"),
-                    "uri": format!("s3://afterlife/artifacts/{job_id}/{stage_id}.rs"),
+                    "label": format!("{stage_id}-output.json"),
+                    "content": payload_text,
                     "fencing_token": token
                 }),
             )
@@ -593,6 +594,29 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
             .as_str()
             .unwrap()
             .to_string();
+        let art_uri = attached["events"][0]["uri"].as_str().unwrap();
+        assert!(art_uri.starts_with("blob://"));
+        let read_back = agent
+            .call_ok(
+                "artifacts_read",
+                json!({ "job_id": job_id, "artifact_id": art_id }),
+            )
+            .await;
+        assert_eq!(read_back["storage"], "blob");
+        assert_eq!(read_back["encoding"], "utf-8");
+        assert_eq!(read_back["content"], payload_text);
+        let blob_sha = read_back["sha256"].as_str().unwrap();
+        let rest_blob = send_http(
+            server.addr,
+            Method::GET,
+            &format!("/v1/blobs/{blob_sha}"),
+            agent.bearer.as_deref(),
+            None,
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(rest_blob.status, StatusCode::OK);
+        assert_eq!(rest_blob.body, payload_text.as_bytes());
 
         let mut fields = serde_json::Map::new();
         for f in ctx["required_step_fields"].as_array().unwrap() {
@@ -971,14 +995,51 @@ async fn e2e_adversarial_chaos_invariants_f1_to_f9() {
             "district_not_found",
         )
         .await;
+    for bad_uri in [
+        "javascript:alert(1)",
+        "evidence://job-001/before-baseline.json",
+        "file:///etc/passwd",
+        "s3://afterlife/fabricated/report.json",
+        "blob://local-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/missing.json",
+        "blob://other-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stolen.json",
+    ] {
+        agent
+            .call_err(
+                "artifacts_attach",
+                json!({
+                    "job_id": job_id,
+                    "kind": "spec",
+                    "label": "bad-uri",
+                    "uri": bad_uri,
+                    "fencing_token": token
+                }),
+                422,
+                "invalid_input",
+            )
+            .await;
+    }
     agent
         .call_err(
             "artifacts_attach",
             json!({
                 "job_id": job_id,
                 "kind": "spec",
-                "label": "xss",
-                "uri": "javascript:alert(1)",
+                "label": "both-sources",
+                "uri": "https://example.com/a",
+                "content": "duplicate source",
+                "fencing_token": token
+            }),
+            422,
+            "invalid_input",
+        )
+        .await;
+    agent
+        .call_err(
+            "artifacts_attach",
+            json!({
+                "job_id": job_id,
+                "kind": "spec",
+                "label": "no-source",
                 "fencing_token": token
             }),
             422,

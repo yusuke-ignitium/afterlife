@@ -1,18 +1,21 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use afterlife_core::{CommandId, EngineCommand, JobId};
+use afterlife_core::{
+    CommandId, EngineCommand, JobId, is_valid_lower_sha256, parse_blob_uri, sanitize_owner_segment,
+};
 use afterlife_protocol::{CommandEnvelope, CommandOutcome, EventRecord, PortError, Scope};
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{
         IntoResponse, Response,
         sse::{Event as SseEvent, KeepAlive, Sse},
     },
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio_stream::{StreamExt as _, wrappers::BroadcastStream};
 use uuid::Uuid;
 
@@ -88,6 +91,100 @@ impl DispatchError {
     }
 }
 
+pub fn transition_error_to_dispatch(te: afterlife_core::TransitionError) -> DispatchError {
+    let status = match &te {
+        afterlife_core::TransitionError::OwnerMismatch { .. }
+        | afterlife_core::TransitionError::HumanApprovalRequired { .. }
+        | afterlife_core::TransitionError::AgentExecutionRequired { .. } => StatusCode::FORBIDDEN,
+        afterlife_core::TransitionError::JobNotFound(_)
+        | afterlife_core::TransitionError::DistrictNotFound(_)
+        | afterlife_core::TransitionError::StageNotFound { .. }
+        | afterlife_core::TransitionError::ProposalNotFound(_) => StatusCode::NOT_FOUND,
+        afterlife_core::TransitionError::RevisionConflict { .. }
+        | afterlife_core::TransitionError::AlreadyLeased { .. }
+        | afterlife_core::TransitionError::StaleFencingToken { .. }
+        | afterlife_core::TransitionError::LeaseExpired { .. }
+        | afterlife_core::TransitionError::LeaseMissing { .. }
+        | afterlife_core::TransitionError::JobAlreadyInDistrict { .. }
+        | afterlife_core::TransitionError::PhilosophyVersionConflict { .. }
+        | afterlife_core::TransitionError::SpecVersionConflict { .. } => StatusCode::CONFLICT,
+        _ => StatusCode::UNPROCESSABLE_ENTITY,
+    };
+    DispatchError {
+        status,
+        code: te.code().to_string(),
+        error: te.to_string(),
+        detail: serde_json::to_value(&te).ok(),
+    }
+}
+
+fn verify_blob_reference(
+    state: &Arc<AppDaemonState>,
+    owner_id: &afterlife_core::OwnerId,
+    uri: &str,
+    provided_sha256: Option<&str>,
+) -> Result<(), DispatchError> {
+    let Some(blob) = parse_blob_uri(uri) else {
+        return Ok(());
+    };
+    let expected_owner = sanitize_owner_segment(owner_id.as_str());
+    if blob.owner_segment != expected_owner {
+        return Err(DispatchError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "invalid_input".into(),
+            error: format!(
+                "invalid input for 'uri': blob owner '{}' does not match authenticated owner '{}'",
+                blob.owner_segment, expected_owner
+            ),
+            detail: None,
+        });
+    }
+    if let Some(sha) = provided_sha256
+        && !sha.eq_ignore_ascii_case(&blob.sha256)
+    {
+        return Err(DispatchError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "invalid_input".into(),
+            error: "invalid input for 'sha256': does not match blob URI digest".into(),
+            detail: None,
+        });
+    }
+    let bytes = match state.ports.blobs.get_blob(owner_id, &blob.sha256) {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            return Err(DispatchError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "invalid_input".into(),
+                error: format!(
+                    "invalid input for 'uri': referenced artifact blob '{}' does not exist in owner blob store",
+                    blob.sha256
+                ),
+                detail: None,
+            });
+        }
+        Err(e) => {
+            return Err(DispatchError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "storage_error".into(),
+                error: e.to_string(),
+                detail: None,
+            });
+        }
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let actual_sha = format!("{:x}", hasher.finalize());
+    if actual_sha != blob.sha256 {
+        return Err(DispatchError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "invalid_input".into(),
+            error: "invalid input for 'uri': stored blob content digest does not match URI".into(),
+            detail: None,
+        });
+    }
+    Ok(())
+}
+
 pub fn dispatch_command(
     state: &Arc<AppDaemonState>,
     principal: &afterlife_protocol::Principal,
@@ -103,6 +200,15 @@ pub fn dispatch_command(
         });
     }
 
+    if let EngineCommand::AttachArtifact {
+        ref uri,
+        ref sha256,
+        ..
+    } = command
+    {
+        verify_blob_reference(state, &principal.owner_id, uri, sha256.as_deref())?;
+    }
+
     let env = CommandEnvelope {
         command_id: command_id.clone(),
         actor: principal.actor.clone(),
@@ -113,36 +219,7 @@ pub fn dispatch_command(
         .store
         .execute_command(env)
         .map_err(|err| match err {
-            PortError::Domain(te) => {
-                let status = match &te {
-                    afterlife_core::TransitionError::OwnerMismatch { .. }
-                    | afterlife_core::TransitionError::HumanApprovalRequired { .. }
-                    | afterlife_core::TransitionError::AgentExecutionRequired { .. } => {
-                        StatusCode::FORBIDDEN
-                    }
-                    afterlife_core::TransitionError::JobNotFound(_)
-                    | afterlife_core::TransitionError::DistrictNotFound(_)
-                    | afterlife_core::TransitionError::StageNotFound { .. }
-                    | afterlife_core::TransitionError::ProposalNotFound(_) => StatusCode::NOT_FOUND,
-                    afterlife_core::TransitionError::RevisionConflict { .. }
-                    | afterlife_core::TransitionError::AlreadyLeased { .. }
-                    | afterlife_core::TransitionError::StaleFencingToken { .. }
-                    | afterlife_core::TransitionError::LeaseExpired { .. }
-                    | afterlife_core::TransitionError::LeaseMissing { .. }
-                    | afterlife_core::TransitionError::JobAlreadyInDistrict { .. }
-                    | afterlife_core::TransitionError::PhilosophyVersionConflict { .. }
-                    | afterlife_core::TransitionError::SpecVersionConflict { .. } => {
-                        StatusCode::CONFLICT
-                    }
-                    _ => StatusCode::UNPROCESSABLE_ENTITY,
-                };
-                DispatchError {
-                    status,
-                    code: te.code().to_string(),
-                    error: te.to_string(),
-                    detail: serde_json::to_value(&te).ok(),
-                }
-            }
+            PortError::Domain(te) => transition_error_to_dispatch(te),
             PortError::InvalidInput(msg) => DispatchError {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 code: "invalid_input".into(),
@@ -192,6 +269,7 @@ pub async fn health(State(state): State<Arc<AppDaemonState>>) -> impl IntoRespon
             "max_lease_ttl_ms": afterlife_core::engine::policy::MAX_LEASE_TTL_MS,
             "jobs_list_default_limit": 50,
             "jobs_list_max_limit": 200,
+            "max_artifact_blob_bytes": afterlife_core::engine::policy::MAX_ARTIFACT_BLOB_BYTES,
         },
         "log_path": state.metrics.log_path().map(|p| p.display().to_string()),
     }))
@@ -233,6 +311,49 @@ pub async fn get_workspace(
     }
     match state.ports.store.load_workspace(&principal.owner_id) {
         Ok(snap) => Json(snap).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn get_blob(
+    State(state): State<Arc<AppDaemonState>>,
+    AuthPrincipal(principal): AuthPrincipal,
+    Path(sha256): Path<String>,
+) -> Response {
+    if !principal.scopes.contains(&Scope::JobsRead) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "insufficient_scope" })),
+        )
+            .into_response();
+    }
+    if !is_valid_lower_sha256(&sha256) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": "invalid_sha256" })),
+        )
+            .into_response();
+    }
+    match state.ports.blobs.get_blob(&principal.owner_id, &sha256) {
+        Ok(Some(bytes)) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "application/octet-stream"),
+                (header::CACHE_CONTROL, "private, immutable"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "blob_not_found" })),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),

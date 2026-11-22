@@ -97,6 +97,7 @@ pub fn build_router(state: Arc<AppDaemonState>) -> Router {
         .route("/v1/metrics", get(rest::get_metrics))
         .route("/v1/metrics/reset", post(rest::reset_metrics))
         .route("/v1/workspace", get(rest::get_workspace))
+        .route("/v1/blobs/{sha256}", get(rest::get_blob))
         .route("/v1/jobs/{job_id}/context", get(rest::get_job_context))
         .route("/v1/commands", post(rest::post_command))
         .route("/v1/events", get(rest::sse_events))
@@ -778,6 +779,135 @@ mod tests {
         assert!(log_content.contains("\"tool\":\"jobs_claim\""));
         assert!(log_content.contains("\"outcome\":\"forbidden\""));
         assert!(log_content.contains("\"outcome\":\"conflict\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn artifact_blob_attach_checks_authority_before_persisting_and_serves_owner_only() {
+        let (state, dir) = test_state("blob_fail_closed");
+        let (active_job_id, gate_job_id) = seed_active_and_gate_jobs(&state);
+        let owner = afterlife_core::OwnerId::from(afterlife_core::fixtures::LOCAL_OWNER_ID);
+        let app = build_router(state.clone());
+
+        let gate_payload = "secret-gate-attempt";
+        let mut h = Sha256::new();
+        h.update(gate_payload.as_bytes());
+        let gate_sha = format!("{:x}", h.finalize());
+
+        let gate_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/mcp")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "artifacts_attach",
+                                "arguments": {
+                                    "job_id": gate_job_id,
+                                    "kind": "verification_report",
+                                    "label": "gate.txt",
+                                    "content": gate_payload
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let gate_json = read_json(gate_resp).await;
+        assert_eq!(gate_json["result"]["isError"], true);
+        let gate_err: Value =
+            serde_json::from_str(gate_json["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(gate_err["status"], 403);
+        assert!(
+            state
+                .ports
+                .blobs
+                .get_blob(&owner, &gate_sha)
+                .unwrap()
+                .is_none(),
+            "rejected approval-gate attach must not persist orphan blob"
+        );
+
+        let unleased_payload = "unleased-attempt";
+        let mut h2 = Sha256::new();
+        h2.update(unleased_payload.as_bytes());
+        let unleased_sha = format!("{:x}", h2.finalize());
+
+        let unleased_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/mcp")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "artifacts_attach",
+                                "arguments": {
+                                    "job_id": active_job_id,
+                                    "kind": "snapshot",
+                                    "label": "unleased.txt",
+                                    "content": unleased_payload
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let unleased_json = read_json(unleased_resp).await;
+        assert_eq!(unleased_json["result"]["isError"], true);
+        assert!(
+            state
+                .ports
+                .blobs
+                .get_blob(&owner, &unleased_sha)
+                .unwrap()
+                .is_none(),
+            "rejected unleased attach must not persist orphan blob"
+        );
+
+        let missing_blob_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/v1/blobs/{unleased_sha}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_blob_resp.status(), StatusCode::NOT_FOUND);
+
+        let bad_sha_resp = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/v1/blobs/not-a-sha")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad_sha_resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

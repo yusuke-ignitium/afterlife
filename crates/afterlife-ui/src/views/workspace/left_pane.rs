@@ -1,6 +1,6 @@
 use afterlife_core::{
     AfterlifeEngine, Artifact, DistrictId, EngineCommand, Job, JobLocation, StageId, StepFieldDef,
-    StepRecord, StepRecordOutcome, TimestampMs,
+    StepRecord, StepRecordOutcome, TimestampMs, parse_blob_uri,
 };
 use afterlife_design::{
     EdgeAccent, FadePx, FontPx, GlassSurface, RadiusPx, RowHeightPx, ScrollFadeExt, SpacePx,
@@ -114,6 +114,54 @@ fn ordered_step_fields(
         }
     }
     out
+}
+
+fn render_artifact_row(
+    id: SharedString,
+    art: &Artifact,
+    dot_color: gpui::Rgba,
+    st: &AppState,
+    cx: &mut Context<AfterlifeApp>,
+) -> AnyElement {
+    let p = st.palette;
+    if parse_blob_uri(&art.uri).is_some() {
+        let art_clone = art.clone();
+        return div()
+            .id(id)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(SpacePx::S8.px())
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.state.update(cx, |st, _| {
+                    st.open_artifact_preview(&art_clone);
+                });
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(dot_color))
+            .child(
+                div()
+                    .text_size(FontPx::F11.px())
+                    .text_color(p.accent)
+                    .hover(|s| s.underline())
+                    .child(SharedString::from(art.label.clone())),
+            )
+            .into_any_element();
+    }
+    clickable_link_row(
+        id,
+        art.label.clone(),
+        art.uri.clone(),
+        LinkRowStyle {
+            dot_color,
+            link_color: p.accent,
+            plain_color: p.text_secondary,
+            show_centerline: st.show_centerline,
+            centerline: p.centerline,
+        },
+    )
 }
 
 fn render_step_history(
@@ -340,20 +388,15 @@ fn render_step_history(
                                         },
                                     ))
                                     .children(step_artifacts.into_iter().map(|art| {
-                                        clickable_link_row(
+                                        render_artifact_row(
                                             SharedString::from(format!(
                                                 "step-art-{}-{}-{}-{}",
                                                 job.id, group_idx, rec_idx, art.id
                                             )),
-                                            art.label.clone(),
-                                            art.uri.clone(),
-                                            LinkRowStyle {
-                                                dot_color: p.accent,
-                                                link_color: p.accent,
-                                                plain_color: p.text_secondary,
-                                                show_centerline: st.show_centerline,
-                                                centerline: p.centerline,
-                                            },
+                                            art,
+                                            p.accent,
+                                            st,
+                                            cx,
                                         )
                                     }))
                             })),
@@ -869,6 +912,7 @@ pub fn render_left_pane(
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.state.update(cx, |st, _| {
                                                         st.detail_open = false;
+                                                        st.close_artifact_preview();
                                                     });
                                                     cx.notify();
                                                 })),
@@ -1012,17 +1056,12 @@ pub fn render_left_pane(
                                             [SharedString::from("Artifacts").into_any_element()],
                                         ))
                                         .children(job.artifacts.iter().map(|art| {
-                                            clickable_link_row(
+                                            render_artifact_row(
                                                 SharedString::from(format!("art-{}", art.id)),
-                                                art.label.clone(),
-                                                art.uri.clone(),
-                                                LinkRowStyle {
-                                                    dot_color: p.text_tertiary,
-                                                    link_color: p.accent,
-                                                    plain_color: p.text_secondary,
-                                                    show_centerline: st.show_centerline,
-                                                    centerline: p.centerline,
-                                                },
+                                                art,
+                                                p.text_tertiary,
+                                                st,
+                                                cx,
                                             )
                                         })),
                                 )

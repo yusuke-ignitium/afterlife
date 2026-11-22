@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://afterlife.local/schemas/mcp-tools.schema.json",
   "title": "Afterlife Streamable HTTP MCP Tool Definitions",
-  "description": "Authoritative JSON Schema catalog for the 14 MCP tools exposed at POST /mcp by afterlifed. Verified against afterlife_daemon::mcp::mcp_tool_definitions() in automated tests.",
+  "description": "Authoritative JSON Schema catalog for the MCP tools exposed at POST /mcp by afterlifed. Verified against afterlife_daemon::mcp::mcp_tool_definitions() in automated tests.",
   "protocolVersion": "2025-03-26",
   "tools": [
     {
@@ -176,18 +176,33 @@
     },
     {
       "name": "artifacts_attach",
-      "description": "Attach an artifact reference (issue, spec, source_code, pull_request, ci_report, snapshot, verification_report, raw_note) to a leased Job. http(s)://, linear://, and slack:// URIs render as clickable links.",
+      "description": "Attach an artifact (issue, spec, source_code, pull_request, ci_report, snapshot, verification_report, raw_note) to a leased Job. Provide exactly one of: uri (allowed external URL https://, http://, linear://, slack:// or an existing owner blob:// URI), content (UTF-8 payload persisted to ArtifactBlobStore), or content_base64 (Base64 payload persisted to ArtifactBlobStore).",
       "inputSchema": {
         "type": "object",
-        "required": ["job_id", "kind", "label", "uri"],
+        "required": ["job_id", "kind", "label"],
         "properties": {
           "command_id": { "type": "string" },
           "job_id": { "type": "string" },
           "kind": { "type": "string", "enum": ["raw_note", "issue", "spec", "source_code", "pull_request", "ci_report", "snapshot", "verification_report"] },
           "label": { "type": "string" },
-          "uri": { "type": "string", "description": "Artifact URI; http(s)://, linear://, and slack:// URIs render as clickable links in the UI." },
+          "uri": { "type": "string", "description": "Allowed external URL (https://, http://, linear://, slack://) or verified blob://<owner>/<sha256>/<filename> URI. Mutually exclusive with content and content_base64." },
+          "content": { "type": "string", "description": "UTF-8 artifact content persisted into the owner-isolated ArtifactBlobStore. Mutually exclusive with uri and content_base64." },
+          "content_base64": { "type": "string", "description": "Base64-encoded binary artifact content persisted into the owner-isolated ArtifactBlobStore. Mutually exclusive with uri and content." },
           "sha256": { "type": "string" },
           "fencing_token": { "type": "integer" }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "artifacts_read",
+      "description": "Read metadata and stored blob content (when backed by ArtifactBlobStore) for an Artifact attached to a Job.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["job_id", "artifact_id"],
+        "properties": {
+          "job_id": { "type": "string" },
+          "artifact_id": { "type": "string" }
         },
         "additionalProperties": false
       }

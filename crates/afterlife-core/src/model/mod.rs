@@ -1,4 +1,5 @@
 pub mod actor;
+pub mod artifact_uri;
 pub mod district;
 pub mod event;
 pub mod feedback;
@@ -10,6 +11,11 @@ pub mod step;
 pub mod sub_machine;
 
 pub use actor::Actor;
+pub use artifact_uri::{
+    MAX_ARTIFACT_BLOB_BYTES, ParsedArtifactUri, ParsedBlobUri, format_blob_uri,
+    is_valid_lower_sha256, parse_artifact_uri, parse_blob_uri, sanitize_blob_filename,
+    sanitize_owner_segment,
+};
 pub use district::{District, GateRubric, ProcedureSpec, SpecProposal, StageDef, StageKind};
 pub use event::JobEvent;
 pub use feedback::{Feedback, FeedbackKind, GateVerdict, GateVerification};
