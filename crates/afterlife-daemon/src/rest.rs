@@ -1,9 +1,7 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use afterlife_core::{
-    CommandId, EngineCommand, JobId, is_valid_lower_sha256, parse_blob_uri, sanitize_owner_segment,
-};
+use afterlife_core::{CommandId, EngineCommand, JobId};
 use afterlife_protocol::{CommandEnvelope, CommandOutcome, EventRecord, PortError, Scope};
 use axum::{
     Json,
@@ -15,12 +13,12 @@ use axum::{
     },
 };
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use tokio_stream::{StreamExt as _, wrappers::BroadcastStream};
 use uuid::Uuid;
 
 use crate::{
     AppDaemonState,
+    artifacts::{ArtifactBlobError, read_owned_blob_by_sha256, verify_blob_reference},
     auth::{AuthPrincipal, HumanWritePrincipal},
 };
 
@@ -116,73 +114,6 @@ pub fn transition_error_to_dispatch(te: afterlife_core::TransitionError) -> Disp
         error: te.to_string(),
         detail: serde_json::to_value(&te).ok(),
     }
-}
-
-fn verify_blob_reference(
-    state: &Arc<AppDaemonState>,
-    owner_id: &afterlife_core::OwnerId,
-    uri: &str,
-    provided_sha256: Option<&str>,
-) -> Result<(), DispatchError> {
-    let Some(blob) = parse_blob_uri(uri) else {
-        return Ok(());
-    };
-    let expected_owner = sanitize_owner_segment(owner_id.as_str());
-    if blob.owner_segment != expected_owner {
-        return Err(DispatchError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "invalid_input".into(),
-            error: format!(
-                "invalid input for 'uri': blob owner '{}' does not match authenticated owner '{}'",
-                blob.owner_segment, expected_owner
-            ),
-            detail: None,
-        });
-    }
-    if let Some(sha) = provided_sha256
-        && !sha.eq_ignore_ascii_case(&blob.sha256)
-    {
-        return Err(DispatchError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "invalid_input".into(),
-            error: "invalid input for 'sha256': does not match blob URI digest".into(),
-            detail: None,
-        });
-    }
-    let bytes = match state.ports.blobs.get_blob(owner_id, &blob.sha256) {
-        Ok(Some(b)) => b,
-        Ok(None) => {
-            return Err(DispatchError {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                code: "invalid_input".into(),
-                error: format!(
-                    "invalid input for 'uri': referenced artifact blob '{}' does not exist in owner blob store",
-                    blob.sha256
-                ),
-                detail: None,
-            });
-        }
-        Err(e) => {
-            return Err(DispatchError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "storage_error".into(),
-                error: e.to_string(),
-                detail: None,
-            });
-        }
-    };
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let actual_sha = format!("{:x}", hasher.finalize());
-    if actual_sha != blob.sha256 {
-        return Err(DispatchError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "invalid_input".into(),
-            error: "invalid input for 'uri': stored blob content digest does not match URI".into(),
-            detail: None,
-        });
-    }
-    Ok(())
 }
 
 pub fn dispatch_command(
@@ -331,15 +262,8 @@ pub async fn get_blob(
         )
             .into_response();
     }
-    if !is_valid_lower_sha256(&sha256) {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(serde_json::json!({ "error": "invalid_sha256" })),
-        )
-            .into_response();
-    }
-    match state.ports.blobs.get_blob(&principal.owner_id, &sha256) {
-        Ok(Some(bytes)) => (
+    match read_owned_blob_by_sha256(state.ports.blobs.as_ref(), &principal.owner_id, &sha256) {
+        Ok(bytes) => (
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, "application/octet-stream"),
@@ -349,14 +273,27 @@ pub async fn get_blob(
             bytes,
         )
             .into_response(),
-        Ok(None) => (
+        Err(ArtifactBlobError::InvalidSha256) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": "invalid_sha256" })),
+        )
+            .into_response(),
+        Err(ArtifactBlobError::NotFound(_)) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "blob_not_found" })),
         )
             .into_response(),
-        Err(e) => (
+        Err(
+            ArtifactBlobError::Storage(e)
+            | ArtifactBlobError::OwnerMismatch { actual: e, .. },
+        ) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+        Err(ArtifactBlobError::NotBlobUri | ArtifactBlobError::DigestMismatch) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": "invalid_sha256" })),
         )
             .into_response(),
     }

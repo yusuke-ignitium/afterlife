@@ -385,18 +385,20 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "Implement the primary change cohesively according to the design, diagnosis, or pruning plan while preserving architecture, tokens, and persistence compatibility."
+                    "Implement the primary change cohesively according to the design, diagnosis, or pruning plan while preserving architecture, tokens, and persistence compatibility. Avoid appending unrelated logic to oversized files; extract focused modules or service boundaries first."
                         .into(),
                 gate_checks: vec![
                     "Changes integrate cleanly with the whole system without patchwork or ad-hoc overrides"
+                        .into(),
+                    "No blind accretion onto oversized files; module responsibilities stay cleanly separated"
                         .into(),
                     "No machine-specific paths or secrets are introduced".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "decision",
-                        "Implementation Approach & Rationale",
-                        "Record the cohesive structure chosen over ad-hoc patches and how it preserves invariants.",
+                        "Implementation Approach & Module Boundaries",
+                        "Record the cohesive structure chosen over ad-hoc patches, module/service splits considered, and how invariants are preserved.",
                     ),
                     StepFieldDef::required(
                         "execution",
@@ -440,10 +442,10 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Build & Test".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "Run all tests (including pre-locked guards), builds, linters, and policy checks, iterating until every check is green with zero warnings."
+                    "Run all tests (including pre-locked guards and module-size/policy guards), builds, and linters, iterating until every check is green with zero warnings."
                         .into(),
                 gate_checks: vec![
-                    "All tests, builds, and lint checks (including pre-locked guards) pass with zero warnings"
+                    "All tests, builds, lint checks, and structural/policy guards pass with zero warnings"
                         .into(),
                 ],
                 record_fields: vec![
@@ -784,11 +786,11 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "Define a cohesive approach aligned with product architecture, types, boundaries, backward compatibility, and UX—avoiding hacks—along with a Before/After and regression-guard plan."
+                    "Define a cohesive approach aligned with product architecture, module boundaries, types, backward compatibility, and UX—extracting focused modules rather than appending to god files—along with a Before/After and regression-guard plan."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "Design fits the whole system cohesively rather than layering patchwork"
+                        "Design fits the whole system cohesively with clear module boundaries rather than accretion or patchwork"
                             .into(),
                         "Persistence, backward compatibility, error paths, and boundaries are addressed"
                             .into(),
@@ -802,8 +804,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 record_fields: vec![
                     StepFieldDef::required(
                         "decision",
-                        "Chosen Design & System Fit",
-                        "Record the chosen architecture and why it fits overall types, UX, and compatibility.",
+                        "Chosen Design & Module Boundaries",
+                        "Record the chosen architecture, responsibility boundaries or splits, and why it fits overall types, UX, and compatibility.",
                     ),
                     StepFieldDef::required(
                         "alternatives_rejected",

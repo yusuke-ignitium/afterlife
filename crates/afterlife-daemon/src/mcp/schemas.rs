@@ -1,0 +1,274 @@
+use serde_json::{Value, json};
+
+pub fn mcp_tool_definitions() -> Value {
+    json!([
+        {
+            "name": "districts_list",
+            "description": "List the authenticated user's Districts along with their active Philosophy and ProcedureSpec versions.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        },
+        {
+            "name": "jobs_list",
+            "description": "List Jobs in the authenticated user's workspace with pagination (optionally filtered by district_id; archived jobs excluded unless include_archived is true).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "district_id": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+                    "offset": { "type": "integer", "minimum": 0 },
+                    "include_archived": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "job_get_context",
+            "description": "Compile the full hierarchical ExecutionContext (District Philosophy + Stage Procedure + Sub-Stage Procedure + GateRubric + recent Feedbacks) for a Job.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id"],
+                "properties": { "job_id": { "type": "string" } },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_create",
+            "description": "Queue a new Job idempotently into the user's workspace. Inline Markdown links like [LIN-123](https://linear.app/...) in title or raw_input render as clickable links in the UI.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["title"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "title": { "type": "string", "description": "Job title; supports inline [LABEL](https://...) Markdown links (e.g. Linear ticket IDs)." },
+                    "raw_input": { "type": "string", "description": "Job details/context; supports inline [LABEL](https://...) Markdown links." },
+                    "target_district_hint": { "type": "string" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_update",
+            "description": "Update a Job's title, raw_input, spec_summary, or target_district_hint. Supports inline [LABEL](https://...) Markdown links. In-district updates require an active fencing_token and cannot target Human ApprovalGates.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "title": { "type": "string", "description": "Updated title; supports inline [LABEL](https://...) Markdown links." },
+                    "raw_input": { "type": "string", "description": "Updated raw input; supports inline [LABEL](https://...) Markdown links." },
+                    "spec_summary": { "type": "string", "description": "Updated spec summary; supports inline [LABEL](https://...) Markdown links." },
+                    "target_district_hint": { "type": "string" },
+                    "expected_revision": { "type": "integer" },
+                    "fencing_token": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_archive",
+            "description": "Soft-delete (archive) a Job out of active views while preserving audit history. Active in-district jobs require fencing_token; Human ApprovalGates cannot be archived by agents.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "reason": { "type": "string" },
+                    "expected_revision": { "type": "integer" },
+                    "fencing_token": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_assign",
+            "description": "Assign a queued Job into a District's entry stage.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id", "district_id"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "district_id": { "type": "string" },
+                    "expected_revision": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_claim",
+            "description": "Atomically acquire an exclusive lease and monotonic fencing_token on a Job.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "runner_label": { "type": "string" },
+                    "ttl_ms": { "type": "integer" },
+                    "expected_revision": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_heartbeat",
+            "description": "Extend an active Job lease using the held fencing_token.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id", "fencing_token"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "fencing_token": { "type": "integer" },
+                    "ttl_ms": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_advance",
+            "description": "Advance a Job to its next sub-stage or parent stage as Actor::Agent. Atomically records a StepRecord whose fields satisfy required_step_fields (from job_get_context) and whose artifact_ids link at least one artifact produced in the current step matching required_artifact_kinds; requires active fencing_token and passing GateVerification on parent-stage exit. Human ApprovalGates cannot be bypassed by agents. Advancing releases the current stage lease so the next step requires a fresh jobs_claim.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id", "fields"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "fields": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" }
+                    },
+                    "artifact_ids": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
+                    "fencing_token": { "type": "integer" },
+                    "expected_revision": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "jobs_rework",
+            "description": "Send a Job back to the stage's rework target, append a reworked StepRecord, and record the reason as Feedback.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "fencing_token": { "type": "integer" },
+                    "reason": { "type": "string" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "artifacts_attach",
+            "description": "Attach an artifact (issue, spec, source_code, pull_request, ci_report, snapshot, verification_report, raw_note) to a leased Job. Provide exactly one of: uri (allowed external URL https://, http://, linear://, slack:// or an existing owner blob:// URI), content (UTF-8 payload persisted to ArtifactBlobStore), or content_base64 (Base64 payload persisted to ArtifactBlobStore).",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id", "kind", "label"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["raw_note", "issue", "spec", "source_code", "pull_request", "ci_report", "snapshot", "verification_report"] },
+                    "label": { "type": "string" },
+                    "uri": { "type": "string", "description": "Allowed external URL (https://, http://, linear://, slack://) or verified blob://<owner>/<sha256>/<filename> URI. Mutually exclusive with content and content_base64." },
+                    "content": { "type": "string", "description": "UTF-8 artifact content persisted into the owner-isolated ArtifactBlobStore. Mutually exclusive with uri and content_base64." },
+                    "content_base64": { "type": "string", "description": "Base64-encoded binary artifact content persisted into the owner-isolated ArtifactBlobStore. Mutually exclusive with uri and content." },
+                    "sha256": { "type": "string" },
+                    "fencing_token": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "artifacts_read",
+            "description": "Read metadata and stored blob content (when backed by ArtifactBlobStore) for an Artifact attached to a Job.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id", "artifact_id"],
+                "properties": {
+                    "job_id": { "type": "string" },
+                    "artifact_id": { "type": "string" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "gate_verify_record",
+            "description": "Record an LLM gate verification result against the current stage's GateRubric.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id", "verdict", "summary"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "verdict": { "type": "string", "enum": ["pass", "needs_work", "fail"] },
+                    "summary": { "type": "string" },
+                    "checklist_results": { "type": "array" },
+                    "fencing_token": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "feedback_submit",
+            "description": "Submit structured Feedback on a District/Job/Stage to accumulate learnings for Philosophy and ProcedureSpec evolution.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["district_id", "kind", "body"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "district_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "stage_id": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["approval_note", "rework_reason", "philosophy_insight", "procedure_fix"] },
+                    "body": { "type": "string" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "philosophy_propose",
+            "description": "Propose a new version of a District's explicit Philosophy based on accumulated feedback (requires human sign-off to activate).",
+            "inputSchema": {
+                "type": "object",
+                "required": ["district_id", "base_version", "summary", "principles", "rationale"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "district_id": { "type": "string" },
+                    "base_version": { "type": "integer" },
+                    "summary": { "type": "string" },
+                    "principles": { "type": "array" },
+                    "anti_patterns": { "type": "array", "items": { "type": "string" } },
+                    "decision_heuristics": { "type": "array", "items": { "type": "string" } },
+                    "rationale": { "type": "string" },
+                    "source_feedback_ids": { "type": "array", "items": { "type": "string" } }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "spec_propose",
+            "description": "Propose a new version of a District's nested state-machine ProcedureSpec (requires human sign-off to activate).",
+            "inputSchema": {
+                "type": "object",
+                "required": ["district_id", "base_version", "stages", "changelog", "rationale"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "district_id": { "type": "string" },
+                    "base_version": { "type": "integer" },
+                    "stages": { "type": "array" },
+                    "changelog": { "type": "string" },
+                    "rationale": { "type": "string" },
+                    "source_feedback_ids": { "type": "array", "items": { "type": "string" } }
+                },
+                "additionalProperties": false
+            }
+        }
+    ])
+}

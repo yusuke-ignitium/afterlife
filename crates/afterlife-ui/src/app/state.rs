@@ -8,18 +8,26 @@ use std::{
 };
 
 use afterlife_core::{
-    Actor, AfterlifeEngine, Artifact, ArtifactId, ArtifactKind, CommandId, EngineCommand, Job,
-    JobEvent, JobId, OwnerId, TimestampMs, parse_blob_uri, sanitize_owner_segment,
+    Actor, AfterlifeEngine, Artifact, CommandId, EngineCommand, Job, JobEvent, JobId, OwnerId,
+    TimestampMs,
 };
 use afterlife_daemon::AppDaemonState;
 use afterlife_design::{GlassSettings, Palette, UiStyle};
 use afterlife_protocol::{
-    AfterlifeConfig, BackdropConfig, BackdropGlassAppearance, BackdropStore, BackdropTuning,
-    CommandEnvelope, EventRecord, resolve_tile_size_for_display, sanitize_display_tile_sizes,
+    AfterlifeConfig, BackdropStore, CommandEnvelope, EventRecord, resolve_tile_size_for_display,
+    sanitize_display_tile_sizes,
 };
 use gpui::{Entity, Image, ImageFormat, set_particle_wave_tuning};
 
-use crate::perf::PerfSession;
+pub use crate::app::appearance::{GlassParamKey, GlassParamSection};
+pub use crate::app::artifact_preview::{ArtifactPreview, ArtifactPreviewBody};
+use crate::{
+    app::{
+        appearance::{apply_backdrop_config, snapshot_glass_appearance, snapshot_tuning},
+        artifact_preview::load_artifact_preview,
+    },
+    perf::PerfSession,
+};
 
 static UI_COMMAND_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -36,74 +44,6 @@ fn default_data_dir() -> String {
         .into_owned()
 }
 
-fn apply_backdrop_config(
-    glass: &mut GlassSettings,
-    pause_animation_when_inactive: &mut bool,
-    fade_ui_after_secs: &mut f32,
-    cfg: &BackdropConfig,
-) {
-    let tuning = cfg.tuning.clamped();
-    glass.bg_image_enabled = tuning.image_enabled;
-    glass.bg_apple_music_artwork_enabled = tuning.apple_music_artwork_enabled;
-    glass.bg_youtube_mirror_enabled = tuning.youtube_mirror_enabled;
-    glass.bg_brightness = tuning.master_brightness;
-    glass.bg_tile_size_px = tuning.tile_size_px;
-    glass.bg_image_hold_secs = tuning.image_hold_secs;
-    glass.bg_image_brightness = tuning.image_brightness;
-    glass.bg_peak_luminance = tuning.image_peak_luminance;
-    glass.bg_image_saturation = tuning.image_saturation;
-    if let Some(saved) = cfg.glass.map(BackdropGlassAppearance::clamped) {
-        glass.disp_scale = saved.disp_scale;
-        glass.rim_thickness = saved.rim_thickness;
-        glass.refract_reach = saved.refract_reach;
-        glass.chroma = saved.chroma;
-        glass.highlight_alpha = saved.highlight_alpha;
-        glass.rim_width = saved.rim_width;
-        glass.blur_std_dev = saved.blur_std_dev;
-        glass.bg_alpha = saved.bg_alpha;
-        glass.radius = saved.radius;
-        glass.tint_rgb = saved.tint_rgb;
-        *pause_animation_when_inactive = saved.pause_animation_when_inactive;
-        *fade_ui_after_secs = saved.fade_ui_after_secs;
-    }
-}
-
-fn snapshot_tuning(glass: &GlassSettings) -> BackdropTuning {
-    BackdropTuning {
-        image_enabled: glass.bg_image_enabled,
-        apple_music_artwork_enabled: glass.bg_apple_music_artwork_enabled,
-        youtube_mirror_enabled: glass.bg_youtube_mirror_enabled,
-        tile_size_px: glass.bg_tile_size_px,
-        image_hold_secs: glass.bg_image_hold_secs,
-        image_brightness: glass.bg_image_brightness,
-        image_peak_luminance: glass.bg_peak_luminance,
-        image_saturation: glass.bg_image_saturation,
-        master_brightness: glass.bg_brightness,
-    }
-    .clamped()
-}
-
-fn snapshot_glass_appearance(
-    glass: &GlassSettings,
-    pause_animation_when_inactive: bool,
-    fade_ui_after_secs: f32,
-) -> BackdropGlassAppearance {
-    BackdropGlassAppearance {
-        disp_scale: glass.disp_scale,
-        rim_thickness: glass.rim_thickness,
-        refract_reach: glass.refract_reach,
-        chroma: glass.chroma,
-        highlight_alpha: glass.highlight_alpha,
-        rim_width: glass.rim_width,
-        blur_std_dev: glass.blur_std_dev,
-        bg_alpha: glass.bg_alpha,
-        radius: glass.radius,
-        tint_rgb: glass.tint_rgb,
-        pause_animation_when_inactive,
-        fade_ui_after_secs,
-    }
-}
-
 const APP_TITLE_LOGO_PNG: &[u8] = include_bytes!("../../assets/afterlife-logo.png");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,210 +51,6 @@ pub enum TabId {
     Workspace,
     Templates,
     Guard,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum GlassParamSection {
-    Backdrop,
-    Surface,
-    Inactive,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum GlassParamKey {
-    BgBrightness,
-    BgTileSizePx,
-    BgImageHoldSecs,
-    BgImageBrightness,
-    BgPeakLuminance,
-    BgImageSaturation,
-    DispScale,
-    RimThickness,
-    RefractReach,
-    Chroma,
-    HighlightAlpha,
-    RimWidth,
-    BlurStdDev,
-    BgAlpha,
-    Radius,
-    InactiveFadeSecs,
-}
-
-impl GlassParamKey {
-    pub const ALL: [GlassParamKey; 16] = [
-        Self::BgBrightness,
-        Self::BgTileSizePx,
-        Self::BgImageHoldSecs,
-        Self::BgImageBrightness,
-        Self::BgPeakLuminance,
-        Self::BgImageSaturation,
-        Self::DispScale,
-        Self::RimThickness,
-        Self::RefractReach,
-        Self::Chroma,
-        Self::HighlightAlpha,
-        Self::RimWidth,
-        Self::BlurStdDev,
-        Self::BgAlpha,
-        Self::Radius,
-        Self::InactiveFadeSecs,
-    ];
-
-    pub fn section(self) -> GlassParamSection {
-        match self {
-            Self::BgBrightness
-            | Self::BgTileSizePx
-            | Self::BgImageHoldSecs
-            | Self::BgImageBrightness
-            | Self::BgPeakLuminance
-            | Self::BgImageSaturation => GlassParamSection::Backdrop,
-            Self::InactiveFadeSecs => GlassParamSection::Inactive,
-            _ => GlassParamSection::Surface,
-        }
-    }
-
-    pub fn is_dimmed(self, glass: &GlassSettings) -> bool {
-        match self {
-            Self::BgImageHoldSecs => !glass.bg_image_enabled,
-            Self::BgImageBrightness | Self::BgPeakLuminance | Self::BgImageSaturation => {
-                !glass.bg_image_enabled
-                    && !glass.bg_apple_music_artwork_enabled
-                    && !glass.bg_youtube_mirror_enabled
-            }
-            _ => false,
-        }
-    }
-
-    pub fn spec(self) -> (&'static str, f32, f32, usize) {
-        match self {
-            Self::BgBrightness => ("Brightness", 0.2, 2.0, 2),
-            Self::BgTileSizePx => ("Tile Size", 2.0, 24.0, 0),
-            Self::BgImageHoldSecs => ("Image Hold (s)", 0.5, 60.0, 1),
-            Self::BgImageBrightness => ("Image Brightness", 0.00, 2.00, 2),
-            Self::BgPeakLuminance => ("Peak Luminance", 0.00, 1.00, 2),
-            Self::BgImageSaturation => ("Saturation", 0.00, 1.50, 2),
-            Self::DispScale => ("Refraction", 0.0, 800.0, 0),
-            Self::RimThickness => ("Edge Thickness", 0.01, 0.5, 3),
-            Self::RefractReach => ("Refraction Depth", 1.0, 600.0, 0),
-            Self::Chroma => ("Chromatic Shift", 0.0, 1.0, 2),
-            Self::HighlightAlpha => ("Specular", 0.0, 1.0, 2),
-            Self::RimWidth => ("Rim Width", 0.2, 8.0, 2),
-            Self::BlurStdDev => ("Frost Blur", 0.0, 20.0, 1),
-            Self::BgAlpha => ("Glass Opacity", 0.0, 0.85, 2),
-            Self::Radius => ("Corner Radius", 0.0, 20.0, 1),
-            Self::InactiveFadeSecs => ("Fade UI After", 0.0, 60.0, 0),
-        }
-    }
-
-    pub fn get(self, st: &AppState) -> f32 {
-        let g = &st.glass;
-        match self {
-            Self::BgBrightness => g.bg_brightness,
-            Self::BgTileSizePx => g.bg_tile_size_px,
-            Self::BgImageHoldSecs => g.bg_image_hold_secs,
-            Self::BgImageBrightness => g.bg_image_brightness,
-            Self::BgPeakLuminance => g.bg_peak_luminance,
-            Self::BgImageSaturation => g.bg_image_saturation,
-            Self::DispScale => g.disp_scale,
-            Self::RimThickness => g.rim_thickness,
-            Self::RefractReach => g.refract_reach,
-            Self::Chroma => g.chroma,
-            Self::HighlightAlpha => g.highlight_alpha,
-            Self::RimWidth => g.rim_width,
-            Self::BlurStdDev => g.blur_std_dev,
-            Self::BgAlpha => g.bg_alpha,
-            Self::Radius => g.radius,
-            Self::InactiveFadeSecs => st.fade_ui_after_secs,
-        }
-    }
-
-    pub fn format_value(self, val: f32) -> String {
-        if self == Self::InactiveFadeSecs {
-            let secs = val.round().clamp(0.0, 60.0) as u32;
-            return if secs == 0 {
-                "Off".to_string()
-            } else {
-                format!("{secs}s")
-            };
-        }
-        let (_, _, _, dp) = self.spec();
-        match dp {
-            0 => format!("{:.0}", val),
-            1 => format!("{:.1}", val),
-            _ => format!("{:.2}", val),
-        }
-    }
-
-    pub fn set(self, g: &mut GlassSettings, val: f32) {
-        let (_, min, max, _) = self.spec();
-        let v = val.clamp(min, max);
-        match self {
-            Self::BgBrightness => g.bg_brightness = v,
-            Self::BgTileSizePx => g.bg_tile_size_px = v,
-            Self::BgImageHoldSecs => g.bg_image_hold_secs = v,
-            Self::BgImageBrightness => g.bg_image_brightness = v,
-            Self::BgPeakLuminance => g.bg_peak_luminance = v,
-            Self::BgImageSaturation => g.bg_image_saturation = v,
-            Self::DispScale => g.disp_scale = v,
-            Self::RimThickness => g.rim_thickness = v,
-            Self::RefractReach => g.refract_reach = v,
-            Self::Chroma => g.chroma = v,
-            Self::HighlightAlpha => g.highlight_alpha = v,
-            Self::RimWidth => g.rim_width = v,
-            Self::BlurStdDev => g.blur_std_dev = v,
-            Self::BgAlpha => g.bg_alpha = v,
-            Self::Radius => g.radius = v,
-            Self::InactiveFadeSecs => {}
-        }
-    }
-}
-
-const MAX_PREVIEW_TEXT_BYTES: usize = 65_536;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ArtifactPreviewBody {
-    Text { text: String, truncated: bool },
-    Binary { byte_len: usize },
-    Unavailable(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ArtifactPreview {
-    pub artifact_id: ArtifactId,
-    pub label: String,
-    pub kind_label: &'static str,
-    pub uri: String,
-    pub sha256: Option<String>,
-    pub size_bytes: Option<u64>,
-    pub body: ArtifactPreviewBody,
-}
-
-fn artifact_kind_label(kind: ArtifactKind) -> &'static str {
-    match kind {
-        ArtifactKind::RawNote => "Raw Note",
-        ArtifactKind::Issue => "Issue",
-        ArtifactKind::Spec => "Spec",
-        ArtifactKind::SourceCode => "Source Code",
-        ArtifactKind::PullRequest => "Pull Request",
-        ArtifactKind::CiReport => "CI Report",
-        ArtifactKind::Snapshot => "Snapshot",
-        ArtifactKind::VerificationReport => "Verification Report",
-    }
-}
-
-fn format_preview_text(raw: String) -> (String, bool) {
-    let formatted = serde_json::from_str::<serde_json::Value>(&raw)
-        .ok()
-        .and_then(|v| serde_json::to_string_pretty(&v).ok())
-        .unwrap_or(raw);
-    if formatted.len() <= MAX_PREVIEW_TEXT_BYTES {
-        return (formatted, false);
-    }
-    let mut end = MAX_PREVIEW_TEXT_BYTES;
-    while end > 0 && !formatted.is_char_boundary(end) {
-        end -= 1;
-    }
-    (formatted[..end].to_string(), true)
 }
 
 #[derive(Clone)]
@@ -355,7 +91,7 @@ impl AppState {
     }
 
     #[cfg(test)]
-    fn new_ephemeral() -> Self {
+    pub(crate) fn new_ephemeral() -> Self {
         Self::new_with_mode(true, false)
     }
 
@@ -466,94 +202,11 @@ impl AppState {
     }
 
     pub fn open_artifact_preview(&mut self, art: &Artifact) {
-        let kind_label = artifact_kind_label(art.kind);
-        let Some(blob) = parse_blob_uri(&art.uri) else {
-            self.preview_artifact = Some(ArtifactPreview {
-                artifact_id: art.id.clone(),
-                label: art.label.clone(),
-                kind_label,
-                uri: art.uri.clone(),
-                sha256: art.sha256.clone(),
-                size_bytes: None,
-                body: ArtifactPreviewBody::Unavailable(
-                    "This artifact is not stored in the Afterlife blob store.".into(),
-                ),
-            });
-            return;
-        };
-
-        let expected_owner = sanitize_owner_segment(self.owner_id.as_str());
-        if blob.owner_segment != expected_owner {
-            self.preview_artifact = Some(ArtifactPreview {
-                artifact_id: art.id.clone(),
-                label: art.label.clone(),
-                kind_label,
-                uri: art.uri.clone(),
-                sha256: Some(blob.sha256),
-                size_bytes: None,
-                body: ArtifactPreviewBody::Unavailable(
-                    "Blob belongs to a different owner and cannot be opened.".into(),
-                ),
-            });
-            return;
-        }
-
-        let Some(daemon) = &self.daemon else {
-            self.preview_artifact = Some(ArtifactPreview {
-                artifact_id: art.id.clone(),
-                label: art.label.clone(),
-                kind_label,
-                uri: art.uri.clone(),
-                sha256: Some(blob.sha256),
-                size_bytes: None,
-                body: ArtifactPreviewBody::Unavailable(
-                    "Local blob store is unavailable in ephemeral mode.".into(),
-                ),
-            });
-            return;
-        };
-
-        let (size_bytes, body) = match daemon.ports.blobs.get_blob(&self.owner_id, &blob.sha256) {
-            Ok(Some(bytes)) => {
-                let len = bytes.len();
-                match String::from_utf8(bytes) {
-                    Ok(text) => {
-                        let (formatted, truncated) = format_preview_text(text);
-                        (
-                            Some(len as u64),
-                            ArtifactPreviewBody::Text {
-                                text: formatted,
-                                truncated,
-                            },
-                        )
-                    }
-                    Err(_) => (
-                        Some(len as u64),
-                        ArtifactPreviewBody::Binary { byte_len: len },
-                    ),
-                }
-            }
-            Ok(None) => (
-                None,
-                ArtifactPreviewBody::Unavailable(
-                    "Stored blob payload was not found for this artifact.".into(),
-                ),
-            ),
-            Err(e) => (
-                None,
-                ArtifactPreviewBody::Unavailable(format!("Failed to read artifact blob: {e}")),
-            ),
-        };
-
-        self.preview_artifact = Some(ArtifactPreview {
-            artifact_id: art.id.clone(),
-            label: art.label.clone(),
-            kind_label,
-            uri: art.uri.clone(),
-            sha256: Some(blob.sha256),
-            size_bytes,
-            body,
-        });
+        self.preview_artifact = Some(load_artifact_preview(
+            &self.owner_id,
+            self.daemon.as_ref(),
+            art,
+        ));
     }
 
     pub fn close_artifact_preview(&mut self) {
@@ -847,70 +500,7 @@ impl gpui::Global for SharedAppState {}
 
 #[cfg(test)]
 mod tests {
-    use gpui::ParticleWaveTuning;
-
     use super::*;
-
-    #[test]
-    fn default_appearance_tokens_stay_in_sync_across_crates() {
-        let glass_def = GlassSettings::default();
-        let tuning_def = BackdropTuning::default();
-        let saved_glass_def = BackdropGlassAppearance::default();
-        let wave_def = ParticleWaveTuning::default();
-
-        assert_eq!(snapshot_tuning(&glass_def), tuning_def);
-        assert_eq!(
-            snapshot_glass_appearance(&glass_def, false, 0.0),
-            saved_glass_def
-        );
-        assert_eq!(glass_def.particle_wave_tuning(), wave_def);
-    }
-
-    #[test]
-    fn backdrop_config_round_trip_preserves_every_appearance_field() {
-        let original = GlassSettings {
-            bg_image_enabled: true,
-            bg_apple_music_artwork_enabled: false,
-            bg_youtube_mirror_enabled: false,
-            bg_brightness: 1.25,
-            bg_tile_size_px: 10.0,
-            bg_image_hold_secs: 24.0,
-            bg_image_brightness: 0.72,
-            bg_peak_luminance: 0.68,
-            bg_image_saturation: 0.91,
-            disp_scale: 240.0,
-            rim_thickness: 0.12,
-            refract_reach: 180.0,
-            chroma: 0.35,
-            highlight_alpha: 0.42,
-            rim_width: 2.4,
-            blur_std_dev: 6.5,
-            bg_alpha: 0.31,
-            radius: 11.2,
-            tint_rgb: [27, 45, 56],
-        };
-
-        let cfg = BackdropConfig {
-            images: Vec::new(),
-            tuning: snapshot_tuning(&original),
-            glass: Some(snapshot_glass_appearance(&original, true, 15.0)),
-            display_tile_sizes: BTreeMap::new(),
-        };
-
-        let mut restored = GlassSettings::default();
-        let mut pause_inactive = false;
-        let mut fade_after_secs = 0.0;
-        apply_backdrop_config(
-            &mut restored,
-            &mut pause_inactive,
-            &mut fade_after_secs,
-            &cfg,
-        );
-
-        assert_eq!(restored, original);
-        assert!(pause_inactive);
-        assert_eq!(fade_after_secs, 15.0);
-    }
 
     #[test]
     fn switching_displays_applies_scale_and_preserves_per_display_tile_memory() {
@@ -975,99 +565,5 @@ mod tests {
         assert_eq!(st.inactive_fade_delay_secs(), Some(60));
         st.set_glass_param(GlassParamKey::InactiveFadeSecs, -5.0);
         assert_eq!(st.inactive_fade_delay_secs(), None);
-    }
-
-    #[test]
-    fn artifact_preview_loads_owner_blobs_pretty_prints_json_and_blocks_foreign_owner() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("afterlife_ui_preview_{nanos}"));
-        let cfg = AfterlifeConfig::desktop_embedded(dir.to_str().unwrap());
-        let daemon = AppDaemonState::from_config(cfg).unwrap();
-
-        let mut st = AppState::new_ephemeral();
-        st.daemon = Some(daemon.clone());
-
-        let json_blob = daemon
-            .ports
-            .blobs
-            .put_blob(&st.owner_id, "report.json", br#"{"status":"pass","n":3}"#)
-            .unwrap();
-        let json_art = Artifact {
-            id: ArtifactId::from("art-00001"),
-            kind: ArtifactKind::VerificationReport,
-            label: "report.json".into(),
-            uri: json_blob.uri,
-            sha256: Some(json_blob.sha256.clone()),
-            produced_at_stage: None,
-            produced_at_sub_stage: None,
-            revision_at_capture: 2,
-        };
-        st.open_artifact_preview(&json_art);
-        let preview = st.preview_artifact.as_ref().unwrap();
-        assert_eq!(preview.size_bytes, Some(23));
-        assert_eq!(preview.sha256.as_deref(), Some(json_blob.sha256.as_str()));
-        match &preview.body {
-            ArtifactPreviewBody::Text { text, truncated } => {
-                assert!(!truncated);
-                assert!(text.contains("\"status\": \"pass\""));
-                assert!(text.contains('\n'));
-            }
-            other => panic!("expected Text preview, got {other:?}"),
-        }
-
-        let bin_blob = daemon
-            .ports
-            .blobs
-            .put_blob(&st.owner_id, "img.bin", &[0xff, 0xfe, 0x00, 0x01])
-            .unwrap();
-        let bin_art = Artifact {
-            id: ArtifactId::from("art-00002"),
-            kind: ArtifactKind::Snapshot,
-            label: "img.bin".into(),
-            uri: bin_blob.uri,
-            sha256: Some(bin_blob.sha256),
-            produced_at_stage: None,
-            produced_at_sub_stage: None,
-            revision_at_capture: 3,
-        };
-        st.open_artifact_preview(&bin_art);
-        assert_eq!(
-            st.preview_artifact.as_ref().unwrap().body,
-            ArtifactPreviewBody::Binary { byte_len: 4 }
-        );
-
-        let foreign_art = Artifact {
-            id: ArtifactId::from("art-00003"),
-            kind: ArtifactKind::Snapshot,
-            label: "foreign.json".into(),
-            uri: format!(
-                "blob://other-owner/{}/foreign.json",
-                json_blob.sha256
-            ),
-            sha256: Some(json_blob.sha256),
-            produced_at_stage: None,
-            produced_at_sub_stage: None,
-            revision_at_capture: 4,
-        };
-        st.open_artifact_preview(&foreign_art);
-        assert!(matches!(
-            st.preview_artifact.as_ref().unwrap().body,
-            ArtifactPreviewBody::Unavailable(_)
-        ));
-
-        let legacy_art = Artifact::simple("JOB-001-drop", "queue-drop.json", ArtifactKind::RawNote);
-        st.open_artifact_preview(&legacy_art);
-        assert!(matches!(
-            st.preview_artifact.as_ref().unwrap().body,
-            ArtifactPreviewBody::Unavailable(_)
-        ));
-
-        st.close_artifact_preview();
-        assert!(st.preview_artifact.is_none());
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
