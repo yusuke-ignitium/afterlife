@@ -232,6 +232,27 @@ pub fn run_app() {
         open_main_window(&state, perf_session.clone(), cx);
 
         if perf_session.is_none() {
+            state.read(cx).sync_approval_badge();
+            let (notif_tx, mut notif_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            platform::notifications::init_notifications(notif_tx);
+            let state_for_notif = state.clone();
+            cx.spawn(async move |cx| {
+                while let Some(job_id) = notif_rx.recv().await {
+                    let _ = cx.update(|cx| {
+                        if cx.windows().is_empty() {
+                            open_main_window(&state_for_notif, None, cx);
+                        }
+                        state_for_notif.update(cx, |st, _| {
+                            st.open_notification_target(&afterlife_core::JobId::from(
+                                job_id.as_str(),
+                            ));
+                        });
+                        cx.activate(true);
+                        cx.refresh_windows();
+                    });
+                }
+            })
+            .detach();
             platform::apple_music::activate_watcher(
                 state.read(cx).glass.bg_apple_music_artwork_enabled,
             );

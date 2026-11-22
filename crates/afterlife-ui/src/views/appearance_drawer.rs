@@ -561,6 +561,18 @@ pub fn render_appearance_drawer(
                         st.persist_appearance();
                     },
                     cx,
+                ))
+                .child(render_section_label(st, "Notifications", SpacePx::S8))
+                .child(render_toggle_row(
+                    st,
+                    "toggle-approval-notifications",
+                    "Approval Alerts & Dock Badge",
+                    st.approval_notifications_enabled,
+                    motion.toggle_notifications_progress,
+                    |st| {
+                        st.toggle_approval_notifications();
+                    },
+                    cx,
                 )),
         )
         .into_any_element()

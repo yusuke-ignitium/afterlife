@@ -25,8 +25,12 @@ use crate::{
     app::{
         appearance::{apply_backdrop_config, snapshot_glass_appearance, snapshot_tuning},
         artifact_preview::load_artifact_preview,
+        notifications::{
+            ApprovalGateEntry, diff_newly_entered_approval_gates, snapshot_approval_gates,
+        },
     },
     perf::PerfSession,
+    platform::notifications::{deliver_approval_notification, sync_dock_badge},
 };
 
 static UI_COMMAND_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -80,6 +84,8 @@ pub struct AppState {
     pub inspector_open: bool,
     pub pause_animation_when_inactive: bool,
     pub fade_ui_after_secs: f32,
+    pub approval_notifications_enabled: bool,
+    approval_gate_snapshot: BTreeMap<JobId, ApprovalGateEntry>,
     pub collapsed_step_groups: HashSet<(JobId, usize)>,
     pub preview_artifact: Option<ArtifactPreview>,
 }
@@ -106,6 +112,7 @@ impl AppState {
         let mut display_tile_sizes = BTreeMap::new();
         let mut pause_animation_when_inactive = false;
         let mut fade_ui_after_secs = 0.0;
+        let mut approval_notifications_enabled = true;
         let load_backdrop_store = backdrop_store
             .clone()
             .or_else(|| perf_use_live_data.then(BackdropStore::open_default));
@@ -116,6 +123,7 @@ impl AppState {
                         &mut glass,
                         &mut pause_animation_when_inactive,
                         &mut fade_ui_after_secs,
+                        &mut approval_notifications_enabled,
                         &backdrop,
                     );
                     base_tile_size_px = backdrop.tuning.clamped().tile_size_px;
@@ -174,6 +182,8 @@ impl AppState {
             .map(|j| j.id.clone())
             .unwrap_or_else(|| JobId::from(""));
 
+        let approval_gate_snapshot = snapshot_approval_gates(&engine);
+
         Self {
             engine: Arc::new(engine),
             daemon,
@@ -200,6 +210,8 @@ impl AppState {
             inspector_open: false,
             pause_animation_when_inactive,
             fade_ui_after_secs,
+            approval_notifications_enabled,
+            approval_gate_snapshot,
             collapsed_step_groups: HashSet::new(),
             preview_artifact: None,
         }
@@ -232,8 +244,30 @@ impl AppState {
         if let Some(daemon) = &self.daemon
             && let Ok(snap) = daemon.ports.store.load_workspace(&self.owner_id)
         {
+            let arrived =
+                diff_newly_entered_approval_gates(&self.approval_gate_snapshot, &snap.engine);
+            self.approval_gate_snapshot = snapshot_approval_gates(&snap.engine);
             self.engine = Arc::new(snap.engine);
+            self.sync_approval_badge();
+            if self.approval_notifications_enabled {
+                for target in &arrived {
+                    deliver_approval_notification(target);
+                }
+            }
         }
+    }
+
+    pub fn sync_approval_badge(&self) {
+        sync_dock_badge(
+            self.engine.approval_jobs().len(),
+            self.approval_notifications_enabled,
+        );
+    }
+
+    pub fn toggle_approval_notifications(&mut self) {
+        self.approval_notifications_enabled = !self.approval_notifications_enabled;
+        self.sync_approval_badge();
+        self.persist_appearance();
     }
 
     pub fn dispatch(&mut self, command: EngineCommand) -> Result<Option<JobId>, String> {
@@ -270,7 +304,9 @@ impl AppState {
                     }
                     let affected_job = extract_job(&outcome.events);
                     if let Ok(snap) = daemon.ports.store.load_workspace(&self.owner_id) {
+                        self.approval_gate_snapshot = snapshot_approval_gates(&snap.engine);
                         self.engine = Arc::new(snap.engine);
+                        self.sync_approval_badge();
                     }
                     return Ok(affected_job);
                 }
@@ -286,6 +322,8 @@ impl AppState {
             .engine_mut()
             .apply(&actor, command)
             .map_err(|e| e.to_string())?;
+        self.approval_gate_snapshot = snapshot_approval_gates(&self.engine);
+        self.sync_approval_badge();
         Ok(extract_job(&events))
     }
 
@@ -389,6 +427,7 @@ impl AppState {
             self.glass,
             self.pause_animation_when_inactive,
             self.fade_ui_after_secs,
+            self.approval_notifications_enabled,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
@@ -396,6 +435,7 @@ impl AppState {
             &mut self.glass,
             &mut self.pause_animation_when_inactive,
             &mut self.fade_ui_after_secs,
+            &mut self.approval_notifications_enabled,
             &cfg,
         );
         self.base_tile_size_px = cfg.tuning.clamped().tile_size_px;
@@ -410,11 +450,13 @@ impl AppState {
             self.glass,
             self.pause_animation_when_inactive,
             self.fade_ui_after_secs,
+            self.approval_notifications_enabled,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
         if before != after {
             self.refresh_palette();
+            self.sync_approval_badge();
             true
         } else {
             false
@@ -433,6 +475,7 @@ impl AppState {
                 &self.glass,
                 self.pause_animation_when_inactive,
                 self.fade_ui_after_secs,
+                self.approval_notifications_enabled,
             ),
             self.display_tile_sizes.clone(),
         ) {

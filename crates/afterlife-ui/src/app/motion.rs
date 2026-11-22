@@ -129,6 +129,7 @@ pub struct MotionSnapshot {
     pub toggle_liquid_glass_progress: f32,
     pub toggle_centerline_progress: f32,
     pub toggle_px_guard_progress: f32,
+    pub toggle_notifications_progress: f32,
     pub inactive_ui_opacity: f32,
     pub selection_weights: HashMap<JobId, f32>,
     pub pulses: HashMap<String, f32>,
@@ -165,6 +166,7 @@ pub struct UiMotion {
     toggle_liquid_glass: ScalarTransition,
     toggle_centerline: ScalarTransition,
     toggle_px_guard: ScalarTransition,
+    toggle_notifications: ScalarTransition,
     inactive_ui_opacity: ScalarTransition,
     selection_weights: HashMap<JobId, ScalarTransition>,
     pulses: HashMap<String, Instant>,
@@ -197,6 +199,7 @@ impl UiMotion {
             toggle_liquid_glass: ScalarTransition::settled(1.0, now),
             toggle_centerline: ScalarTransition::settled(0.0, now),
             toggle_px_guard: ScalarTransition::settled(0.0, now),
+            toggle_notifications: ScalarTransition::settled(1.0, now),
             inactive_ui_opacity: ScalarTransition::settled(1.0, now),
             selection_weights: HashMap::new(),
             pulses: HashMap::new(),
@@ -277,11 +280,11 @@ impl UiMotion {
             self.toggle_centerline =
                 ScalarTransition::settled(if st.show_centerline { 1.0 } else { 0.0 }, now);
             self.toggle_px_guard = ScalarTransition::settled(
-                if st.active_tab == TabId::Guard {
-                    1.0
-                } else {
-                    0.0
-                },
+                if st.active_tab == TabId::Guard { 1.0 } else { 0.0 },
+                now,
+            );
+            self.toggle_notifications = ScalarTransition::settled(
+                if st.approval_notifications_enabled { 1.0 } else { 0.0 },
                 now,
             );
             self.inactive_ui_opacity = ScalarTransition::settled(
@@ -402,11 +405,12 @@ impl UiMotion {
                 now,
             );
             self.toggle_px_guard.set_target(
-                if st.active_tab == TabId::Guard {
-                    1.0
-                } else {
-                    0.0
-                },
+                if st.active_tab == TabId::Guard { 1.0 } else { 0.0 },
+                Duration::from_millis(TOGGLE_MS),
+                now,
+            );
+            self.toggle_notifications.set_target(
+                if st.approval_notifications_enabled { 1.0 } else { 0.0 },
                 Duration::from_millis(TOGGLE_MS),
                 now,
             );
@@ -499,6 +503,7 @@ impl UiMotion {
             || self.toggle_liquid_glass.is_active(now)
             || self.toggle_centerline.is_active(now)
             || self.toggle_px_guard.is_active(now)
+            || self.toggle_notifications.is_active(now)
             || self.inactive_ui_opacity.is_active(now)
             || any_selection_active
             || !active_pulses.is_empty();
@@ -518,6 +523,7 @@ impl UiMotion {
             toggle_liquid_glass_progress: self.toggle_liquid_glass.value(now),
             toggle_centerline_progress: self.toggle_centerline.value(now),
             toggle_px_guard_progress: self.toggle_px_guard.value(now),
+            toggle_notifications_progress: self.toggle_notifications.value(now),
             inactive_ui_opacity: self.inactive_ui_opacity.value(now),
             selection_weights,
             pulses: active_pulses,

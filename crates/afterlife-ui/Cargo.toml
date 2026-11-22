@@ -22,3 +22,4 @@ ureq = "2"
 gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }
 cocoa = "0.26"
 objc = "0.2"
+block = "0.1"

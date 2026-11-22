@@ -1,6 +1,7 @@
 use gpui::{Bounds, DisplayId, Pixels};
 
 pub mod apple_music;
+pub mod notifications;
 pub mod youtube_mirror;
 
 #[cfg(target_os = "macos")]

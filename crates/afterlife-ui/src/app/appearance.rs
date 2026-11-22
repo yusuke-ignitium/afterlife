@@ -7,6 +7,7 @@ pub(crate) fn apply_backdrop_config(
     glass: &mut GlassSettings,
     pause_animation_when_inactive: &mut bool,
     fade_ui_after_secs: &mut f32,
+    approval_notifications_enabled: &mut bool,
     cfg: &BackdropConfig,
 ) {
     let tuning = cfg.tuning.clamped();
@@ -32,6 +33,7 @@ pub(crate) fn apply_backdrop_config(
         glass.tint_rgb = saved.tint_rgb;
         *pause_animation_when_inactive = saved.pause_animation_when_inactive;
         *fade_ui_after_secs = saved.fade_ui_after_secs;
+        *approval_notifications_enabled = saved.approval_notifications_enabled;
     }
 }
 
@@ -54,6 +56,7 @@ pub(crate) fn snapshot_glass_appearance(
     glass: &GlassSettings,
     pause_animation_when_inactive: bool,
     fade_ui_after_secs: f32,
+    approval_notifications_enabled: bool,
 ) -> BackdropGlassAppearance {
     BackdropGlassAppearance {
         disp_scale: glass.disp_scale,
@@ -68,6 +71,7 @@ pub(crate) fn snapshot_glass_appearance(
         tint_rgb: glass.tint_rgb,
         pause_animation_when_inactive,
         fade_ui_after_secs,
+        approval_notifications_enabled,
     }
 }
 
@@ -244,7 +248,7 @@ mod tests {
 
         assert_eq!(snapshot_tuning(&glass_def), tuning_def);
         assert_eq!(
-            snapshot_glass_appearance(&glass_def, false, 0.0),
+            snapshot_glass_appearance(&glass_def, false, 0.0, true),
             saved_glass_def
         );
         assert_eq!(glass_def.particle_wave_tuning(), wave_def);
@@ -277,22 +281,25 @@ mod tests {
         let cfg = BackdropConfig {
             images: Vec::new(),
             tuning: snapshot_tuning(&original),
-            glass: Some(snapshot_glass_appearance(&original, true, 15.0)),
+            glass: Some(snapshot_glass_appearance(&original, true, 15.0, false)),
             display_tile_sizes: BTreeMap::new(),
         };
 
         let mut restored = GlassSettings::default();
         let mut pause_inactive = false;
         let mut fade_after_secs = 0.0;
+        let mut approval_notifications = true;
         apply_backdrop_config(
             &mut restored,
             &mut pause_inactive,
             &mut fade_after_secs,
+            &mut approval_notifications,
             &cfg,
         );
 
         assert_eq!(restored, original);
         assert!(pause_inactive);
         assert_eq!(fade_after_secs, 15.0);
+        assert!(!approval_notifications);
     }
 }

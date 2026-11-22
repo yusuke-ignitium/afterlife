@@ -122,6 +122,7 @@ pub struct BackdropGlassAppearance {
     pub tint_rgb: [u8; 3],
     pub pause_animation_when_inactive: bool,
     pub fade_ui_after_secs: f32,
+    pub approval_notifications_enabled: bool,
 }
 
 impl Default for BackdropGlassAppearance {
@@ -139,6 +140,7 @@ impl Default for BackdropGlassAppearance {
             tint_rgb: [7, 9, 14],
             pause_animation_when_inactive: false,
             fade_ui_after_secs: 0.0,
+            approval_notifications_enabled: true,
         }
     }
 }
@@ -158,13 +160,8 @@ impl BackdropGlassAppearance {
             radius: finite_clamp(self.radius, 0.0, 20.0, def.radius),
             tint_rgb: self.tint_rgb,
             pause_animation_when_inactive: self.pause_animation_when_inactive,
-            fade_ui_after_secs: finite_clamp(
-                self.fade_ui_after_secs,
-                0.0,
-                60.0,
-                def.fade_ui_after_secs,
-            )
-            .round(),
+            fade_ui_after_secs: finite_clamp(self.fade_ui_after_secs, 0.0, 60.0, def.fade_ui_after_secs).round(),
+            approval_notifications_enabled: self.approval_notifications_enabled,
         }
     }
 }
@@ -665,6 +662,7 @@ mod tests {
             tint_rgb: [12, 34, 56],
             pause_animation_when_inactive: true,
             fade_ui_after_secs: 999.0,
+            approval_notifications_enabled: false,
         }
         .clamped();
         let def = BackdropGlassAppearance::default();
