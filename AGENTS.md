@@ -1,9 +1,4 @@
----
-description: Core concept, engineering philosophy, do/don't guidelines, and non-negotiable invariants for Afterlife.
-alwaysApply: true
----
-
-# Afterlife Philosophy
+# Afterlife Agent Guidelines
 
 ## 1. Concept
 
@@ -97,3 +92,20 @@ These properties must hold continuously on every commit and release:
    - Desktop changes remain verified, release-built, and signed into a runnable `dist/Afterlife.app`.
 9. **Full Portability**
    - The repository builds, tests, and runs cleanly regardless of directory location, host machine, or deployment target.
+
+---
+
+## 6. Zero Code Comments Policy
+
+- Never write comments (`//`, `///`, `//!`, `/* ... */`) anywhere in first-party Rust files under `crates/` or `tools/`.
+- Express intent exclusively through clear types, function/variable names, enums, constants, and black-box tests.
+- Agent-facing contracts live strictly in `afterlife toolmap` (immutable 3-line English concept + live MCP schemas + domain policy limits).
+- This rule is enforced deterministically on every `cargo test` and CI run by `crates/afterlife-core/tests/no_comments_guard.rs`.
+
+---
+
+## 7. Commit Convention
+
+- Whenever creating a git commit in this repository (including chat requests, `/commit`, and diff-tab commit-and-push actions), always read and follow `.agents/skills/commit/SKILL.md`.
+- This project-level commit skill takes precedence over any global commit skill.
+- Never include intermediate exploration logs, trial-and-error history, or machine-specific paths in commit messages.
