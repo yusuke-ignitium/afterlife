@@ -6,8 +6,8 @@ use crate::{
         SubStageId,
     },
     model::{
-        Actor, District, GateRubric, Job, Philosophy, Principle, ProcedureSpec, RunnerKind,
-        StageDef, StageKind, SubMachineTemplate, SubStageDef,
+        Actor, ArtifactKind, District, GateRubric, Job, Philosophy, Principle, ProcedureSpec,
+        RunnerKind, StageDef, StageKind, StepFieldDef, SubMachineTemplate, SubStageDef,
     },
 };
 
@@ -48,6 +48,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     "関連シンボルと影響範囲の一次確認が完了している".into(),
                     "外部仕様や依存制約に一次ソースの裏付けがある".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "sources_read",
+                        "参照した一次ソース",
+                        "確認した実装箇所・仕様・契約の所在と範囲を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "findings",
+                        "確認した事実と制約",
+                        "一次確認で確定した構造・依存関係・不変条件を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("isolate_probe"),
@@ -60,6 +73,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "未確定事項が実機検証または実測で確認済みである".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "probe_method",
+                        "検証手順と条件",
+                        "実施した隔離検証・最小再現の手順と実行条件を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "observed_behavior",
+                        "観測結果",
+                        "推測ではなく実測・実機で観測された挙動と結論を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("lock_criteria"),
@@ -72,6 +98,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "対象範囲・前提条件・評価基準・守るべき不変条件が明記されている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "decision",
+                        "確定したスコープと前提",
+                        "対象範囲・非対象・前提条件と判断理由を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "acceptance_criteria",
+                        "評価基準と不変条件",
+                        "完了判定の基準と絶対に壊してはならない不変条件を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
         ],
     };
@@ -95,6 +134,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "対象経路と未観測区間が一次実装から特定されている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "pipeline_map",
+                        "実行経路と状態遷移",
+                        "対象ワークロードの処理経路とアクティブ時・アイドル時の挙動を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "hot_paths",
+                        "主要消費点と未観測区間",
+                        "リソース消費ポイントと現状計測できていない区間を特定する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("add_instrumentation"),
@@ -107,6 +159,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "未観測区間が同一条件で繰り返し計測できる状態になっている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "execution",
+                        "計装・ハーネス整備内容",
+                        "追加・確認した計測手段と本番品質への非干渉性を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "metric_hooks",
+                        "取得可能になった指標",
+                        "どの区間でどの定量指標を再現可能に採取できるかを記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("lock_metric_spec"),
@@ -119,6 +184,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "評価指標・計測条件・品質退行禁止ラインが明記されている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "decision",
+                        "評価指標と退行禁止ライン",
+                        "最適化目標の指標と絶対に劣化させない品質・正確性ラインを記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "measurement_protocol",
+                        "再現計測プロトコル",
+                        "前後比較で固定するワークロード・入力・実行条件を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
         ],
     };
@@ -143,6 +221,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "変更前（Before）の比較基準と再現条件が記録されている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "baseline_metrics",
+                        "Beforeベースライン実測値",
+                        "変更前の現行状態で採取した定量値・出力・挙動の基準値を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "conditions",
+                        "再現条件と手順",
+                        "Afterで同一条件比較を行うための実行コマンド・入力・前提環境を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![
+                    ArtifactKind::Snapshot,
+                    ArtifactKind::VerificationReport,
+                ],
             },
             SubStageDef {
                 id: SubStageId::from("lock_regression_guards"),
@@ -156,6 +250,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     "メイン変更より先にデグレガードが実装され現行状態で通過している".into(),
                     "意図的な退行や境界違反を検知できる検証内容になっている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "guard_scope",
+                        "固定したデグレガードの対象",
+                        "先行実装・確認した不変条件・境界条件・既存品質の検証項目を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "execution",
+                        "ガード実装と現行通過結果",
+                        "追加・実行した自動検証と現行状態での通過結果を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
         ],
     };
@@ -179,6 +286,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "障害の最小再現条件と現行の失敗挙動が記録されている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "repro_steps",
+                        "最小再現手順と条件",
+                        "障害を確定的に再現する最小入力・状態・手順を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "observed_failure",
+                        "観測された異常挙動",
+                        "期待挙動との差分、エラー内容、異常出力を事実ベースで記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("lock_red_test"),
@@ -191,6 +311,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "修正前の現行コードで再現テストが意図通り失敗（Red）している".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "execution",
+                        "追加したRed再現テスト",
+                        "追加したテストの所在・検証内容・実行方法を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "red_test_result",
+                        "現行コードでのRed失敗結果",
+                        "修正前に期待通りの理由で失敗した出力要約を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("lock_boundary_guards"),
@@ -203,6 +336,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "周辺正常系・互換性の既存ガードが現行状態で通過している".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "guard_scope",
+                        "周辺正常系・互換性ガード範囲",
+                        "修正の影響を受けやすい周辺挙動と保護対象を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "execution",
+                        "ガード確認・補強と通過結果",
+                        "確認または先行追加したガードと現行通過結果を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
         ],
     };
@@ -228,6 +374,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     "パッチワークや場当たり上書きがなく全体と整合している".into(),
                     "ローカル固有パスや機密情報が混入していない".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "decision",
+                        "実装・変更方針と判断理由",
+                        "場当たり修正を避けて選んだ構成と不変条件への整合理由を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "execution",
+                        "実施した変更内容",
+                        "変更対象・構造変更の要点・互換性配慮を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("edge_guard_tests"),
@@ -241,6 +400,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     "変更範囲の正常系・異常系・境界条件を検証する自動テストが揃っている".into(),
                     "先行固定した再現テスト・退行ガードが改変なしで通過している".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "cases_added",
+                        "補強した境界・異常系テスト",
+                        "追加・確認した正常系・異常系・境界ケースと先行ガードの扱い記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "test_results",
+                        "テスト実行結果",
+                        "先行ガードおよび追加テストの実行結果を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("hygiene_gate"),
@@ -253,6 +425,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "先行ガードを含む全テスト・ビルド・lint が警告ゼロで通過している".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "checks_run",
+                        "実行した検証スイート",
+                        "実行した全テスト・ビルド・静的解析・規約チェック一覧を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "results",
+                        "警告ゼロ・全緑の確認結果",
+                        "失敗ゼロ・警告ゼロの確認結果と修正反復の結論を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
         ],
     };
@@ -277,6 +462,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "支配的ボトルネックが実測データで特定されている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "bottleneck",
+                        "特定した支配的ボトルネック",
+                        "プロファイル・計装データから特定した主要コスト箇所と比率を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "hypothesis",
+                        "改善仮説と対象判断",
+                        "なぜそこを改善すれば効くのか、品質劣化なしに改善できる根拠を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("apply_principled_change"),
@@ -290,6 +488,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     "品質・機能・正確性を削るアドホックな近道がない".into(),
                     "ローカル固有パスや計測用ゴミコードが混入していない".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "decision",
+                        "採用した構造改善と品質保護判断",
+                        "品質を落とさず性能を引き出すために選んだ方針と見送った近道を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "execution",
+                        "実装した最適化内容",
+                        "変更箇所・アルゴリズムやデータ構造の改善内容を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("remeasure_and_guard"),
@@ -303,6 +514,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     "先行品質ガード・全テスト・ビルド・lint が警告ゼロで通過している".into(),
                     "Before と同一条件での再計測結果が記録されている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "before_after_metrics",
+                        "同一条件での再計測結果",
+                        "Beforeベースラインと同一条件で計測したAfter値および改善幅を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "guard_results",
+                        "品質ガード・全検証の通過結果",
+                        "先行品質ガード・全テスト・静的解析が警告ゼロで通過した結果を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
         ],
     };
@@ -326,6 +550,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "実機または本番相当環境での動作確認が完了している".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "execution",
+                        "実機・本番相当検証の手順",
+                        "実施したビルド・起動・操作・永続化検証の手順を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "observed_behavior",
+                        "実機での観測結果",
+                        "実機・本番相当環境で確認した挙動と異常ゼロの事実を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("compare_baseline"),
@@ -339,6 +576,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     "Before/After の同一条件比較で品質・性能・互換性の退行ゼロが確認済みである"
                         .into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "before_after_diff",
+                        "Before/After同一条件比較",
+                        "先行記録のBefore基準値とAfter実測値の対比・差分を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "regression_check",
+                        "退行ゼロの判定根拠",
+                        "品質・性能・互換性のいずれも退行していないと判断した根拠を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
             },
             SubStageDef {
                 id: SubStageId::from("bundle_evidence"),
@@ -351,6 +601,19 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 gate_checks: vec![
                     "人間承認に必要な前後比較証跡と Why 要約が揃っている".into(),
                 ],
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "summary",
+                        "人間レビュー向けWhy要約",
+                        "変更の意図・設計判断・互換性影響・不変条件の要約を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "evidence_refs",
+                        "添付証跡と確認ポイント",
+                        "添付した証跡Artifactと人間オーナーが確認すべき要点を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![ArtifactKind::VerificationReport],
             },
         ],
     };
@@ -477,6 +740,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-evidence")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("design")],
                 rework_to: None,
             },
@@ -500,6 +765,24 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: None,
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "decision",
+                        "採用設計と全体整合の根拠",
+                        "プロダクト全体の設計・型・UX・互換性に適合させた方針と理由を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "alternatives_rejected",
+                        "見送った代替案と理由",
+                        "検討して棄却したアプローチやパッチワーク案と、その棄却理由を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "invariants",
+                        "不変条件・互換性・ガード計画",
+                        "守るべき不変条件・後方互換・Beforeベースラインとデグレガード計画を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("baseline_guard")],
                 rework_to: Some(StageId::from("discover")),
             },
@@ -521,6 +804,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-baseline-guard")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("build")],
                 rework_to: Some(StageId::from("design")),
             },
@@ -543,6 +828,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-build-loop")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("verify")],
                 rework_to: Some(StageId::from("design")),
             },
@@ -566,6 +853,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-verify-ship")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("approve")],
                 rework_to: Some(StageId::from("build")),
             },
@@ -587,6 +876,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: true,
                 }),
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("shipped")],
                 rework_to: Some(StageId::from("build")),
             },
@@ -601,6 +892,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![],
                 rework_to: None,
             },
@@ -696,6 +989,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-evidence")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("brief")],
                 rework_to: None,
             },
@@ -717,6 +1012,24 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: None,
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "options_compared",
+                        "比較した選択肢と一次根拠",
+                        "評価対象の各案と一次ソース・実機検証に基づく比較事実を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "recommendation",
+                        "推奨案と判断理由",
+                        "推奨する意思決定と採用根拠・前提条件を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "risks",
+                        "残存リスクと次アクション",
+                        "見落としてはならない制約・リスク・採択後の具体的な次の一手を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("approve")],
                 rework_to: Some(StageId::from("investigate")),
             },
@@ -738,6 +1051,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: true,
                 }),
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("decided")],
                 rework_to: Some(StageId::from("brief")),
             },
@@ -752,6 +1067,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![],
                 rework_to: None,
             },
@@ -849,6 +1166,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-red-repro")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("diagnose")],
                 rework_to: None,
             },
@@ -870,6 +1189,24 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: None,
+                record_fields: vec![
+                    StepFieldDef::required(
+                        "root_cause",
+                        "特定した根本原因",
+                        "表層症状ではなく破綻の根本原因となっている箇所とメカニズムを記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "evidence",
+                        "原因特定の根拠",
+                        "再現テストやトレースから根本原因を裏付けた観測事実を記録する。",
+                    ),
+                    StepFieldDef::required(
+                        "fix_plan",
+                        "根本修正計画と影響範囲",
+                        "対症療法を避けた最小かつ本質的な修正方針と類似箇所への影響範囲を記録する。",
+                    ),
+                ],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("fix")],
                 rework_to: Some(StageId::from("reproduce")),
             },
@@ -892,6 +1229,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-build-loop")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("verify")],
                 rework_to: Some(StageId::from("diagnose")),
             },
@@ -914,6 +1253,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-verify-ship")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("approve")],
                 rework_to: Some(StageId::from("fix")),
             },
@@ -935,6 +1276,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: true,
                 }),
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("resolved")],
                 rework_to: Some(StageId::from("fix")),
             },
@@ -949,6 +1292,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![],
                 rework_to: None,
             },
@@ -1046,6 +1391,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-observe")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("baseline_guard")],
                 rework_to: None,
             },
@@ -1068,6 +1415,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-baseline-guard")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("optimize")],
                 rework_to: Some(StageId::from("instrument")),
             },
@@ -1090,6 +1439,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-perf-loop")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("verify")],
                 rework_to: Some(StageId::from("baseline_guard")),
             },
@@ -1113,6 +1464,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-verify-ship")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("approve")],
                 rework_to: Some(StageId::from("optimize")),
             },
@@ -1135,6 +1488,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: true,
                 }),
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("shipped")],
                 rework_to: Some(StageId::from("optimize")),
             },
@@ -1149,6 +1504,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![],
                 rework_to: None,
             },
@@ -1245,6 +1602,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-evidence")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("baseline_guard")],
                 rework_to: None,
             },
@@ -1267,6 +1626,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-baseline-guard")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("simplify")],
                 rework_to: Some(StageId::from("audit")),
             },
@@ -1289,6 +1650,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-build-loop")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("verify")],
                 rework_to: Some(StageId::from("audit")),
             },
@@ -1312,6 +1675,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: false,
                 }),
                 sub_template_id: Some(SubMachineTemplateId::from("tmpl-verify-ship")),
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("approve")],
                 rework_to: Some(StageId::from("simplify")),
             },
@@ -1333,6 +1698,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                     requires_human_approval: true,
                 }),
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![StageId::from("hardened")],
                 rework_to: Some(StageId::from("simplify")),
             },
@@ -1347,6 +1714,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
                 next: vec![],
                 rework_to: None,
             },

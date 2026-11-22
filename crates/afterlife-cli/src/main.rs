@@ -23,6 +23,7 @@ enum FlagKind {
     Bool,
     Json,
     CheckPair,
+    FieldPair,
 }
 
 impl FlagKind {
@@ -34,6 +35,7 @@ impl FlagKind {
             Self::Bool => "",
             Self::Json => "JSON",
             Self::CheckPair => "LABEL=BOOL",
+            Self::FieldPair => "KEY=VALUE",
         }
     }
 }
@@ -339,7 +341,32 @@ const TOOLMAP: &[ToolSpec] = &[
             placeholder: "job_id",
             mcp_key: "job_id",
         }],
-        flags: &[FLAG_FENCING_OPT, FLAG_EXPECTED_REV, FLAG_COMMAND_ID],
+        flags: &[
+            FlagSpec {
+                flag: "--field",
+                mcp_key: "fields",
+                kind: FlagKind::FieldPair,
+                required: false,
+                repeatable: true,
+            },
+            FlagSpec {
+                flag: "--fields-json",
+                mcp_key: "fields",
+                kind: FlagKind::Json,
+                required: false,
+                repeatable: false,
+            },
+            FlagSpec {
+                flag: "--artifact-id",
+                mcp_key: "artifact_ids",
+                kind: FlagKind::String,
+                required: false,
+                repeatable: true,
+            },
+            FLAG_FENCING_OPT,
+            FLAG_EXPECTED_REV,
+            FLAG_COMMAND_ID,
+        ],
         default_runner: None,
     },
     ToolSpec {
@@ -1060,6 +1087,15 @@ fn parse_flag_value(kind: FlagKind, flag: &str, raw: &str) -> Result<Value, CliE
             };
             Ok(json!([label, passed]))
         }
+        FlagKind::FieldPair => {
+            let (k, v) = raw
+                .split_once('=')
+                .ok_or_else(|| CliError::usage(format!("{flag} expects KEY=VALUE")))?;
+            if k.trim().is_empty() {
+                return Err(CliError::usage(format!("{flag} key must not be empty")));
+            }
+            Ok(json!([k, v]))
+        }
     }
 }
 
@@ -1092,7 +1128,21 @@ fn parse_spec_args(spec: &ToolSpec, rest: &[String]) -> Result<Map<String, Value
             .get(i + 1)
             .ok_or_else(|| CliError::usage(format!("missing value for {token}")))?;
         let val = parse_flag_value(fspec.kind, token, raw)?;
-        if fspec.repeatable {
+        if fspec.kind == FlagKind::FieldPair {
+            let pair = val.as_array().unwrap();
+            let k = pair[0].as_str().unwrap().to_string();
+            let v = pair[1].as_str().unwrap().to_string();
+            let map = out
+                .entry(fspec.mcp_key.to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+            let Some(obj) = map.as_object_mut() else {
+                return Err(CliError::usage(format!(
+                    "{token} requires `{}` to be a JSON object",
+                    fspec.mcp_key
+                )));
+            };
+            obj.insert(k, Value::String(v));
+        } else if fspec.repeatable {
             out.entry(fspec.mcp_key.to_string())
                 .or_insert_with(|| Value::Array(Vec::new()))
                 .as_array_mut()

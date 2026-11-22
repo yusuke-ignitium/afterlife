@@ -24,6 +24,10 @@ path = "src/bin/mirror_tile_demo.rs"
 name = "detail-overlap-demo"
 path = "src/bin/detail_overlap_demo.rs"
 
+[[bin]]
+name = "step-history-demo"
+path = "src/bin/step_history_demo.rs"
+
 [dependencies]
 afterlife-design = { path = "../../crates/afterlife-design" }
 gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }

@@ -189,13 +189,21 @@ pub fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "jobs_advance",
-            "description": "Advance a Job to its next sub-stage or parent stage. Requires active fencing_token and passing GateVerification (when GateRubric is configured); Human ApprovalGates cannot be bypassed by agents. Advancing releases the current stage lease so the next stage requires a fresh jobs_claim.",
+            "description": "Advance a Job to its next sub-stage or parent stage as Actor::Agent. Atomically records a StepRecord whose fields satisfy required_step_fields (from context_compile) and any required_artifact_kinds; requires active fencing_token and passing GateVerification on parent-stage exit. Human ApprovalGates cannot be bypassed by agents. Advancing releases the current stage lease so the next step requires a fresh jobs_claim.",
             "inputSchema": {
                 "type": "object",
-                "required": ["job_id"],
+                "required": ["job_id", "fields"],
                 "properties": {
                     "command_id": { "type": "string" },
                     "job_id": { "type": "string" },
+                    "fields": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" }
+                    },
+                    "artifact_ids": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
                     "fencing_token": { "type": "integer" },
                     "expected_revision": { "type": "integer" }
                 },
@@ -911,6 +919,34 @@ fn handle_tool_call(
                 Ok(v) => v,
                 Err(msg) => return invalid_arg(id, "fencing_token", &msg),
             };
+            let mut fields = std::collections::BTreeMap::new();
+            if let Some(fields_v) = args.get("fields") {
+                let Some(obj) = fields_v.as_object() else {
+                    return invalid_arg(id, "fields", "must be an object mapping field keys to strings");
+                };
+                for (k, v) in obj {
+                    let Some(s) = v.as_str() else {
+                        return invalid_arg(
+                            id,
+                            "fields",
+                            &format!("field '{k}' must be a string"),
+                        );
+                    };
+                    fields.insert(k.clone(), s.to_string());
+                }
+            }
+            let mut artifact_ids = Vec::new();
+            if let Some(arr_v) = args.get("artifact_ids") {
+                let Some(arr) = arr_v.as_array() else {
+                    return invalid_arg(id, "artifact_ids", "must be an array of artifact IDs");
+                };
+                for item in arr {
+                    let Some(s) = item.as_str() else {
+                        return invalid_arg(id, "artifact_ids", "each artifact id must be a string");
+                    };
+                    artifact_ids.push(afterlife_core::ArtifactId::from(s));
+                }
+            }
             run_mcp_cmd(
                 state,
                 principal,
@@ -918,6 +954,8 @@ fn handle_tool_call(
                 cmd_id,
                 EngineCommand::AdvanceJob {
                     job_id: JobId::from(jid),
+                    fields,
+                    artifact_ids,
                     expected_revision,
                     fencing_token,
                     at: now,

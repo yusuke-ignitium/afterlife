@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -293,6 +293,7 @@ pub struct AppState {
     pub inspector_open: bool,
     pub pause_animation_when_inactive: bool,
     pub fade_ui_after_secs: f32,
+    pub collapsed_step_groups: HashSet<(JobId, usize)>,
 }
 
 impl AppState {
@@ -409,6 +410,14 @@ impl AppState {
             inspector_open: false,
             pause_animation_when_inactive,
             fade_ui_after_secs,
+            collapsed_step_groups: HashSet::new(),
+        }
+    }
+
+    pub fn toggle_step_group(&mut self, job_id: JobId, group_idx: usize) {
+        let key = (job_id, group_idx);
+        if !self.collapsed_step_groups.remove(&key) {
+            self.collapsed_step_groups.insert(key);
         }
     }
 

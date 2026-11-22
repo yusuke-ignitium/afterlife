@@ -183,6 +183,18 @@ pub fn validate_command(
             validate_feedback_refs(engine, source_feedback_ids)?;
             Ok(())
         }
+        EngineCommand::AdvanceJob { fields, .. } => {
+            for k in fields.keys() {
+                require_non_empty("fields", k)?;
+            }
+            Ok(())
+        }
+        EngineCommand::ApproveJob { note, .. } => {
+            if let Some(n) = note {
+                require_non_empty("note", n)?;
+            }
+            Ok(())
+        }
         EngineCommand::ReworkJob { reason, .. } => {
             if let Some(r) = reason {
                 require_non_empty("reason", r)?;

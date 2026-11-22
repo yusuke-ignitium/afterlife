@@ -9,6 +9,7 @@ use crate::{
         district::{GateRubric, StageDef},
         feedback::{Feedback, GateVerification},
         philosophy::Philosophy,
+        step::{StepFieldDef, StepRecord},
         sub_machine::SubStageDef,
     },
 };
@@ -101,6 +102,8 @@ pub struct Job {
     pub lease: Option<JobLease>,
     pub artifacts: Vec<Artifact>,
     pub gate_verifications: Vec<GateVerification>,
+    #[serde(default)]
+    pub step_records: Vec<StepRecord>,
     pub feedback_ids: Vec<FeedbackId>,
     pub created_at: TimestampMs,
     pub updated_at: TimestampMs,
@@ -146,5 +149,13 @@ pub struct ExecutionContext {
     pub stage: StageDef,
     pub sub_stage: Option<SubStageDef>,
     pub gate_rubric: Option<GateRubric>,
+    #[serde(default)]
+    pub required_step_fields: Vec<StepFieldDef>,
+    #[serde(default)]
+    pub required_artifact_kinds: Vec<ArtifactKind>,
+    #[serde(default)]
+    pub step_records: Vec<StepRecord>,
+    #[serde(default)]
+    pub artifacts: Vec<Artifact>,
     pub recent_feedbacks: Vec<Feedback>,
 }

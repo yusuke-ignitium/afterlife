@@ -1,4 +1,7 @@
-use afterlife_core::{EngineCommand, JobLocation};
+use afterlife_core::{
+    AfterlifeEngine, Artifact, DistrictId, EngineCommand, Job, JobLocation, StageId, StepFieldDef,
+    StepRecord, StepRecordOutcome, TimestampMs,
+};
 use afterlife_design::{
     EdgeAccent, FadePx, FontPx, GlassSurface, RadiusPx, RowHeightPx, ScrollFadeExt, SpacePx,
     single_line, with_alpha,
@@ -22,6 +25,311 @@ use crate::{
     },
     views::root::{AfterlifeApp, DetailResizeDrag},
 };
+
+struct StepStageRun<'a> {
+    district_id: &'a DistrictId,
+    stage_id: &'a StageId,
+    records: Vec<&'a StepRecord>,
+}
+
+fn group_step_records<'a>(records: &'a [StepRecord]) -> Vec<StepStageRun<'a>> {
+    let mut runs: Vec<StepStageRun<'a>> = Vec::new();
+    for rec in records {
+        if let Some(last) = runs.last_mut()
+            && last.district_id == &rec.district_id
+            && last.stage_id == &rec.stage_id
+        {
+            last.records.push(rec);
+            continue;
+        }
+        runs.push(StepStageRun {
+            district_id: &rec.district_id,
+            stage_id: &rec.stage_id,
+            records: vec![rec],
+        });
+    }
+    runs
+}
+
+fn format_relative_age(now: TimestampMs, recorded_at: TimestampMs) -> String {
+    let elapsed_secs = now.saturating_sub(recorded_at) / 1_000;
+    if elapsed_secs < 60 {
+        "now".into()
+    } else if elapsed_secs < 3_600 {
+        format!("{}m", elapsed_secs / 60)
+    } else if elapsed_secs < 86_400 {
+        format!("{}h", elapsed_secs / 3_600)
+    } else {
+        format!("{}d", elapsed_secs / 86_400)
+    }
+}
+
+fn resolve_step_field_defs<'a>(
+    engine: &'a AfterlifeEngine,
+    rec: &StepRecord,
+) -> Option<&'a [StepFieldDef]> {
+    let stage = engine.find_stage(&rec.district_id, &rec.stage_id)?;
+    if let (Some(tid), Some(sub_id)) = (&stage.sub_template_id, &rec.sub_stage_id) {
+        if let Some(sub) = engine
+            .templates
+            .get(tid)
+            .and_then(|t| t.stages.iter().find(|s| &s.id == sub_id))
+        {
+            return Some(&sub.record_fields);
+        }
+    }
+    Some(&stage.record_fields)
+}
+
+fn ordered_step_fields(engine: &AfterlifeEngine, rec: &StepRecord) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(defs) = resolve_step_field_defs(engine, rec) {
+        for def in defs {
+            if let Some(val) = rec.fields.get(&def.key) {
+                seen.insert(def.key.as_str());
+                out.push((def.label.clone(), val.clone()));
+            }
+        }
+    }
+    for (k, v) in &rec.fields {
+        if !seen.contains(k.as_str()) {
+            let label = match k.as_str() {
+                "decision" => "判断と根拠".to_string(),
+                "execution" => "実行内容と結果".to_string(),
+                "note" => "承認メモ".to_string(),
+                other => other.to_string(),
+            };
+            out.push((label, v.clone()));
+        }
+    }
+    out
+}
+
+fn render_step_history(
+    st: &AppState,
+    job: &Job,
+    cx: &mut Context<AfterlifeApp>,
+) -> AnyElement {
+    let p = st.palette;
+    let now = now_ms();
+    let runs = group_step_records(&job.step_records);
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(SpacePx::S8.px())
+        .child(single_line(
+            RowHeightPx::H22,
+            SpacePx::S0,
+            SpacePx::S4,
+            FontPx::F11,
+            RadiusPx::R0,
+            None,
+            None,
+            p.text_tertiary,
+            st.show_centerline,
+            p.centerline,
+            [SharedString::from("Steps").into_any_element()],
+        ))
+        .children(runs.into_iter().enumerate().map(|(group_idx, run)| {
+            let stage_def = st.engine.find_stage(run.district_id, run.stage_id);
+            let stage_label = stage_def
+                .map(|s| s.label.clone())
+                .unwrap_or_else(|| run.stage_id.to_string());
+            let collapsed = st
+                .collapsed_step_groups
+                .contains(&(job.id.clone(), group_idx));
+            let has_evidence = run.records.iter().any(|r| !r.artifact_ids.is_empty());
+            let is_approved = run
+                .records
+                .last()
+                .is_some_and(|r| r.outcome == StepRecordOutcome::Approved);
+            let right_meta = if collapsed {
+                format!("{}", run.records.len())
+            } else if is_approved {
+                "Approved".to_string()
+            } else {
+                run.records
+                    .last()
+                    .map(|r| format_relative_age(now, r.recorded_at))
+                    .unwrap_or_default()
+            };
+            let jid_toggle = job.id.clone();
+
+            div()
+                .flex()
+                .flex_col()
+                .gap(SpacePx::S4.px())
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "step-grp-{}-{}",
+                            job.id, group_idx
+                        )))
+                        .cursor_pointer()
+                        .px(SpacePx::S4.px())
+                        .py(px(2.0))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.state.update(cx, |st, _| {
+                                st.toggle_step_group(jid_toggle.clone(), group_idx);
+                            });
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(SpacePx::S8.px())
+                                .child(
+                                    div()
+                                        .text_size(FontPx::F12.px())
+                                        .text_color(p.text_primary)
+                                        .child(stage_label),
+                                )
+                                .when(has_evidence, |row| {
+                                    row.child(
+                                        div()
+                                            .w(px(4.0))
+                                            .h(px(4.0))
+                                            .rounded(px(2.0))
+                                            .bg(p.accent),
+                                    )
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_size(FontPx::F11.px())
+                                .text_color(if is_approved {
+                                    p.amber
+                                } else {
+                                    with_alpha(p.text_tertiary, 0.72)
+                                })
+                                .child(right_meta),
+                        ),
+                )
+                .when(!collapsed, |d| {
+                    d.child(
+                        div()
+                            .px(SpacePx::S8.px())
+                            .py(SpacePx::S8.px())
+                            .rounded(p.radius_f32(&st.glass, 0.65))
+                            .bg(with_alpha(p.text_primary, 0.028))
+                            .flex()
+                            .flex_col()
+                            .gap(SpacePx::S8.px())
+                            .children(run.records.into_iter().enumerate().map(|(rec_idx, rec)| {
+                                let sub_label = rec.sub_stage_id.as_ref().map(|sub_id| {
+                                    stage_def
+                                        .and_then(|s| s.sub_template_id.as_ref())
+                                        .and_then(|tid| st.engine.templates.get(tid))
+                                        .and_then(|t| t.stages.iter().find(|sub| &sub.id == sub_id))
+                                        .map(|sub| sub.label.clone())
+                                        .unwrap_or_else(|| sub_id.to_string())
+                                });
+                                let actor_label = rec.actor.display_label().to_string();
+                                let fields = ordered_step_fields(&st.engine, rec);
+                                let step_artifacts: Vec<&Artifact> = rec
+                                    .artifact_ids
+                                    .iter()
+                                    .filter_map(|aid| job.artifacts.iter().find(|a| &a.id == aid))
+                                    .collect();
+
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(SpacePx::S4.px())
+                                    .when_some(sub_label, |col, sub| {
+                                        col.child(
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap(SpacePx::S8.px())
+                                                .child(
+                                                    div()
+                                                        .text_size(FontPx::F11.px())
+                                                        .text_color(p.text_secondary)
+                                                        .child(sub),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(FontPx::F11.px())
+                                                        .text_color(with_alpha(
+                                                            p.text_tertiary,
+                                                            0.72,
+                                                        ))
+                                                        .child(actor_label.clone()),
+                                                ),
+                                        )
+                                    })
+                                    .when(rec.sub_stage_id.is_none(), |col| {
+                                        col.child(
+                                            div()
+                                                .text_size(FontPx::F11.px())
+                                                .text_color(with_alpha(p.text_tertiary, 0.72))
+                                                .child(actor_label.clone()),
+                                        )
+                                    })
+                                    .children(fields.into_iter().enumerate().map(
+                                        |(f_idx, (label, val))| {
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .gap(px(1.0))
+                                                .child(
+                                                    div()
+                                                        .text_size(FontPx::F11.px())
+                                                        .text_color(with_alpha(
+                                                            p.text_tertiary,
+                                                            0.78,
+                                                        ))
+                                                        .child(label),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(FontPx::F12.px())
+                                                        .text_color(p.text_secondary)
+                                                        .child(linkified_text(
+                                                            SharedString::from(format!(
+                                                                "step-f-{}-{}-{}-{}",
+                                                                job.id, group_idx, rec_idx, f_idx
+                                                            )),
+                                                            &val,
+                                                            p.accent,
+                                                        )),
+                                                )
+                                        },
+                                    ))
+                                    .children(step_artifacts.into_iter().map(|art| {
+                                        clickable_link_row(
+                                            SharedString::from(format!(
+                                                "step-art-{}-{}-{}-{}",
+                                                job.id, group_idx, rec_idx, art.id
+                                            )),
+                                            art.label.clone(),
+                                            art.uri.clone(),
+                                            LinkRowStyle {
+                                                dot_color: p.accent,
+                                                link_color: p.accent,
+                                                plain_color: p.text_secondary,
+                                                show_centerline: st.show_centerline,
+                                                centerline: p.centerline,
+                                            },
+                                        )
+                                    }))
+                            })),
+                    )
+                })
+        }))
+        .into_any_element()
+}
 
 pub fn render_left_pane(
     st: &AppState,
@@ -195,10 +503,10 @@ pub fn render_left_pane(
                                                         true,
                                                         move |st, _, _| {
                                                             let _ = st.dispatch(
-                                                                EngineCommand::AdvanceJob {
+                                                                EngineCommand::ApproveJob {
                                                                     job_id: jid_approve.clone(),
+                                                                    note: None,
                                                                     expected_revision: None,
-                                                                    fencing_token: None,
                                                                     at: now_ms(),
                                                                 },
                                                             );
@@ -351,6 +659,7 @@ pub fn render_left_pane(
             let jid_rew = job.id.clone();
             let jid_arch = job.id.clone();
             let in_district = matches!(job.location, JobLocation::InDistrict { .. });
+            let at_approval_gate = st.engine.is_job_at_approval_gate(&job);
             let is_archived = matches!(job.location, JobLocation::Archived);
             let stage_label = match &job.location {
                 JobLocation::Queue => "Jobs (Queued)".to_string(),
@@ -648,6 +957,9 @@ pub fn render_left_pane(
                                     )
                                 },
                             )
+                            .when(!job.step_records.is_empty(), |d| {
+                                d.child(render_step_history(st, &job, cx))
+                            })
                             .when(!job.artifacts.is_empty(), |d| {
                                 d.child(
                                     div()
@@ -691,24 +1003,28 @@ pub fn render_left_pane(
                                         .gap(SpacePx::S8.px())
                                         .pt(SpacePx::S4.px())
                                         .when(in_district, |row| {
-                                            row.child(chip_btn(
-                                                st,
-                                                "detail-advance",
-                                                "Advance Step",
-                                                RowHeightPx::H28,
-                                                SpacePx::S12,
-                                                FontPx::F12,
-                                                true,
-                                                move |st, _, _| {
-                                                    let _ = st.dispatch(EngineCommand::AdvanceJob {
-                                                        job_id: jid_adv.clone(),
-                                                        expected_revision: None,
-                                                        fencing_token: None,
-                                                        at: now_ms(),
-                                                    });
-                                                },
-                                                cx,
-                                            ))
+                                            row.when(at_approval_gate, |r| {
+                                                r.child(chip_btn(
+                                                    st,
+                                                    "detail-approve",
+                                                    "Approve",
+                                                    RowHeightPx::H28,
+                                                    SpacePx::S12,
+                                                    FontPx::F12,
+                                                    true,
+                                                    move |st, _, _| {
+                                                        let _ = st.dispatch(
+                                                            EngineCommand::ApproveJob {
+                                                                job_id: jid_adv.clone(),
+                                                                note: None,
+                                                                expected_revision: None,
+                                                                at: now_ms(),
+                                                            },
+                                                        );
+                                                    },
+                                                    cx,
+                                                ))
+                                            })
                                             .child(chip_btn(
                                                 st,
                                                 "detail-rework",
@@ -760,4 +1076,81 @@ pub fn render_left_pane(
         }),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use afterlife_core::{Actor, OwnerId, SubStageId};
+
+    use super::*;
+
+    fn mk_record(stage: &str, sub: Option<&str>, fields: &[(&str, &str)], at: u64) -> StepRecord {
+        StepRecord {
+            district_id: DistrictId::from("DIST-001"),
+            stage_id: StageId::from(stage),
+            sub_stage_id: sub.map(SubStageId::from),
+            revision: 1,
+            actor: Actor::local_human(OwnerId::from("local-owner")),
+            outcome: StepRecordOutcome::Advanced,
+            fields: fields
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect::<BTreeMap<_, _>>(),
+            artifact_ids: Vec::new(),
+            recorded_at: at,
+        }
+    }
+
+    #[test]
+    fn group_step_records_preserves_rework_runs_and_field_order() {
+        let engine = AfterlifeEngine::new();
+        let records = vec![
+            mk_record(
+                "discover",
+                Some("trace_sources"),
+                &[("findings", "f1"), ("sources_read", "s1")],
+                1_000,
+            ),
+            mk_record(
+                "discover",
+                Some("isolate_probe"),
+                &[("probe_method", "p1"), ("observed_behavior", "o1")],
+                2_000,
+            ),
+            mk_record("design", None, &[("decision", "d1")], 3_000),
+            mk_record(
+                "discover",
+                Some("trace_sources"),
+                &[("sources_read", "s2"), ("findings", "f2")],
+                4_000,
+            ),
+        ];
+
+        let runs = group_step_records(&records);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0].stage_id.as_str(), "discover");
+        assert_eq!(runs[0].records.len(), 2);
+        assert_eq!(runs[1].stage_id.as_str(), "design");
+        assert_eq!(runs[2].stage_id.as_str(), "discover");
+        assert_eq!(runs[2].records.len(), 1);
+
+        let ordered = ordered_step_fields(&engine, &records[0]);
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].0, "参照した一次ソース");
+        assert_eq!(ordered[0].1, "s1");
+        assert_eq!(ordered[1].0, "確認した事実と制約");
+        assert_eq!(ordered[1].1, "f1");
+    }
+
+    #[test]
+    fn format_relative_age_covers_units() {
+        let base = 1_000_000_000u64;
+        assert_eq!(format_relative_age(base, base + 5_000), "now");
+        assert_eq!(format_relative_age(base, base - 30_000), "now");
+        assert_eq!(format_relative_age(base, base - 180_000), "3m");
+        assert_eq!(format_relative_age(base, base - 7_200_000), "2h");
+        assert_eq!(format_relative_age(base, base - 172_800_000), "2d");
+    }
 }

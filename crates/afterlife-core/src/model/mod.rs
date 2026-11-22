@@ -6,6 +6,7 @@ pub mod inline_link;
 pub mod job;
 pub mod philosophy;
 pub mod runner;
+pub mod step;
 pub mod sub_machine;
 
 pub use actor::Actor;
@@ -16,4 +17,5 @@ pub use inline_link::{InlineLink, ParsedInlineText, is_openable_url, parse_inlin
 pub use job::{Artifact, ArtifactKind, ExecutionContext, Job, JobLease, JobLocation};
 pub use philosophy::{Philosophy, PhilosophyProposal, Principle, ProposalStatus};
 pub use runner::RunnerKind;
+pub use step::{StepFieldDef, StepRecord, StepRecordOutcome, default_step_fields};
 pub use sub_machine::{SubMachineTemplate, SubStageDef};

@@ -160,14 +160,19 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
                 .unwrap()
                 .to_string();
 
-            let (ok, _) = run_cli(
+            let art_kind = ctx["required_artifact_kinds"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.as_str())
+                .unwrap_or("spec");
+            let (ok, attached) = run_cli(
                 &url_clone,
                 &[
                     "artifacts",
                     "attach",
                     &job_id,
                     "--kind",
-                    "spec",
+                    art_kind,
                     "--label",
                     "evidence.md",
                     "--uri",
@@ -176,7 +181,27 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
                     &token,
                 ],
             );
-            assert!(ok);
+            assert!(ok, "attach failed: {attached}");
+            let art_id = attached["events"][0]["artifact_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+
+            let field_pairs: Vec<String> = ctx["required_step_fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| {
+                    let key = f["key"].as_str().unwrap();
+                    format!("{key}=Recorded {key} via CLI")
+                })
+                .collect();
+
+            let mut adv_args: Vec<&str> = vec!["jobs", "advance", &job_id, "--fencing-token", &token, "--artifact-id", &art_id];
+            for pair in &field_pairs {
+                adv_args.push("--field");
+                adv_args.push(pair.as_str());
+            }
 
             if ctx["sub_stage"].is_null() {
                 if let Some(checks_arr) = ctx["stage"]["gate_rubric"]["checks"].as_array() {
@@ -203,10 +228,7 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
                     assert!(ok);
                 }
             } else {
-                let (ok, adv) = run_cli(
-                    &url_clone,
-                    &["jobs", "advance", &job_id, "--fencing-token", &token],
-                );
+                let (ok, adv) = run_cli(&url_clone, &adv_args);
                 if ok {
                     continue;
                 }
@@ -236,12 +258,13 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
                 assert!(ok);
             }
 
-            let (ok, _) = run_cli(
-                &url_clone,
-                &["jobs", "advance", &job_id, "--fencing-token", &token],
-            );
-            assert!(ok);
+            let (ok, adv_ok) = run_cli(&url_clone, &adv_args);
+            assert!(ok, "advance failed: {adv_ok}");
         }
+
+        let (ok, gate_ctx) = run_cli(&url_clone, &["jobs", "context", &job_id]);
+        assert!(ok, "gate context failed: {gate_ctx}");
+        assert_eq!(gate_ctx["step_records"].as_array().unwrap().len(), 12);
 
         let (ok, _) = run_cli(
             &url_clone,

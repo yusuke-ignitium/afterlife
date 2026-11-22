@@ -27,7 +27,8 @@ pub fn authorize_command(
 ) -> Result<(), (StatusCode, &'static str)> {
     let required = match cmd {
         EngineCommand::QueueJob { .. } => Scope::JobsCreate,
-        EngineCommand::ApprovePhilosophyProposal { .. }
+        EngineCommand::ApproveJob { .. }
+        | EngineCommand::ApprovePhilosophyProposal { .. }
         | EngineCommand::ApproveSpecProposal { .. } => Scope::ApprovalsDecide,
         EngineCommand::SetStageSubTemplate { .. } => Scope::DistrictsAdmin,
         _ => Scope::JobsWork,
@@ -115,7 +116,8 @@ pub fn dispatch_command(
             PortError::Domain(te) => {
                 let status = match &te {
                     afterlife_core::TransitionError::OwnerMismatch { .. }
-                    | afterlife_core::TransitionError::HumanApprovalRequired { .. } => {
+                    | afterlife_core::TransitionError::HumanApprovalRequired { .. }
+                    | afterlife_core::TransitionError::AgentExecutionRequired { .. } => {
                         StatusCode::FORBIDDEN
                     }
                     afterlife_core::TransitionError::JobNotFound(_)

@@ -7,8 +7,10 @@ use crate::{
     },
     model::{
         actor::Actor,
+        job::ArtifactKind,
         philosophy::{Philosophy, ProposalStatus},
         runner::RunnerKind,
+        step::StepFieldDef,
     },
 };
 
@@ -36,6 +38,10 @@ pub struct StageDef {
     pub procedure: String,
     pub gate_rubric: Option<GateRubric>,
     pub sub_template_id: Option<SubMachineTemplateId>,
+    #[serde(default)]
+    pub record_fields: Vec<StepFieldDef>,
+    #[serde(default)]
+    pub required_artifact_kinds: Vec<ArtifactKind>,
     pub next: Vec<StageId>,
     pub rework_to: Option<StageId>,
 }

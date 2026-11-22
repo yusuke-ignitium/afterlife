@@ -42,6 +42,7 @@ fn event_type_name(ev: &JobEvent) -> &'static str {
         JobEvent::JobLeaseReleased { .. } => "job_lease_released",
         JobEvent::ArtifactAttached { .. } => "artifact_attached",
         JobEvent::GateVerificationRecorded { .. } => "gate_verification_recorded",
+        JobEvent::StepRecorded { .. } => "step_recorded",
         JobEvent::FeedbackSubmitted { .. } => "feedback_submitted",
         JobEvent::PhilosophyProposed { .. } => "philosophy_proposed",
         JobEvent::PhilosophyUpdated { .. } => "philosophy_updated",

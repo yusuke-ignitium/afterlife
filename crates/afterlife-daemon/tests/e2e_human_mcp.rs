@@ -572,25 +572,48 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
             .await;
         let token = claim["events"][0]["fencing_token"].as_u64().unwrap();
 
-        agent
+        let art_kind = ctx["required_artifact_kinds"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("source_code");
+        let attached = agent
             .call_ok(
                 "artifacts_attach",
                 json!({
                     "job_id": job_id,
-                    "kind": "source_code",
+                    "kind": art_kind,
                     "label": format!("{stage_id}-output.rs"),
                     "uri": format!("s3://afterlife/artifacts/{job_id}/{stage_id}.rs"),
                     "fencing_token": token
                 }),
             )
             .await;
+        let art_id = attached["events"][0]["artifact_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let mut fields = serde_json::Map::new();
+        for f in ctx["required_step_fields"].as_array().unwrap() {
+            let key = f["key"].as_str().unwrap();
+            fields.insert(
+                key.to_string(),
+                json!(format!("Recorded {key} at {stage_id}")),
+            );
+        }
 
         let rubric = &ctx["stage"]["gate_rubric"];
         let is_sub_stage = !ctx["sub_stage"].is_null();
         let (is_err, adv_res) = agent
             .call_tool(
                 "jobs_advance",
-                json!({ "job_id": job_id, "fencing_token": token }),
+                json!({
+                    "job_id": job_id,
+                    "fields": fields,
+                    "artifact_ids": [art_id],
+                    "fencing_token": token
+                }),
             )
             .await;
         if is_err {
@@ -619,7 +642,12 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
             agent
                 .call_ok(
                     "jobs_advance",
-                    json!({ "job_id": job_id, "fencing_token": token }),
+                    json!({
+                        "job_id": job_id,
+                        "fields": fields,
+                        "artifact_ids": [art_id],
+                        "fencing_token": token
+                    }),
                 )
                 .await;
         }
@@ -683,10 +711,10 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
         .post_command(
             None,
             json!({
-                "cmd": "advance_job",
+                "cmd": "approve_job",
                 "job_id": job_id,
+                "note": "Approved after reviewing step records",
                 "expected_revision": null,
-                "fencing_token": null,
                 "at": 2_000_000_000_000u64
             }),
         )
@@ -702,6 +730,7 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
         .find(|j| j["id"] == job_id)
         .unwrap();
     assert_eq!(job_after["location"]["state"], "completed");
+    assert_eq!(job_after["step_records"].as_array().unwrap().len(), 13);
 
     let mut last_seq = initial_seq;
     let mut saw_completed = false;
@@ -1259,10 +1288,36 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
             )
             .await;
         let token = claim["events"][0]["fencing_token"].as_u64().unwrap();
+        if let Some(kind) = ctx["required_artifact_kinds"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+        {
+            mcp.call_ok(
+                "artifacts_attach",
+                json!({
+                    "job_id": gate_job_id,
+                    "kind": kind,
+                    "label": "desktop-evidence.json",
+                    "uri": "https://example.com/desktop-evidence.json",
+                    "fencing_token": token
+                }),
+            )
+            .await;
+        }
+        let mut fields = serde_json::Map::new();
+        for f in ctx["required_step_fields"].as_array().unwrap() {
+            let key = f["key"].as_str().unwrap();
+            fields.insert(key.to_string(), json!(format!("Recorded {key}")));
+        }
         let (is_err, _) = mcp
             .call_tool(
                 "jobs_advance",
-                json!({ "job_id": gate_job_id, "fencing_token": token }),
+                json!({
+                    "job_id": gate_job_id,
+                    "fields": fields,
+                    "fencing_token": token
+                }),
             )
             .await;
         if is_err {
@@ -1284,7 +1339,11 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
             .await;
             mcp.call_ok(
                 "jobs_advance",
-                json!({ "job_id": gate_job_id, "fencing_token": token }),
+                json!({
+                    "job_id": gate_job_id,
+                    "fields": fields,
+                    "fencing_token": token
+                }),
             )
             .await;
         }
@@ -1298,10 +1357,10 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
         Some("application/json"),
         json!({
             "command": {
-                "cmd": "advance_job",
+                "cmd": "approve_job",
                 "job_id": gate_job_id,
+                "note": null,
                 "expected_revision": null,
-                "fencing_token": null,
                 "at": 2_000_000_000_000u64
             }
         })

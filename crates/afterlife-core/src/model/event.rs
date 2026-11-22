@@ -3,12 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ids::{
         ArtifactId, DistrictId, FeedbackId, FencingToken, JobId, LeaseId, OwnerId,
-        PhilosophyVersion, ProposalId, SpecVersion, StageId, SubMachineTemplateId, TimestampMs,
+        PhilosophyVersion, ProposalId, SpecVersion, StageId, SubMachineTemplateId, SubStageId,
+        TimestampMs,
     },
     model::{
         actor::Actor,
         feedback::{FeedbackKind, GateVerdict},
         job::{ArtifactKind, JobLocation},
+        step::StepRecordOutcome,
     },
 };
 
@@ -108,6 +110,17 @@ pub enum JobEvent {
         summary: String,
         at: TimestampMs,
     },
+    StepRecorded {
+        owner_id: OwnerId,
+        actor: Actor,
+        job_id: JobId,
+        district_id: DistrictId,
+        stage_id: StageId,
+        sub_stage_id: Option<SubStageId>,
+        revision: u64,
+        outcome: StepRecordOutcome,
+        at: TimestampMs,
+    },
     FeedbackSubmitted {
         owner_id: OwnerId,
         actor: Actor,
@@ -175,6 +188,7 @@ impl JobEvent {
             | Self::JobLeaseReleased { owner_id, .. }
             | Self::ArtifactAttached { owner_id, .. }
             | Self::GateVerificationRecorded { owner_id, .. }
+            | Self::StepRecorded { owner_id, .. }
             | Self::FeedbackSubmitted { owner_id, .. }
             | Self::PhilosophyProposed { owner_id, .. }
             | Self::PhilosophyUpdated { owner_id, .. }
@@ -196,6 +210,7 @@ impl JobEvent {
             | Self::JobLeaseReleased { at, .. }
             | Self::ArtifactAttached { at, .. }
             | Self::GateVerificationRecorded { at, .. }
+            | Self::StepRecorded { at, .. }
             | Self::FeedbackSubmitted { at, .. }
             | Self::PhilosophyProposed { at, .. }
             | Self::PhilosophyUpdated { at, .. }

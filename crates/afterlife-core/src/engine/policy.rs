@@ -1,11 +1,15 @@
+use std::collections::BTreeMap;
+
 use crate::{
     error::TransitionError,
-    ids::{DistrictId, FencingToken, TimestampMs},
+    ids::{ArtifactId, DistrictId, FencingToken, TimestampMs},
     model::{
         actor::Actor,
         district::StageDef,
         feedback::{FeedbackKind, GateVerdict},
-        job::{Job, JobLocation},
+        job::{ArtifactKind, Job, JobLocation},
+        step::{StepFieldDef, default_step_fields},
+        sub_machine::SubStageDef,
     },
 };
 
@@ -43,6 +47,93 @@ pub fn require_stage_authority(
             action: format!("{action} on human-only stage {district_id}/{}", stage.id),
         });
     }
+    Ok(())
+}
+
+pub fn require_agent_execution(actor: &Actor, action: &str) -> Result<(), TransitionError> {
+    if actor.is_human() {
+        return Err(TransitionError::AgentExecutionRequired {
+            action: action.into(),
+        });
+    }
+    Ok(())
+}
+
+pub fn resolve_step_contract(
+    stage: &StageDef,
+    sub_stage: Option<&SubStageDef>,
+) -> (Vec<StepFieldDef>, Vec<ArtifactKind>) {
+    if !stage.supports_sub_machine() {
+        return (Vec::new(), Vec::new());
+    }
+    let (raw_fields, kinds) = match sub_stage {
+        Some(sub) => (&sub.record_fields, &sub.required_artifact_kinds),
+        None => (&stage.record_fields, &stage.required_artifact_kinds),
+    };
+    let fields = if raw_fields.is_empty() {
+        default_step_fields()
+    } else {
+        raw_fields.clone()
+    };
+    (fields, kinds.clone())
+}
+
+pub fn require_step_record(
+    job: &Job,
+    district_id: &DistrictId,
+    stage: &StageDef,
+    sub_stage: Option<&SubStageDef>,
+    fields: &BTreeMap<String, String>,
+    artifact_ids: &[ArtifactId],
+) -> Result<(), TransitionError> {
+    for aid in artifact_ids {
+        if !job.artifacts.iter().any(|a| &a.id == aid) {
+            return Err(TransitionError::InvalidInput {
+                field: "artifact_ids".into(),
+                reason: format!("unknown artifact id '{aid}' on job {}", job.id),
+            });
+        }
+    }
+
+    let (required_fields, required_artifact_kinds) = resolve_step_contract(stage, sub_stage);
+    let mut missing_fields = Vec::new();
+    for def in &required_fields {
+        if !def.required {
+            continue;
+        }
+        let present = fields
+            .get(&def.key)
+            .is_some_and(|v| !v.trim().is_empty());
+        if !present {
+            missing_fields.push(def.key.clone());
+        }
+    }
+
+    let missing_artifact_kinds = if required_artifact_kinds.is_empty() {
+        Vec::new()
+    } else {
+        let satisfied = job.artifacts.iter().any(|art| {
+            art.produced_at_stage.as_ref() == Some(&stage.id)
+                && required_artifact_kinds.contains(&art.kind)
+        });
+        if satisfied {
+            Vec::new()
+        } else {
+            required_artifact_kinds
+        }
+    };
+
+    if !missing_fields.is_empty() || !missing_artifact_kinds.is_empty() {
+        return Err(TransitionError::StepRecordIncomplete {
+            job_id: job.id.clone(),
+            district_id: district_id.clone(),
+            stage_id: stage.id.clone(),
+            sub_stage_id: sub_stage.map(|s| s.id.clone()),
+            missing_fields,
+            missing_artifact_kinds,
+        });
+    }
+
     Ok(())
 }
 

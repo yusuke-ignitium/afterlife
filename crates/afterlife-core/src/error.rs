@@ -2,9 +2,12 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{
-    DistrictId, FencingToken, JobId, OwnerId, PhilosophyVersion, ProposalId, SpecVersion, StageId,
-    SubMachineTemplateId,
+use crate::{
+    ids::{
+        DistrictId, FencingToken, JobId, OwnerId, PhilosophyVersion, ProposalId, SpecVersion,
+        StageId, SubMachineTemplateId, SubStageId,
+    },
+    model::ArtifactKind,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +18,9 @@ pub enum TransitionError {
         actual: OwnerId,
     },
     HumanApprovalRequired {
+        action: String,
+    },
+    AgentExecutionRequired {
         action: String,
     },
     JobNotFound(JobId),
@@ -95,6 +101,14 @@ pub enum TransitionError {
         stage_id: StageId,
         missing_checks: Vec<String>,
     },
+    StepRecordIncomplete {
+        job_id: JobId,
+        district_id: DistrictId,
+        stage_id: StageId,
+        sub_stage_id: Option<SubStageId>,
+        missing_fields: Vec<String>,
+        missing_artifact_kinds: Vec<ArtifactKind>,
+    },
 }
 
 impl TransitionError {
@@ -102,6 +116,7 @@ impl TransitionError {
         match self {
             Self::OwnerMismatch { .. } => "owner_mismatch",
             Self::HumanApprovalRequired { .. } => "human_approval_required",
+            Self::AgentExecutionRequired { .. } => "agent_execution_required",
             Self::JobNotFound(_) => "job_not_found",
             Self::DistrictNotFound(_) => "district_not_found",
             Self::StageNotFound { .. } => "stage_not_found",
@@ -125,6 +140,7 @@ impl TransitionError {
             Self::InvalidInput { .. } => "invalid_input",
             Self::JobAlreadyInDistrict { .. } => "job_already_in_district",
             Self::GateVerificationRequired { .. } => "gate_verification_required",
+            Self::StepRecordIncomplete { .. } => "step_record_incomplete",
         }
     }
 }
@@ -140,6 +156,9 @@ impl fmt::Display for TransitionError {
             }
             Self::HumanApprovalRequired { action } => {
                 write!(f, "human approval required for action: {action}")
+            }
+            Self::AgentExecutionRequired { action } => {
+                write!(f, "agent execution required for action: {action}")
             }
             Self::JobNotFound(id) => write!(f, "job not found: {id}"),
             Self::DistrictNotFound(id) => write!(f, "district not found: {id}"),
@@ -255,6 +274,38 @@ impl fmt::Display for TransitionError {
                     )
                 }
             }
+            Self::StepRecordIncomplete {
+                job_id,
+                district_id,
+                stage_id,
+                sub_stage_id,
+                missing_fields,
+                missing_artifact_kinds,
+            } => {
+                let loc = match sub_stage_id {
+                    Some(sub) => format!("{district_id}/{stage_id}/{sub}"),
+                    None => format!("{district_id}/{stage_id}"),
+                };
+                let mut parts = Vec::new();
+                if !missing_fields.is_empty() {
+                    parts.push(format!("missing fields: {}", missing_fields.join(", ")));
+                }
+                if !missing_artifact_kinds.is_empty() {
+                    let kinds: Vec<String> = missing_artifact_kinds
+                        .iter()
+                        .map(|k| format!("{k:?}"))
+                        .collect();
+                    parts.push(format!(
+                        "missing artifact of kind (any of): {}",
+                        kinds.join(", ")
+                    ));
+                }
+                write!(
+                    f,
+                    "step record incomplete for {job_id} at {loc}; {}",
+                    parts.join("; ")
+                )
+            }
         }
     }
 }
@@ -293,6 +344,13 @@ pub enum ValidationError {
     TerminalStageHasOutgoing {
         district_id: DistrictId,
         stage_id: StageId,
+    },
+    EmptyStepFieldKey {
+        scope: String,
+    },
+    DuplicateStepFieldKey {
+        scope: String,
+        key: String,
     },
 }
 

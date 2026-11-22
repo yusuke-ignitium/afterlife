@@ -3,8 +3,27 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     error::ValidationError,
     ids::{DistrictId, StageId, SubMachineTemplateId},
-    model::{District, StageDef, StageKind, SubMachineTemplate},
+    model::{District, StageDef, StageKind, StepFieldDef, SubMachineTemplate},
 };
+
+fn validate_step_fields(scope: String, fields: &[StepFieldDef], errors: &mut Vec<ValidationError>) {
+    let mut seen = HashSet::new();
+    for field in fields {
+        let key = field.key.trim();
+        if key.is_empty() {
+            errors.push(ValidationError::EmptyStepFieldKey {
+                scope: scope.clone(),
+            });
+            continue;
+        }
+        if !seen.insert(key.to_string()) {
+            errors.push(ValidationError::DuplicateStepFieldKey {
+                scope: scope.clone(),
+                key: key.to_string(),
+            });
+        }
+    }
+}
 
 pub fn validate_stages(
     district_id: &DistrictId,
@@ -70,6 +89,12 @@ pub fn validate_stages(
                 });
             }
         }
+
+        validate_step_fields(
+            format!("{district_id}/{}", stage.id),
+            &stage.record_fields,
+            &mut errors,
+        );
     }
 
     errors
@@ -84,6 +109,13 @@ pub fn validate_workspace(
     for (tid, tmpl) in templates {
         if tmpl.stages.is_empty() {
             errors.push(ValidationError::EmptySubTemplate(tid.clone()));
+        }
+        for sub in &tmpl.stages {
+            validate_step_fields(
+                format!("{tid}/{}", sub.id),
+                &sub.record_fields,
+                &mut errors,
+            );
         }
     }
 

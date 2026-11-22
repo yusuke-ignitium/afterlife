@@ -15,12 +15,14 @@ pub use model::{
     Actor, Artifact, ArtifactKind, District, ExecutionContext, Feedback, FeedbackKind, GateRubric,
     GateVerdict, GateVerification, InlineLink, Job, JobEvent, JobLease, JobLocation,
     ParsedInlineText, Philosophy, PhilosophyProposal, Principle, ProcedureSpec, ProposalStatus,
-    RunnerKind, SpecProposal, StageDef, StageKind, SubMachineTemplate, SubStageDef,
-    is_openable_url, parse_inline_links,
+    RunnerKind, SpecProposal, StageDef, StageKind, StepFieldDef, StepRecord, StepRecordOutcome,
+    SubMachineTemplate, SubStageDef, default_step_fields, is_openable_url, parse_inline_links,
 };
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn agent_actor(owner: &OwnerId, name: &str) -> Actor {
@@ -50,14 +52,118 @@ mod tests {
         job_id
     }
 
+    fn build_required_fields(ctx: &ExecutionContext) -> BTreeMap<String, String> {
+        ctx.required_step_fields
+            .iter()
+            .map(|f| (f.key.clone(), format!("Recorded {} for {}", f.key, ctx.stage.id)))
+            .collect()
+    }
+
+    fn advance_one_step_as_agent(
+        engine: &mut AfterlifeEngine,
+        job_id: &JobId,
+        agent: &Actor,
+        at: TimestampMs,
+    ) {
+        let ctx = engine.compile_execution_context(job_id).unwrap();
+        let claim_ev = engine
+            .apply(
+                agent,
+                EngineCommand::ClaimJob {
+                    job_id: job_id.clone(),
+                    runner_id: RunnerId::from("test-agent"),
+                    runner_label: "Test Agent".into(),
+                    ttl_ms: 60_000,
+                    expected_revision: None,
+                    at,
+                },
+            )
+            .unwrap();
+        let token = match &claim_ev[0] {
+            JobEvent::JobClaimed { fencing_token, .. } => *fencing_token,
+            _ => unreachable!(),
+        };
+
+        let mut attached_ids = Vec::new();
+        if let Some(&kind) = ctx.required_artifact_kinds.first() {
+            let art_ev = engine
+                .apply(
+                    agent,
+                    EngineCommand::AttachArtifact {
+                        job_id: job_id.clone(),
+                        kind,
+                        label: format!("{}-evidence.json", ctx.stage.id),
+                        uri: format!("https://example.com/{}/evidence.json", ctx.stage.id),
+                        sha256: None,
+                        fencing_token: Some(token),
+                        at: at + 1,
+                    },
+                )
+                .unwrap();
+            if let JobEvent::ArtifactAttached { artifact_id, .. } = &art_ev[0] {
+                attached_ids.push(artifact_id.clone());
+            }
+        }
+
+        let fields = build_required_fields(&ctx);
+        let res = engine.apply(
+            agent,
+            EngineCommand::AdvanceJob {
+                job_id: job_id.clone(),
+                fields: fields.clone(),
+                artifact_ids: attached_ids.clone(),
+                expected_revision: None,
+                fencing_token: Some(token),
+                at: at + 2,
+            },
+        );
+        if let Err(TransitionError::GateVerificationRequired { .. }) = res {
+            let checks = ctx
+                .stage
+                .gate_rubric
+                .as_ref()
+                .map(|r| r.checks.iter().map(|c| (c.clone(), true)).collect())
+                .unwrap_or_default();
+            engine
+                .apply(
+                    agent,
+                    EngineCommand::RecordGateVerification {
+                        job_id: job_id.clone(),
+                        verdict: GateVerdict::Pass,
+                        summary: format!("Verified {}", ctx.stage.id),
+                        checklist_results: checks,
+                        fencing_token: Some(token),
+                        at: at + 3,
+                    },
+                )
+                .unwrap();
+            engine
+                .apply(
+                    agent,
+                    EngineCommand::AdvanceJob {
+                        job_id: job_id.clone(),
+                        fields,
+                        artifact_ids: attached_ids,
+                        expected_revision: None,
+                        fencing_token: Some(token),
+                        at: at + 4,
+                    },
+                )
+                .unwrap();
+        } else {
+            res.unwrap();
+        }
+    }
+
     fn seed_job_at_approval_gate(engine: &mut AfterlifeEngine, title: &str) -> JobId {
         let job_id = seed_job_in_district(engine, title);
-        for _ in 0..32 {
+        let agent = agent_actor(&engine.owner_id, "seed-runner");
+        for step in 0..32u64 {
             let job = engine.find_job(&job_id).unwrap();
             if engine.is_job_at_approval_gate(job) {
                 return job_id;
             }
-            engine.advance_job(&job_id).unwrap();
+            advance_one_step_as_agent(engine, &job_id, &agent, 1_763_600_100_000 + step * 100);
         }
         panic!("job {job_id} did not reach approval gate");
     }
@@ -111,7 +217,9 @@ mod tests {
     #[test]
     fn advance_steps_through_sub_machine_before_parent_stage() {
         let mut engine = AfterlifeEngine::new();
+        let agent = agent_actor(&engine.owner_id, "step-runner");
         let job_id = seed_job_in_district(&mut engine, "Sub-stage stepping test");
+        let mut ts = 1_763_600_200_000u64;
 
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
@@ -122,7 +230,8 @@ mod tests {
             }
         );
 
-        engine.advance_job(&job_id).unwrap();
+        advance_one_step_as_agent(&mut engine, &job_id, &agent, ts);
+        ts += 100;
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
@@ -132,7 +241,8 @@ mod tests {
             }
         );
 
-        engine.advance_job(&job_id).unwrap();
+        advance_one_step_as_agent(&mut engine, &job_id, &agent, ts);
+        ts += 100;
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
@@ -142,7 +252,8 @@ mod tests {
             }
         );
 
-        engine.advance_job(&job_id).unwrap();
+        advance_one_step_as_agent(&mut engine, &job_id, &agent, ts);
+        ts += 100;
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
@@ -152,7 +263,8 @@ mod tests {
             }
         );
 
-        engine.advance_job(&job_id).unwrap();
+        advance_one_step_as_agent(&mut engine, &job_id, &agent, ts);
+        ts += 100;
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
@@ -162,7 +274,8 @@ mod tests {
             }
         );
 
-        engine.advance_job(&job_id).unwrap();
+        advance_one_step_as_agent(&mut engine, &job_id, &agent, ts);
+        ts += 100;
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
@@ -173,7 +286,8 @@ mod tests {
         );
 
         for _ in 0..7 {
-            engine.advance_job(&job_id).unwrap();
+            advance_one_step_as_agent(&mut engine, &job_id, &agent, ts);
+            ts += 100;
         }
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
@@ -183,8 +297,11 @@ mod tests {
                 sub_stage_id: None,
             }
         );
+        assert_eq!(engine.find_job(&job_id).unwrap().step_records.len(), 12);
 
-        engine.advance_job(&job_id).unwrap();
+        engine
+            .approve_job(&job_id, Some("Verified all evidence and diffs".into()))
+            .unwrap();
         assert!(matches!(
             engine.find_job(&job_id).unwrap().location,
             JobLocation::Completed {
@@ -192,10 +309,173 @@ mod tests {
                 ..
             } if terminal_stage_id == &StageId::from("shipped")
         ));
+        assert_eq!(engine.find_job(&job_id).unwrap().step_records.len(), 13);
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().step_records.last().unwrap().outcome,
+            StepRecordOutcome::Approved
+        );
 
         assert!(matches!(
-            engine.advance_job(&job_id),
+            engine.approve_job(&job_id, None),
             Err(TransitionError::InvalidLocation { .. })
+        ));
+    }
+
+    #[test]
+    fn human_cannot_advance_work_stage_and_step_contract_is_enforced() {
+        let mut engine = AfterlifeEngine::new();
+        let human = engine.local_actor();
+        let agent = agent_actor(&engine.owner_id, "contract-runner");
+        let job_id = seed_job_in_district(&mut engine, "Step contract test");
+
+        let human_adv = engine
+            .apply(
+                &human,
+                EngineCommand::AdvanceJob {
+                    job_id: job_id.clone(),
+                    fields: BTreeMap::new(),
+                    artifact_ids: Vec::new(),
+                    expected_revision: None,
+                    fencing_token: None,
+                    at: 1_900_000_000_000,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            human_adv,
+            TransitionError::AgentExecutionRequired { .. }
+        ));
+
+        let human_approve_work = engine.approve_job(&job_id, None).unwrap_err();
+        assert!(matches!(
+            human_approve_work,
+            TransitionError::InvalidLocation { .. }
+        ));
+
+        let claim = engine
+            .apply(
+                &agent,
+                EngineCommand::ClaimJob {
+                    job_id: job_id.clone(),
+                    runner_id: RunnerId::from("contract-runner"),
+                    runner_label: "Contract Runner".into(),
+                    ttl_ms: 60_000,
+                    expected_revision: None,
+                    at: 1_900_000_001_000,
+                },
+            )
+            .unwrap();
+        let tok = match &claim[0] {
+            JobEvent::JobClaimed { fencing_token, .. } => *fencing_token,
+            _ => unreachable!(),
+        };
+
+        let missing_err = engine
+            .apply(
+                &agent,
+                EngineCommand::AdvanceJob {
+                    job_id: job_id.clone(),
+                    fields: BTreeMap::from([("sources_read".into(), "   ".into())]),
+                    artifact_ids: Vec::new(),
+                    expected_revision: None,
+                    fencing_token: Some(tok),
+                    at: 1_900_000_002_000,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            missing_err,
+            TransitionError::StepRecordIncomplete {
+                ref missing_fields,
+                ref missing_artifact_kinds,
+                ..
+            } if missing_fields.contains(&"sources_read".to_string())
+                && missing_fields.contains(&"findings".to_string())
+                && missing_artifact_kinds.is_empty()
+        ));
+
+        engine
+            .apply(
+                &agent,
+                EngineCommand::AdvanceJob {
+                    job_id: job_id.clone(),
+                    fields: BTreeMap::from([
+                        ("sources_read".into(), "crates/afterlife-core/src/engine/mod.rs".into()),
+                        ("findings".into(), "Sub-stages require deterministic records".into()),
+                    ]),
+                    artifact_ids: Vec::new(),
+                    expected_revision: None,
+                    fencing_token: Some(tok),
+                    at: 1_900_000_003_000,
+                },
+            )
+            .unwrap();
+
+        let next_ctx = engine.compile_execution_context(&job_id).unwrap();
+        assert_eq!(next_ctx.step_records.len(), 1);
+        assert_eq!(
+            next_ctx.step_records[0].sub_stage_id,
+            Some(SubStageId::from("trace_sources"))
+        );
+        assert_eq!(
+            next_ctx.step_records[0].fields.get("findings").map(String::as_str),
+            Some("Sub-stages require deterministic records")
+        );
+
+        for step in 0..3u64 {
+            advance_one_step_as_agent(&mut engine, &job_id, &agent, 1_900_000_010_000 + step * 100);
+        }
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().location,
+            JobLocation::InDistrict {
+                district_id: DistrictId::from("DIST-001"),
+                stage_id: StageId::from("baseline_guard"),
+                sub_stage_id: Some(SubStageId::from("capture_baseline")),
+            }
+        );
+
+        let claim2 = engine
+            .apply(
+                &agent,
+                EngineCommand::ClaimJob {
+                    job_id: job_id.clone(),
+                    runner_id: RunnerId::from("contract-runner"),
+                    runner_label: "Contract Runner".into(),
+                    ttl_ms: 60_000,
+                    expected_revision: None,
+                    at: 1_900_000_020_000,
+                },
+            )
+            .unwrap();
+        let tok2 = match &claim2[0] {
+            JobEvent::JobClaimed { fencing_token, .. } => *fencing_token,
+            _ => unreachable!(),
+        };
+
+        let no_art_err = engine
+            .apply(
+                &agent,
+                EngineCommand::AdvanceJob {
+                    job_id: job_id.clone(),
+                    fields: BTreeMap::from([
+                        ("baseline_metrics".into(), "p95=12ms".into()),
+                        ("conditions".into(), "cold run, 100 iterations".into()),
+                    ]),
+                    artifact_ids: Vec::new(),
+                    expected_revision: None,
+                    fencing_token: Some(tok2),
+                    at: 1_900_000_021_000,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            no_art_err,
+            TransitionError::StepRecordIncomplete {
+                ref missing_fields,
+                ref missing_artifact_kinds,
+                ..
+            } if missing_fields.is_empty()
+                && missing_artifact_kinds.contains(&ArtifactKind::Snapshot)
         ));
     }
 
@@ -243,7 +523,9 @@ mod tests {
             .apply(
                 &agent,
                 EngineCommand::AdvanceJob {
-                    job_id,
+                    job_id: job_id.clone(),
+                    fields: BTreeMap::new(),
+                    artifact_ids: Vec::new(),
                     expected_revision: None,
                     fencing_token: None,
                     at: 2_000_000_010_000,
@@ -251,6 +533,22 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, TransitionError::HumanApprovalRequired { .. }));
+
+        let approve_err = engine
+            .apply(
+                &agent,
+                EngineCommand::ApproveJob {
+                    job_id,
+                    note: None,
+                    expected_revision: None,
+                    at: 2_000_000_011_000,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            approve_err,
+            TransitionError::HumanApprovalRequired { .. }
+        ));
     }
 
     #[test]
@@ -259,8 +557,8 @@ mod tests {
         let agent_a = agent_actor(&engine.owner_id, "claude");
         let agent_b = agent_actor(&engine.owner_id, "codex");
         let job_id = seed_job_in_district(&mut engine, "Lease fencing job");
-        engine.advance_job(&job_id).unwrap();
-        engine.advance_job(&job_id).unwrap();
+        advance_one_step_as_agent(&mut engine, &job_id, &agent_a, 1_999_000_000_000);
+        advance_one_step_as_agent(&mut engine, &job_id, &agent_a, 1_999_000_001_000);
 
         let t0 = 2_000_000_000_000;
         let ev_a = engine
@@ -335,11 +633,15 @@ mod tests {
             if provided == token_a && current == token_b
         ));
 
+        let exit_fields = build_required_fields(&engine.compile_execution_context(&job_id).unwrap());
+
         let gate_err = engine
             .apply(
                 &agent_b,
                 EngineCommand::AdvanceJob {
                     job_id: job_id.clone(),
+                    fields: exit_fields.clone(),
+                    artifact_ids: Vec::new(),
                     expected_revision: None,
                     fencing_token: Some(token_b),
                     at: t0 + 20_000,
@@ -379,6 +681,8 @@ mod tests {
                 &agent_b,
                 EngineCommand::AdvanceJob {
                     job_id,
+                    fields: exit_fields,
+                    artifact_ids: Vec::new(),
                     expected_revision: None,
                     fencing_token: Some(token_b),
                     at: t0 + 21_000,
@@ -501,10 +805,10 @@ mod tests {
         let err = engine
             .apply(
                 &actor,
-                EngineCommand::AdvanceJob {
+                EngineCommand::ApproveJob {
                     job_id,
+                    note: None,
                     expected_revision: Some(stale_rev),
-                    fencing_token: None,
                     at: 1000,
                 },
             )

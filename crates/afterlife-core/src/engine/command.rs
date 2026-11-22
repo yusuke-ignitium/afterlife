@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ids::{
-        DistrictId, FeedbackId, FencingToken, JobId, PhilosophyVersion, ProposalId, RunnerId,
-        SpecVersion, StageId, SubMachineTemplateId, TimestampMs,
+        ArtifactId, DistrictId, FeedbackId, FencingToken, JobId, PhilosophyVersion, ProposalId,
+        RunnerId, SpecVersion, StageId, SubMachineTemplateId, TimestampMs,
     },
     model::{
         district::StageDef,
@@ -70,8 +72,18 @@ pub enum EngineCommand {
     },
     AdvanceJob {
         job_id: JobId,
+        #[serde(default)]
+        fields: BTreeMap<String, String>,
+        #[serde(default)]
+        artifact_ids: Vec<ArtifactId>,
         expected_revision: Option<u64>,
         fencing_token: Option<FencingToken>,
+        at: TimestampMs,
+    },
+    ApproveJob {
+        job_id: JobId,
+        note: Option<String>,
+        expected_revision: Option<u64>,
         at: TimestampMs,
     },
     ReworkJob {
