@@ -49,6 +49,9 @@ fn event_type_name(ev: &JobEvent) -> &'static str {
         JobEvent::SpecProposed { .. } => "spec_proposed",
         JobEvent::SpecUpdated { .. } => "spec_updated",
         JobEvent::StageSubTemplateChanged { .. } => "stage_sub_template_changed",
+        JobEvent::TemplateProposed { .. } => "template_proposed",
+        JobEvent::TemplateUpdated { .. } => "template_updated",
+        JobEvent::BuiltinTemplatesSynced { .. } => "builtin_templates_synced",
     }
 }
 

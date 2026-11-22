@@ -173,6 +173,27 @@ pub enum JobEvent {
         template_id: Option<SubMachineTemplateId>,
         at: TimestampMs,
     },
+    TemplateProposed {
+        owner_id: OwnerId,
+        actor: Actor,
+        proposal_id: ProposalId,
+        template_id: SubMachineTemplateId,
+        at: TimestampMs,
+    },
+    TemplateUpdated {
+        owner_id: OwnerId,
+        actor: Actor,
+        proposal_id: ProposalId,
+        template_id: SubMachineTemplateId,
+        at: TimestampMs,
+    },
+    BuiltinTemplatesSynced {
+        owner_id: OwnerId,
+        actor: Actor,
+        synced_template_ids: Vec<SubMachineTemplateId>,
+        skipped_template_ids: Vec<SubMachineTemplateId>,
+        at: TimestampMs,
+    },
 }
 
 impl JobEvent {
@@ -194,7 +215,10 @@ impl JobEvent {
             | Self::PhilosophyUpdated { owner_id, .. }
             | Self::SpecProposed { owner_id, .. }
             | Self::SpecUpdated { owner_id, .. }
-            | Self::StageSubTemplateChanged { owner_id, .. } => owner_id,
+            | Self::StageSubTemplateChanged { owner_id, .. }
+            | Self::TemplateProposed { owner_id, .. }
+            | Self::TemplateUpdated { owner_id, .. }
+            | Self::BuiltinTemplatesSynced { owner_id, .. } => owner_id,
         }
     }
 
@@ -216,7 +240,10 @@ impl JobEvent {
             | Self::PhilosophyUpdated { at, .. }
             | Self::SpecProposed { at, .. }
             | Self::SpecUpdated { at, .. }
-            | Self::StageSubTemplateChanged { at, .. } => *at,
+            | Self::StageSubTemplateChanged { at, .. }
+            | Self::TemplateProposed { at, .. }
+            | Self::TemplateUpdated { at, .. }
+            | Self::BuiltinTemplatesSynced { at, .. } => *at,
         }
     }
 }

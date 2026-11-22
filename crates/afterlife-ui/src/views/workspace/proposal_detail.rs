@@ -14,6 +14,7 @@ use crate::{
     components::controls::chip_btn,
     views::{
         root::{AfterlifeApp, DetailResizeDrag},
+        templates_view::render_template_proposal_body,
         workspace::proposals_list::{
             DiffMark, classify_principle_diff, classify_stage_diff, removed_stage_ids,
         },
@@ -306,11 +307,17 @@ pub(super) fn render_proposal_detail_sheet(
         .spec_proposals
         .iter()
         .find(|pr| pr.id == proposal_id);
+    let tmpl_prop = st
+        .engine
+        .template_proposals
+        .iter()
+        .find(|pr| pr.id == proposal_id);
 
-    let (district_id, kind_label, version_str, rationale, fb_ids, rename, body_el) =
+    let (scope_label, scope_val, kind_label, version_str, rationale, fb_ids, rename, body_el) =
         if let Some(pr) = phil_prop {
             (
-                pr.district_id.clone(),
+                "District",
+                pr.district_id.to_string(),
                 "Philosophy",
                 format!("Φ v{} → v{}", pr.base_version.0, pr.proposed.version.0),
                 pr.rationale.clone(),
@@ -320,7 +327,8 @@ pub(super) fn render_proposal_detail_sheet(
             )
         } else if let Some(pr) = spec_prop {
             (
-                pr.district_id.clone(),
+                "District",
+                pr.district_id.to_string(),
                 "ProcedureSpec",
                 format!("S v{} → v{}", pr.base_version.0, pr.proposed.version.0),
                 pr.rationale.clone(),
@@ -328,15 +336,31 @@ pub(super) fn render_proposal_detail_sheet(
                 pr.proposed_district_name.clone(),
                 render_spec_body(st, pr),
             )
+        } else if let Some(pr) = tmpl_prop {
+            let status_label = if st.engine.templates.contains_key(&pr.template_id) {
+                "Update Existing"
+            } else {
+                "New Template"
+            };
+            (
+                "Template",
+                pr.template_id.to_string(),
+                "Sub-Machine Template",
+                status_label.to_string(),
+                pr.rationale.clone(),
+                pr.source_feedback_ids.clone(),
+                None,
+                render_template_proposal_body(st, pr),
+            )
         } else {
             return None;
         };
 
     let current_district_name = st
         .engine
-        .find_district(&district_id)
+        .find_district(&afterlife_core::DistrictId::from(scope_val.as_str()))
         .map(|d| d.name.clone())
-        .unwrap_or_else(|| district_id.to_string());
+        .unwrap_or_else(|| scope_val.clone());
     let card_border = if is_resizing_detail {
         with_alpha(p.accent, 0.58)
     } else {
@@ -489,7 +513,7 @@ pub(super) fn render_proposal_detail_sheet(
                             .flex()
                             .flex_col()
                             .gap(SpacePx::S4.px())
-                            .child(meta_row(st, "District", district_id.to_string()))
+                            .child(meta_row(st, scope_label, scope_val))
                             .child(meta_row(st, "Kind", kind_label.to_string()))
                             .child(meta_row(st, "Version", version_str))
                             .when(!fb_ids.is_empty(), |d| {

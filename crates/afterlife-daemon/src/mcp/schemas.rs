@@ -271,6 +271,30 @@ pub fn mcp_tool_definitions() -> Value {
                 },
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "templates_list",
+            "description": "List Sub-Machine Templates, outdated legacy built-in template IDs eligible for human sync, and pending template proposals.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        },
+        {
+            "name": "template_propose",
+            "description": "Propose an update to an existing Sub-Machine Template or propose a new Sub-Machine Template (requires human sign-off to activate).",
+            "inputSchema": {
+                "type": "object",
+                "required": ["template_id", "name", "description", "stages", "rationale"],
+                "properties": {
+                    "command_id": { "type": "string" },
+                    "template_id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "philosophy_notes": { "type": "string" },
+                    "stages": { "type": "array" },
+                    "rationale": { "type": "string" },
+                    "source_feedback_ids": { "type": "array", "items": { "type": "string" } }
+                },
+                "additionalProperties": false
+            }
         }
     ])
 }

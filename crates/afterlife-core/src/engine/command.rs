@@ -12,6 +12,7 @@ use crate::{
         feedback::{FeedbackKind, GateVerdict},
         job::ArtifactKind,
         philosophy::Principle,
+        sub_machine::SubStageDef,
     },
 };
 
@@ -154,6 +155,26 @@ pub enum EngineCommand {
         district_id: DistrictId,
         stage_id: StageId,
         template_id: Option<SubMachineTemplateId>,
+        at: TimestampMs,
+    },
+    ProposeTemplateUpdate {
+        template_id: SubMachineTemplateId,
+        name: String,
+        description: String,
+        philosophy_notes: String,
+        stages: Vec<SubStageDef>,
+        rationale: String,
+        #[serde(default)]
+        source_feedback_ids: Vec<FeedbackId>,
+        at: TimestampMs,
+    },
+    ApproveTemplateProposal {
+        proposal_id: ProposalId,
+        at: TimestampMs,
+    },
+    SyncBuiltinTemplates {
+        #[serde(default)]
+        template_ids: Option<Vec<SubMachineTemplateId>>,
         at: TimestampMs,
     },
 }

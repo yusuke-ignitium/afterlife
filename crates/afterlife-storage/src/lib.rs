@@ -551,4 +551,69 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn legacy_workspace_without_template_proposals_and_with_japanese_templates_loads_cleanly() {
+        let dir = temp_path("legacy_template_compat");
+        let db_path = dir.join("afterlife.db");
+        let owner = OwnerId::from("tmpl-compat-owner");
+
+        let store = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let _ = store.load_workspace(&owner).unwrap();
+        drop(store);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let state_json: String = conn
+            .query_row(
+                "SELECT state_json FROM workspaces WHERE owner_id = ?1",
+                rusqlite::params![owner.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut parsed: serde_json::Value = serde_json::from_str(&state_json).unwrap();
+        if let Some(obj) = parsed.as_object_mut() {
+            obj.remove("template_proposals");
+        }
+        parsed["templates"]["tmpl-evidence"]["description"] = serde_json::json!(
+            "一次仕様・既存実装トレースから隔離環境での実機検証、判断基準と前提の確定まで"
+        );
+        parsed["templates"]["tmpl-custom-jp"] = serde_json::json!({
+            "id": "tmpl-custom-jp",
+            "name": "Custom JP",
+            "description": "ユーザー独自のカスタムテンプレート",
+            "philosophy_notes": "絶対に自動上書きされないこと",
+            "stages": [{
+                "id": "check",
+                "label": "Check",
+                "runner": "AI Agent",
+                "runner_kind": "Ai",
+                "procedure": "独自手順",
+                "gate_checks": ["独自チェック"],
+                "record_fields": [],
+                "required_artifact_kinds": []
+            }]
+        });
+        parsed["template_order"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("tmpl-custom-jp"));
+        conn.execute(
+            "UPDATE workspaces SET state_json = ?1 WHERE owner_id = ?2",
+            rusqlite::params![serde_json::to_string(&parsed).unwrap(), owner.as_str()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let reopened = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let snap = reopened.load_workspace(&owner).unwrap();
+        let ev_id = afterlife_core::SubMachineTemplateId::from("tmpl-evidence");
+        let custom_id = afterlife_core::SubMachineTemplateId::from("tmpl-custom-jp");
+        assert!(snap.engine.templates.contains_key(&ev_id));
+        assert_eq!(
+            snap.engine.templates[&custom_id].description,
+            "ユーザー独自のカスタムテンプレート"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -77,7 +77,7 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        assert_eq!(server_tool_names.len(), 17);
+        assert_eq!(server_tool_names.len(), 19);
 
         let (ok, toolmap) = run_cli(&url_clone, &["toolmap"]);
         assert!(ok, "toolmap failed: {toolmap}");

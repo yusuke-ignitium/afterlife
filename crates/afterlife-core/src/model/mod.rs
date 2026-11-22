@@ -28,4 +28,4 @@ pub use step::{
     STEP_FIELD_REASON_LABEL, StepFieldDef, StepRecord, StepRecordOutcome,
     builtin_step_field_label, default_step_fields,
 };
-pub use sub_machine::{SubMachineTemplate, SubStageDef};
+pub use sub_machine::{SubMachineTemplate, SubStageDef, TemplateProposal};

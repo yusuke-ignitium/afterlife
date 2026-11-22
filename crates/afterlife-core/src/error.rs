@@ -86,6 +86,10 @@ pub enum TransitionError {
         district_id: DistrictId,
         reasons: Vec<String>,
     },
+    InvalidProposedTemplate {
+        template_id: SubMachineTemplateId,
+        reasons: Vec<String>,
+    },
     InvalidInput {
         field: String,
         reason: String,
@@ -137,6 +141,7 @@ impl TransitionError {
             Self::PhilosophyVersionConflict { .. } => "philosophy_version_conflict",
             Self::SpecVersionConflict { .. } => "spec_version_conflict",
             Self::InvalidProposedSpec { .. } => "invalid_proposed_spec",
+            Self::InvalidProposedTemplate { .. } => "invalid_proposed_template",
             Self::InvalidInput { .. } => "invalid_input",
             Self::JobAlreadyInDistrict { .. } => "job_already_in_district",
             Self::GateVerificationRequired { .. } => "gate_verification_required",
@@ -244,6 +249,14 @@ impl fmt::Display for TransitionError {
                 "invalid proposed spec for {district_id}: {}",
                 reasons.join("; ")
             ),
+            Self::InvalidProposedTemplate {
+                template_id,
+                reasons,
+            } => write!(
+                f,
+                "invalid proposed template for {template_id}: {}",
+                reasons.join("; ")
+            ),
             Self::InvalidInput { field, reason } => {
                 write!(f, "invalid input for '{field}': {reason}")
             }
@@ -337,6 +350,15 @@ pub enum ValidationError {
         template_id: SubMachineTemplateId,
     },
     EmptySubTemplate(SubMachineTemplateId),
+    DuplicateSubStageId {
+        template_id: SubMachineTemplateId,
+        sub_stage_id: SubStageId,
+    },
+    EmptySubStageField {
+        template_id: SubMachineTemplateId,
+        sub_stage_id: SubStageId,
+        field: String,
+    },
     SubTemplateOnNonWorkStage {
         district_id: DistrictId,
         stage_id: StageId,

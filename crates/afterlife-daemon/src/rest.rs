@@ -30,8 +30,10 @@ pub fn authorize_command(
         EngineCommand::QueueJob { .. } => Scope::JobsCreate,
         EngineCommand::ApproveJob { .. }
         | EngineCommand::ApprovePhilosophyProposal { .. }
-        | EngineCommand::ApproveSpecProposal { .. } => Scope::ApprovalsDecide,
-        EngineCommand::SetStageSubTemplate { .. } => Scope::DistrictsAdmin,
+        | EngineCommand::ApproveSpecProposal { .. }
+        | EngineCommand::ApproveTemplateProposal { .. } => Scope::ApprovalsDecide,
+        EngineCommand::SetStageSubTemplate { .. }
+        | EngineCommand::SyncBuiltinTemplates { .. } => Scope::DistrictsAdmin,
         _ => Scope::JobsWork,
     };
     if !principal.scopes.contains(&required) {
@@ -97,6 +99,7 @@ pub fn transition_error_to_dispatch(te: afterlife_core::TransitionError) -> Disp
         afterlife_core::TransitionError::JobNotFound(_)
         | afterlife_core::TransitionError::DistrictNotFound(_)
         | afterlife_core::TransitionError::StageNotFound { .. }
+        | afterlife_core::TransitionError::TemplateNotFound(_)
         | afterlife_core::TransitionError::ProposalNotFound(_) => StatusCode::NOT_FOUND,
         afterlife_core::TransitionError::RevisionConflict { .. }
         | afterlife_core::TransitionError::AlreadyLeased { .. }

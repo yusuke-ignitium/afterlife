@@ -1,5 +1,5 @@
 use afterlife_core::{
-    AfterlifeEngine, DistrictId, Principle, ProposalId, StageDef, TimestampMs,
+    AfterlifeEngine, Principle, ProposalId, StageDef, SubStageDef, TimestampMs,
 };
 use afterlife_design::{
     EdgeAccent, FontPx, GlassSurface, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha,
@@ -19,13 +19,13 @@ use crate::{
 pub enum ProposalKindTag {
     Philosophy,
     Spec,
+    Template,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingProposalCard {
     pub id: ProposalId,
-    pub district_id: DistrictId,
-    pub district_name: String,
+    pub scope_id: String,
     pub kind: ProposalKindTag,
     pub version_label: String,
     pub summary_line: String,
@@ -53,14 +53,9 @@ impl DiffMark {
 pub fn collect_pending_proposals(engine: &AfterlifeEngine) -> Vec<PendingProposalCard> {
     let mut items = Vec::new();
     for p in engine.pending_philosophy_proposals() {
-        let district_name = engine
-            .find_district(&p.district_id)
-            .map(|d| d.name.clone())
-            .unwrap_or_else(|| p.district_id.to_string());
         items.push(PendingProposalCard {
             id: p.id.clone(),
-            district_id: p.district_id.clone(),
-            district_name,
+            scope_id: p.district_id.to_string(),
             kind: ProposalKindTag::Philosophy,
             version_label: format!("Φ v{} → v{}", p.base_version.0, p.proposed.version.0),
             summary_line: p.rationale.clone(),
@@ -69,18 +64,29 @@ pub fn collect_pending_proposals(engine: &AfterlifeEngine) -> Vec<PendingProposa
         });
     }
     for p in engine.pending_spec_proposals() {
-        let district_name = engine
-            .find_district(&p.district_id)
-            .map(|d| d.name.clone())
-            .unwrap_or_else(|| p.district_id.to_string());
         items.push(PendingProposalCard {
             id: p.id.clone(),
-            district_id: p.district_id.clone(),
-            district_name,
+            scope_id: p.district_id.to_string(),
             kind: ProposalKindTag::Spec,
             version_label: format!("S v{} → v{}", p.base_version.0, p.proposed.version.0),
             summary_line: p.proposed.changelog.clone(),
             proposed_district_name: p.proposed_district_name.clone(),
+            created_at: p.created_at,
+        });
+    }
+    for p in engine.pending_template_proposals() {
+        let action_label = if engine.templates.contains_key(&p.template_id) {
+            "SM Update"
+        } else {
+            "SM New"
+        };
+        items.push(PendingProposalCard {
+            id: p.id.clone(),
+            scope_id: p.template_id.to_string(),
+            kind: ProposalKindTag::Template,
+            version_label: action_label.into(),
+            summary_line: p.rationale.clone(),
+            proposed_district_name: None,
             created_at: p.created_at,
         });
     }
@@ -109,6 +115,22 @@ pub fn classify_stage_diff(current: &[StageDef], proposed: &StageDef) -> DiffMar
 }
 
 pub fn removed_stage_ids(current: &[StageDef], proposed: &[StageDef]) -> Vec<String> {
+    current
+        .iter()
+        .filter(|s| !proposed.iter().any(|p| p.id == s.id))
+        .map(|s| format!("{} ({})", s.label, s.id))
+        .collect()
+}
+
+pub fn classify_sub_stage_diff(current: &[SubStageDef], proposed: &SubStageDef) -> DiffMark {
+    match current.iter().find(|s| s.id == proposed.id) {
+        None => DiffMark::Added,
+        Some(prev) if prev == proposed => DiffMark::Unchanged,
+        Some(_) => DiffMark::Modified,
+    }
+}
+
+pub fn removed_sub_stage_ids(current: &[SubStageDef], proposed: &[SubStageDef]) -> Vec<String> {
     current
         .iter()
         .filter(|s| !proposed.iter().any(|p| p.id == s.id))
@@ -158,6 +180,7 @@ pub(super) fn render_proposals_section(
                 let kind_badge = match item.kind {
                     ProposalKindTag::Philosophy => "Philosophy",
                     ProposalKindTag::Spec => "ProcedureSpec",
+                    ProposalKindTag::Template => "Template",
                 };
 
                 GlassSurface::card(&p, &st.glass)
@@ -197,7 +220,7 @@ pub(super) fn render_proposals_section(
                                 p.centerline,
                                 [SharedString::from(format!(
                                     "{} · {}",
-                                    item.district_id, item.version_label
+                                    item.scope_id, item.version_label
                                 ))
                                 .into_any_element()],
                             ))
@@ -231,7 +254,9 @@ pub(super) fn render_proposals_section(
 
 #[cfg(test)]
 mod tests {
-    use afterlife_core::{EngineCommand, JobEvent, PhilosophyVersion, SpecVersion, StageId};
+    use afterlife_core::{
+        DistrictId, EngineCommand, JobEvent, PhilosophyVersion, SpecVersion, StageId,
+    };
 
     use super::*;
 
@@ -360,5 +385,56 @@ mod tests {
             .principles[0];
         assert_eq!(classify_principle_diff(cur_pr, prop_pr), DiffMark::Added);
         assert_eq!(StageId::from("design").as_str(), "design");
+    }
+
+    #[test]
+    fn template_proposals_and_builtin_sync_work_through_app_state() {
+        let mut st = AppState::new_ephemeral();
+        let human = st.human_actor.clone();
+        let tid = afterlife_core::SubMachineTemplateId::from("tmpl-evidence");
+        let mut stages = st.engine.templates[&tid].stages.clone();
+        stages[0].procedure = "Updated trace procedure".into();
+
+        let ev = st
+            .engine_mut()
+            .apply(
+                &human,
+                EngineCommand::ProposeTemplateUpdate {
+                    template_id: tid.clone(),
+                    name: "Evidence & Probe".into(),
+                    description: "Updated via proposal".into(),
+                    philosophy_notes: "Check sources first.".into(),
+                    stages: stages.clone(),
+                    rationale: "Improve template clarity".into(),
+                    source_feedback_ids: vec![],
+                    at: 1_900_000_010_000,
+                },
+            )
+            .unwrap();
+        let pid = match &ev[0] {
+            JobEvent::TemplateProposed { proposal_id, .. } => proposal_id.clone(),
+            _ => unreachable!(),
+        };
+        let items = collect_pending_proposals(&st.engine);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, ProposalKindTag::Template);
+        let cur_stages = &st.engine.templates[&tid].stages;
+        assert_eq!(classify_sub_stage_diff(cur_stages, &stages[0]), DiffMark::Modified);
+        assert!(removed_sub_stage_ids(cur_stages, &stages).is_empty());
+
+        st.open_proposal_detail(pid.clone());
+        st.approve_proposal(pid).unwrap();
+        assert_eq!(st.engine.templates[&tid].description, "Updated via proposal");
+
+        let obs_id = afterlife_core::SubMachineTemplateId::from("tmpl-observe");
+        st.engine_mut().templates.get_mut(&obs_id).unwrap().description =
+            "対象経路の棚卸しから未観測区間の計測計装、再現可能な評価指標仕様の確定まで".into();
+        assert_eq!(
+            st.engine.outdated_builtin_template_ids(),
+            vec![obs_id.clone()]
+        );
+        st.sync_builtin_templates(None).unwrap();
+        assert!(st.engine.outdated_builtin_template_ids().is_empty());
+        assert!(st.engine.templates[&obs_id].description.is_ascii());
     }
 }

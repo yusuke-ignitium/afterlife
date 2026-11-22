@@ -365,7 +365,7 @@ impl Render for AfterlifeApp {
                             .min_h(px(0.0))
                             .overflow_y_scroll()
                             .restrict_scroll_to_axis()
-                            .child(render_templates_tab(&st))
+                            .child(render_templates_tab(&st, cx))
                             .into_any_element(),
                         TabId::Guard => div()
                             .id("guard-scroll")

@@ -357,3 +357,212 @@ fn proposals_can_rename_district_on_human_approval_and_reject_blank_names() {
     );
     assert!(engine.pending_spec_proposals().is_empty());
 }
+
+#[test]
+fn template_proposal_requires_human_approval_and_validates_sub_stages() {
+    let mut engine = AfterlifeEngine::new();
+    let human = engine.local_actor();
+    let agent = agent_actor(&engine.owner_id, "template-agent");
+    let tid = SubMachineTemplateId::from("tmpl-evidence");
+
+    let empty_err = engine
+        .apply(
+            &agent,
+            EngineCommand::ProposeTemplateUpdate {
+                template_id: tid.clone(),
+                name: "Evidence".into(),
+                description: "Desc".into(),
+                philosophy_notes: "Notes".into(),
+                stages: vec![],
+                rationale: "Empty stages must fail".into(),
+                source_feedback_ids: vec![],
+                at: 1_800_000_010_000,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        empty_err,
+        TransitionError::InvalidProposedTemplate { .. }
+    ));
+
+    let mut updated_stages = engine.templates[&tid].stages.clone();
+    updated_stages[0].procedure = "Trace primary sources thoroughly.".into();
+    let dup_stage = updated_stages[0].clone();
+    let dup_err = engine
+        .apply(
+            &agent,
+            EngineCommand::ProposeTemplateUpdate {
+                template_id: tid.clone(),
+                name: "Evidence & Probe".into(),
+                description: "Updated evidence template".into(),
+                philosophy_notes: "Verify first.".into(),
+                stages: vec![updated_stages[0].clone(), dup_stage],
+                rationale: "Duplicate sub-stage IDs must fail".into(),
+                source_feedback_ids: vec![],
+                at: 1_800_000_011_000,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        dup_err,
+        TransitionError::InvalidProposedTemplate { .. }
+    ));
+
+    let prop_ev = engine
+        .apply(
+            &agent,
+            EngineCommand::ProposeTemplateUpdate {
+                template_id: tid.clone(),
+                name: "Evidence & Probe".into(),
+                description: "Updated evidence template".into(),
+                philosophy_notes: "Verify first.".into(),
+                stages: updated_stages.clone(),
+                rationale: "Clarify trace_sources procedure".into(),
+                source_feedback_ids: vec![],
+                at: 1_800_000_012_000,
+            },
+        )
+        .unwrap();
+    let prop_id = match &prop_ev[0] {
+        JobEvent::TemplateProposed { proposal_id, .. } => proposal_id.clone(),
+        _ => unreachable!(),
+    };
+    assert_eq!(engine.pending_template_proposals().len(), 1);
+
+    let agent_approve = engine
+        .apply(
+            &agent,
+            EngineCommand::ApproveTemplateProposal {
+                proposal_id: prop_id.clone(),
+                at: 1_800_000_013_000,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        agent_approve,
+        TransitionError::HumanApprovalRequired { .. }
+    ));
+
+    engine
+        .apply(
+            &human,
+            EngineCommand::ApproveTemplateProposal {
+                proposal_id: prop_id.clone(),
+                at: 1_800_000_014_000,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.templates[&tid].description,
+        "Updated evidence template"
+    );
+    assert!(engine.pending_template_proposals().is_empty());
+
+    let double_approve = engine
+        .apply(
+            &human,
+            EngineCommand::ApproveTemplateProposal {
+                proposal_id: prop_id,
+                at: 1_800_000_015_000,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        double_approve,
+        TransitionError::ProposalAlreadyResolved(_)
+    ));
+}
+
+#[test]
+fn sync_builtin_templates_requires_human_and_preserves_custom_edits() {
+    let mut engine = AfterlifeEngine::new();
+    let human = engine.local_actor();
+    let agent = agent_actor(&engine.owner_id, "sync-agent");
+    let ev_id = SubMachineTemplateId::from("tmpl-evidence");
+    let obs_id = SubMachineTemplateId::from("tmpl-observe");
+    let custom_id = SubMachineTemplateId::from("tmpl-custom-jp");
+
+    engine.templates.get_mut(&ev_id).unwrap().description =
+        "一次仕様・既存実装トレースから隔離環境での実機検証、判断基準と前提の確定まで".into();
+    engine.templates.get_mut(&obs_id).unwrap().description =
+        "ユーザーが意図的にカスタマイズした観測テンプレート".into();
+    engine.templates.insert(
+        custom_id.clone(),
+        SubMachineTemplate {
+            id: custom_id.clone(),
+            name: "Custom JP".into(),
+            description: "カスタムSM".into(),
+            philosophy_notes: "保持必須".into(),
+            stages: vec![SubStageDef {
+                id: SubStageId::from("custom_step"),
+                label: "Custom Step".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                procedure: "Run custom check".into(),
+                gate_checks: vec!["Check passed".into()],
+                record_fields: vec![],
+                required_artifact_kinds: vec![],
+            }],
+        },
+    );
+    engine.template_order.push(custom_id.clone());
+
+    assert_eq!(engine.outdated_builtin_template_ids(), vec![ev_id.clone()]);
+
+    let agent_err = engine
+        .apply(
+            &agent,
+            EngineCommand::SyncBuiltinTemplates {
+                template_ids: None,
+                at: 1_800_000_020_000,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        agent_err,
+        TransitionError::HumanApprovalRequired { .. }
+    ));
+
+    let events = engine
+        .apply(
+            &human,
+            EngineCommand::SyncBuiltinTemplates {
+                template_ids: None,
+                at: 1_800_000_021_000,
+            },
+        )
+        .unwrap();
+    match &events[0] {
+        JobEvent::BuiltinTemplatesSynced {
+            synced_template_ids,
+            skipped_template_ids,
+            ..
+        } => {
+            assert_eq!(synced_template_ids, &vec![ev_id.clone()]);
+            assert!(skipped_template_ids.contains(&obs_id));
+        }
+        other => panic!("expected BuiltinTemplatesSynced, got {other:?}"),
+    }
+    assert!(engine.outdated_builtin_template_ids().is_empty());
+    assert!(
+        engine.templates[&ev_id]
+            .description
+            .is_ascii()
+    );
+    assert_eq!(
+        engine.templates[&obs_id].description,
+        "ユーザーが意図的にカスタマイズした観測テンプレート"
+    );
+    assert_eq!(engine.templates[&custom_id].description, "カスタムSM");
+
+    let unknown_err = engine
+        .apply(
+            &human,
+            EngineCommand::SyncBuiltinTemplates {
+                template_ids: Some(vec![SubMachineTemplateId::from("tmpl-does-not-exist")]),
+                at: 1_800_000_022_000,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(unknown_err, TransitionError::TemplateNotFound(_)));
+}

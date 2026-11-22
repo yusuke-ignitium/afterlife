@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use afterlife_core::{
     ArtifactId, ArtifactKind, DistrictId, EngineCommand, FeedbackId, FeedbackKind, GateVerdict,
-    JobId, PhilosophyVersion, Principle, SpecVersion, StageDef, StageId,
+    JobId, PhilosophyVersion, Principle, SpecVersion, StageDef, StageId, SubMachineTemplateId,
+    SubStageDef,
 };
-use afterlife_protocol::Principal;
-use serde_json::Value;
+use afterlife_protocol::{Principal, Scope};
+use serde_json::{Value, json};
 
 use crate::{
     AppDaemonState,
@@ -352,6 +353,95 @@ pub(super) fn handle_spec_propose(
             proposed_district_name,
             stages,
             changelog: changelog.to_string(),
+            rationale: rationale.to_string(),
+            source_feedback_ids,
+            at: now,
+        },
+    )
+}
+
+pub(super) fn handle_templates_list(
+    state: &Arc<AppDaemonState>,
+    principal: &Principal,
+    id: Value,
+) -> Value {
+    if !principal.scopes.contains(&Scope::JobsRead) {
+        return rpc_err(id, -32001, "insufficient_scope: jobs:read required");
+    }
+    match state.ports.store.load_workspace(&principal.owner_id) {
+        Ok(snap) => {
+            let ordered: Vec<_> = snap
+                .engine
+                .template_order
+                .iter()
+                .filter_map(|tid| snap.engine.templates.get(tid))
+                .collect();
+            let outdated = snap.engine.outdated_builtin_template_ids();
+            let pending = snap.engine.pending_template_proposals();
+            rpc_ok(
+                id,
+                tool_text(
+                    json!({
+                        "template_order": snap.engine.template_order,
+                        "templates": ordered,
+                        "outdated_builtin_template_ids": outdated,
+                        "pending_template_proposals": pending,
+                        "latest_seq": snap.latest_seq,
+                    }),
+                    false,
+                ),
+            )
+        }
+        Err(e) => rpc_err(id, -32000, e.to_string()),
+    }
+}
+
+pub(super) fn handle_template_propose(
+    state: &Arc<AppDaemonState>,
+    principal: &Principal,
+    id: Value,
+    args: Value,
+    now: u64,
+) -> Value {
+    let (Some(tid), Some(name), Some(description), Some(rationale), Some(stages_v)) = (
+        args.get("template_id").and_then(|v| v.as_str()),
+        args.get("name").and_then(|v| v.as_str()),
+        args.get("description").and_then(|v| v.as_str()),
+        args.get("rationale").and_then(|v| v.as_str()),
+        args.get("stages"),
+    ) else {
+        return rpc_err(id, -32602, "missing template_propose fields");
+    };
+    let cmd_id = match cmd_id_from(&args) {
+        Ok(cid) => cid,
+        Err(msg) => return invalid_arg(id, "command_id", &msg),
+    };
+    let philosophy_notes = match parse_optional_str(&args, "philosophy_notes") {
+        Ok(v) => v.unwrap_or("").to_string(),
+        Err(msg) => return invalid_arg(id, "philosophy_notes", &msg),
+    };
+    let stages: Vec<SubStageDef> = match serde_json::from_value(stages_v.clone()) {
+        Ok(s) => s,
+        Err(e) => return invalid_arg(id, "stages", &e.to_string()),
+    };
+    let source_feedback_ids: Vec<FeedbackId> = match args.get("source_feedback_ids") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(v) => match serde_json::from_value(v.clone()) {
+            Ok(f) => f,
+            Err(e) => return invalid_arg(id, "source_feedback_ids", &e.to_string()),
+        },
+    };
+    run_mcp_cmd(
+        state,
+        principal,
+        id,
+        cmd_id,
+        EngineCommand::ProposeTemplateUpdate {
+            template_id: SubMachineTemplateId::from(tid),
+            name: name.to_string(),
+            description: description.to_string(),
+            philosophy_notes,
+            stages,
             rationale: rationale.to_string(),
             source_feedback_ids,
             at: now,

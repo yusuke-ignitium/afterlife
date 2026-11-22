@@ -100,23 +100,66 @@ pub fn validate_stages(
     errors
 }
 
+pub fn validate_template(tmpl: &SubMachineTemplate) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let tid = &tmpl.id;
+    if tmpl.stages.is_empty() {
+        errors.push(ValidationError::EmptySubTemplate(tid.clone()));
+        return errors;
+    }
+    let mut seen_sub_ids: HashSet<String> = HashSet::new();
+    for sub in &tmpl.stages {
+        let sid_trimmed = sub.id.as_str().trim();
+        if sid_trimmed.is_empty() {
+            errors.push(ValidationError::EmptySubStageField {
+                template_id: tid.clone(),
+                sub_stage_id: sub.id.clone(),
+                field: "id".into(),
+            });
+        } else if !seen_sub_ids.insert(sid_trimmed.to_string()) {
+            errors.push(ValidationError::DuplicateSubStageId {
+                template_id: tid.clone(),
+                sub_stage_id: sub.id.clone(),
+            });
+        }
+        if sub.label.trim().is_empty() {
+            errors.push(ValidationError::EmptySubStageField {
+                template_id: tid.clone(),
+                sub_stage_id: sub.id.clone(),
+                field: "label".into(),
+            });
+        }
+        if sub.runner.trim().is_empty() {
+            errors.push(ValidationError::EmptySubStageField {
+                template_id: tid.clone(),
+                sub_stage_id: sub.id.clone(),
+                field: "runner".into(),
+            });
+        }
+        if sub.procedure.trim().is_empty() {
+            errors.push(ValidationError::EmptySubStageField {
+                template_id: tid.clone(),
+                sub_stage_id: sub.id.clone(),
+                field: "procedure".into(),
+            });
+        }
+        validate_step_fields(
+            format!("{tid}/{}", sub.id),
+            &sub.record_fields,
+            &mut errors,
+        );
+    }
+    errors
+}
+
 pub fn validate_workspace(
     districts: &[District],
     templates: &HashMap<SubMachineTemplateId, SubMachineTemplate>,
 ) -> Result<(), Vec<ValidationError>> {
     let mut errors = Vec::new();
 
-    for (tid, tmpl) in templates {
-        if tmpl.stages.is_empty() {
-            errors.push(ValidationError::EmptySubTemplate(tid.clone()));
-        }
-        for sub in &tmpl.stages {
-            validate_step_fields(
-                format!("{tid}/{}", sub.id),
-                &sub.record_fields,
-                &mut errors,
-            );
-        }
+    for tmpl in templates.values() {
+        errors.extend(validate_template(tmpl));
     }
 
     for district in districts {

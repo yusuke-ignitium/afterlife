@@ -19,13 +19,13 @@ use crate::{
     model::{
         Actor, Artifact, ArtifactKind, District, ExecutionContext, Feedback, FeedbackKind,
         GateVerification, Job, JobEvent, JobLease, JobLocation, PhilosophyProposal, SpecProposal,
-        StageDef, StepRecord, StepRecordOutcome, SubMachineTemplate,
+        StageDef, StepRecord, StepRecordOutcome, SubMachineTemplate, TemplateProposal,
     },
 };
 
 pub use command::EngineCommand;
 pub use policy::{MAX_LEASE_TTL_MS, MIN_LEASE_TTL_MS};
-pub use validate::{validate_stages, validate_workspace};
+pub use validate::{validate_stages, validate_template, validate_workspace};
 
 fn now_ms() -> TimestampMs {
     SystemTime::now()
@@ -44,6 +44,8 @@ pub struct AfterlifeEngine {
     pub feedbacks: Vec<Feedback>,
     pub philosophy_proposals: Vec<PhilosophyProposal>,
     pub spec_proposals: Vec<SpecProposal>,
+    #[serde(default)]
+    pub template_proposals: Vec<TemplateProposal>,
     pub event_log: Vec<JobEvent>,
     next_job_seq: u32,
     next_fencing_token: u64,
@@ -74,6 +76,7 @@ impl AfterlifeEngine {
             feedbacks: Vec::new(),
             philosophy_proposals: Vec::new(),
             spec_proposals: Vec::new(),
+            template_proposals: Vec::new(),
             event_log: Vec::new(),
             next_job_seq: seed.next_job_seq,
             next_fencing_token: seed.next_fencing_token,
@@ -1421,6 +1424,33 @@ impl AfterlifeEngine {
                     template_id,
                     at,
                 }]
+            }
+            EngineCommand::ProposeTemplateUpdate {
+                template_id,
+                name,
+                description,
+                philosophy_notes,
+                stages,
+                rationale,
+                source_feedback_ids,
+                at,
+            } => self.apply_propose_template_update(
+                owner_id,
+                actor,
+                template_id,
+                name,
+                description,
+                philosophy_notes,
+                stages,
+                rationale,
+                source_feedback_ids,
+                at,
+            )?,
+            EngineCommand::ApproveTemplateProposal { proposal_id, at } => {
+                self.apply_approve_template_proposal(owner_id, actor, proposal_id, at)?
+            }
+            EngineCommand::SyncBuiltinTemplates { template_ids, at } => {
+                self.apply_sync_builtin_templates(owner_id, actor, template_ids, at)?
             }
         };
 

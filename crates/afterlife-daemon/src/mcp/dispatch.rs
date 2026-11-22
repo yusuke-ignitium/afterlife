@@ -33,6 +33,8 @@ pub(super) fn handle_tool_call(
         "feedback_submit" => governance_tools::handle_feedback_submit(state, principal, id, args, now),
         "philosophy_propose" => governance_tools::handle_philosophy_propose(state, principal, id, args, now),
         "spec_propose" => governance_tools::handle_spec_propose(state, principal, id, args, now),
+        "templates_list" => governance_tools::handle_templates_list(state, principal, id),
+        "template_propose" => governance_tools::handle_template_propose(state, principal, id, args, now),
         other => rpc_err(id, -32601, format!("unknown tool: {other}")),
     }
 }

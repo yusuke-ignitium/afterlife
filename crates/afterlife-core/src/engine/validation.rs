@@ -194,6 +194,21 @@ pub fn validate_command(
             validate_feedback_refs(engine, source_feedback_ids)?;
             Ok(())
         }
+        EngineCommand::ProposeTemplateUpdate {
+            template_id,
+            name,
+            description,
+            rationale,
+            source_feedback_ids,
+            ..
+        } => {
+            require_non_empty("template_id", template_id.as_str())?;
+            require_non_empty("name", name)?;
+            require_non_empty("description", description)?;
+            require_non_empty("rationale", rationale)?;
+            validate_feedback_refs(engine, source_feedback_ids)?;
+            Ok(())
+        }
         EngineCommand::AdvanceJob { fields, .. } => {
             for k in fields.keys() {
                 require_non_empty("fields", k)?;

@@ -4,7 +4,9 @@ pub mod fixtures;
 pub mod ids;
 pub mod model;
 
-pub use engine::{AfterlifeEngine, EngineCommand, validate_stages, validate_workspace};
+pub use engine::{
+    AfterlifeEngine, EngineCommand, validate_stages, validate_template, validate_workspace,
+};
 pub use error::{TransitionError, ValidationError};
 pub use ids::{
     ArtifactId, CommandId, DistrictId, FeedbackId, FencingToken, JobId, LeaseId, OwnerId,
@@ -18,9 +20,10 @@ pub use model::{
     PhilosophyProposal, Principle, ProcedureSpec, ProposalStatus, RunnerKind, SpecProposal,
     StageDef, StageKind, STEP_FIELD_DECISION_LABEL, STEP_FIELD_EXECUTION_LABEL,
     STEP_FIELD_NOTE_LABEL, STEP_FIELD_REASON_LABEL, StepFieldDef, StepRecord, StepRecordOutcome,
-    SubMachineTemplate, SubStageDef, builtin_step_field_label, default_step_fields,
-    format_blob_uri, is_openable_url, is_valid_lower_sha256, parse_artifact_uri, parse_blob_uri,
-    parse_inline_links, sanitize_blob_filename, sanitize_owner_segment,
+    SubMachineTemplate, SubStageDef, TemplateProposal, builtin_step_field_label,
+    default_step_fields, format_blob_uri, is_openable_url, is_valid_lower_sha256,
+    parse_artifact_uri, parse_blob_uri, parse_inline_links, sanitize_blob_filename,
+    sanitize_owner_segment,
 };
 
 #[cfg(test)]
