@@ -107,6 +107,18 @@ pub fn render_top_bar(st: &AppState, cx: &mut Context<AfterlifeApp>) -> AnyEleme
                         ))
                         .child(nav_item(
                             st,
+                            "toggle-auto-fade",
+                            "Auto Fade",
+                            SpacePx::S8,
+                            st.fade_ui_when_inactive,
+                            |st, _, _| {
+                                st.fade_ui_when_inactive = !st.fade_ui_when_inactive;
+                                st.persist_appearance();
+                            },
+                            cx,
+                        ))
+                        .child(nav_item(
+                            st,
                             "toggle-centerline",
                             "Centerline",
                             SpacePx::S8,

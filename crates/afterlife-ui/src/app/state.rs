@@ -39,6 +39,7 @@ fn default_data_dir() -> String {
 fn apply_backdrop_config(
     glass: &mut GlassSettings,
     pause_animation_when_inactive: &mut bool,
+    fade_ui_when_inactive: &mut bool,
     cfg: &BackdropConfig,
 ) {
     let tuning = cfg.tuning.clamped();
@@ -63,6 +64,7 @@ fn apply_backdrop_config(
         glass.radius = saved.radius;
         glass.tint_rgb = saved.tint_rgb;
         *pause_animation_when_inactive = saved.pause_animation_when_inactive;
+        *fade_ui_when_inactive = saved.fade_ui_when_inactive;
     }
 }
 
@@ -84,6 +86,7 @@ fn snapshot_tuning(glass: &GlassSettings) -> BackdropTuning {
 fn snapshot_glass_appearance(
     glass: &GlassSettings,
     pause_animation_when_inactive: bool,
+    fade_ui_when_inactive: bool,
 ) -> BackdropGlassAppearance {
     BackdropGlassAppearance {
         disp_scale: glass.disp_scale,
@@ -97,6 +100,7 @@ fn snapshot_glass_appearance(
         radius: glass.radius,
         tint_rgb: glass.tint_rgb,
         pause_animation_when_inactive,
+        fade_ui_when_inactive,
     }
 }
 
@@ -256,6 +260,7 @@ pub struct AppState {
     pub palette: Palette,
     pub settings_open: bool,
     pub pause_animation_when_inactive: bool,
+    pub fade_ui_when_inactive: bool,
 }
 
 impl AppState {
@@ -270,6 +275,7 @@ impl AppState {
         let mut base_tile_size_px = glass.bg_tile_size_px;
         let mut display_tile_sizes = BTreeMap::new();
         let mut pause_animation_when_inactive = false;
+        let mut fade_ui_when_inactive = false;
         let load_backdrop_store = backdrop_store
             .clone()
             .or_else(|| perf_use_live_data.then(BackdropStore::open_default));
@@ -279,6 +285,7 @@ impl AppState {
                     apply_backdrop_config(
                         &mut glass,
                         &mut pause_animation_when_inactive,
+                        &mut fade_ui_when_inactive,
                         &backdrop,
                     );
                     base_tile_size_px = backdrop.tuning.clamped().tile_size_px;
@@ -358,6 +365,7 @@ impl AppState {
             palette,
             settings_open: false,
             pause_animation_when_inactive,
+            fade_ui_when_inactive,
         }
     }
 
@@ -538,12 +546,14 @@ impl AppState {
         let before = (
             self.glass,
             self.pause_animation_when_inactive,
+            self.fade_ui_when_inactive,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
         apply_backdrop_config(
             &mut self.glass,
             &mut self.pause_animation_when_inactive,
+            &mut self.fade_ui_when_inactive,
             &cfg,
         );
         self.base_tile_size_px = cfg.tuning.clamped().tile_size_px;
@@ -557,6 +567,7 @@ impl AppState {
         let after = (
             self.glass,
             self.pause_animation_when_inactive,
+            self.fade_ui_when_inactive,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
@@ -576,7 +587,11 @@ impl AppState {
         tuning.tile_size_px = self.base_tile_size_px.clamp(2.0, 24.0);
         if let Err(e) = store.save_appearance_with_displays(
             tuning,
-            snapshot_glass_appearance(&self.glass, self.pause_animation_when_inactive),
+            snapshot_glass_appearance(
+                &self.glass,
+                self.pause_animation_when_inactive,
+                self.fade_ui_when_inactive,
+            ),
             self.display_tile_sizes.clone(),
         ) {
             eprintln!("afterlife-ui: failed to save appearance config ({e})");
@@ -626,7 +641,7 @@ mod tests {
 
         assert_eq!(snapshot_tuning(&glass_def), tuning_def);
         assert_eq!(
-            snapshot_glass_appearance(&glass_def, false),
+            snapshot_glass_appearance(&glass_def, false, false),
             saved_glass_def
         );
         assert_eq!(glass_def.particle_wave_tuning(), wave_def);
@@ -659,16 +674,18 @@ mod tests {
         let cfg = BackdropConfig {
             images: Vec::new(),
             tuning: snapshot_tuning(&original),
-            glass: Some(snapshot_glass_appearance(&original, true)),
+            glass: Some(snapshot_glass_appearance(&original, true, true)),
             display_tile_sizes: BTreeMap::new(),
         };
 
         let mut restored = GlassSettings::default();
         let mut pause_inactive = false;
-        apply_backdrop_config(&mut restored, &mut pause_inactive, &cfg);
+        let mut fade_inactive = false;
+        apply_backdrop_config(&mut restored, &mut pause_inactive, &mut fade_inactive, &cfg);
 
         assert_eq!(restored, original);
         assert!(pause_inactive);
+        assert!(fade_inactive);
     }
 
     #[test]

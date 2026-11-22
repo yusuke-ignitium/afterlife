@@ -121,6 +121,7 @@ pub struct BackdropGlassAppearance {
     pub radius: f32,
     pub tint_rgb: [u8; 3],
     pub pause_animation_when_inactive: bool,
+    pub fade_ui_when_inactive: bool,
 }
 
 impl Default for BackdropGlassAppearance {
@@ -137,6 +138,7 @@ impl Default for BackdropGlassAppearance {
             radius: 6.6,
             tint_rgb: [7, 9, 14],
             pause_animation_when_inactive: false,
+            fade_ui_when_inactive: false,
         }
     }
 }
@@ -156,6 +158,7 @@ impl BackdropGlassAppearance {
             radius: finite_clamp(self.radius, 0.0, 20.0, def.radius),
             tint_rgb: self.tint_rgb,
             pause_animation_when_inactive: self.pause_animation_when_inactive,
+            fade_ui_when_inactive: self.fade_ui_when_inactive,
         }
     }
 }
@@ -655,6 +658,7 @@ mod tests {
             radius: -3.0,
             tint_rgb: [12, 34, 56],
             pause_animation_when_inactive: true,
+            fade_ui_when_inactive: true,
         }
         .clamped();
         let def = BackdropGlassAppearance::default();
@@ -669,6 +673,7 @@ mod tests {
         assert_eq!(glass.radius, 0.0);
         assert_eq!(glass.tint_rgb, [12, 34, 56]);
         assert!(glass.pause_animation_when_inactive);
+        assert!(glass.fade_ui_when_inactive);
     }
 
     #[test]
@@ -691,6 +696,7 @@ mod tests {
         assert_eq!(g.blur_std_dev, 20.0);
         assert_eq!(g.tint_rgb, [1, 2, 3]);
         assert_eq!(g.disp_scale, BackdropGlassAppearance::default().disp_scale);
+        assert!(!g.fade_ui_when_inactive);
 
         let _ = fs::remove_dir_all(&dir);
     }

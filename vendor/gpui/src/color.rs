@@ -1299,6 +1299,12 @@ impl Background {
     /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
     pub fn opacity(&self, factor: f32) -> Self {
         let mut background = *self;
+        if background.tag == BackgroundTag::LiquidGlass {
+            let current = (1.0 - background.colors[0].color.h).clamp(0.0, 1.0);
+            let next = (current * factor).clamp(0.0, 1.0);
+            background.colors[0].color.h = 1.0 - next;
+            return background;
+        }
         background.solid = background.solid.opacity(factor);
         background.colors = [
             self.colors[0].opacity(factor),
@@ -1313,7 +1319,7 @@ impl Background {
             BackgroundTag::Solid => self.solid.is_transparent(),
             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
             BackgroundTag::PatternSlash => self.solid.is_transparent(),
-            BackgroundTag::LiquidGlass => false,
+            BackgroundTag::LiquidGlass => self.colors[0].color.h >= 1.0,
             BackgroundTag::ParticleWave => false,
         }
     }
@@ -1412,5 +1418,33 @@ mod tests {
         assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
         assert!(!background.is_transparent());
         assert!(background.opacity(0.0).is_transparent());
+    }
+
+    #[test]
+    fn test_background_liquid_glass_opacity() {
+        let bg = liquid_glass_styled(
+            rgba(0x10203040),
+            120.0,
+            40.0,
+            0.2,
+            0.35,
+            1.5,
+            8.0,
+            7,
+            0.5,
+        );
+        assert!(!bg.is_transparent());
+        assert_eq!(bg.colors[0].color.h, 0.0);
+
+        let dimmed = bg.opacity(0.24);
+        assert!((dimmed.colors[0].color.h - 0.76).abs() < 1e-5);
+        assert_eq!(dimmed.solid, bg.solid);
+        assert_eq!(dimmed.colors[0].color.a, bg.colors[0].color.a);
+        assert_eq!(dimmed.colors[1], bg.colors[1]);
+        assert!(!dimmed.is_transparent());
+
+        let nested = dimmed.opacity(0.5);
+        assert!((nested.colors[0].color.h - 0.88).abs() < 1e-5);
+        assert!(bg.opacity(0.0).is_transparent());
     }
 }

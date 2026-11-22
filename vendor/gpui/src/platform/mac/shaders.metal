@@ -2555,8 +2555,9 @@ fragment float4 liquid_glass_fragment(
   }
 
   float mask_fade = content_mask_fade(quad.content_mask, fragPx);
+  float glassOpacity = saturate(1.0 - quad.background.colors[0].color.h);
   float outA = mix(tint.a, 1.0, bgVis) * glassMask;
-  outA = clamp(max(outA, max(specular * highlightAlpha, edgeGlow) * glassMask), 0.0, 1.0) * mask_fade;
+  outA = clamp(max(outA, max(specular * highlightAlpha, edgeGlow) * glassMask), 0.0, 1.0) * mask_fade * glassOpacity;
   return float4(col, outA);
 }
 
@@ -2614,6 +2615,7 @@ struct LiquidGlassSyncedVertexOutput {
   float4 extra_params [[flat]];
   float4 mask_inv_res [[flat]];
   float4 inner_rect [[flat]];
+  half glass_opacity [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -2627,6 +2629,7 @@ struct LiquidGlassSyncedFragmentInput {
   float4 extra_params [[flat]];
   float4 mask_inv_res [[flat]];
   float4 inner_rect [[flat]];
+  half glass_opacity [[flat]];
 };
 
 vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_vertex(
@@ -2678,6 +2681,8 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_vertex(
   float2 inner_max = min(origin + psize - safe_inset, vp - vp_guard);
   float4 inner_rect = float4(inner_min.x, inner_min.y, inner_max.x, inner_max.y);
 
+  half glass_opacity = half(saturate(1.0 - quad.background.colors[0].color.h));
+
   return LiquidGlassSyncedVertexOutput{
       device_position,
       tint,
@@ -2688,6 +2693,7 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_vertex(
       float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
       float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
       inner_rect,
+      glass_opacity,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -2714,7 +2720,7 @@ fragment half4 liquid_glass_synced_fragment(
     if (fade > 0.5) {
       mask_fade = half(smoothstep(0.0, fade, input.mask_inv_res.y - fragPx.y));
     }
-    half outA = mix(tint.a, 1.0h, bgVis) * mask_fade;
+    half outA = mix(tint.a, 1.0h, bgVis) * mask_fade * input.glass_opacity;
     return half4(col, outA);
   }
 
@@ -2832,7 +2838,7 @@ fragment half4 liquid_glass_synced_fragment(
     mask_fade = half(smoothstep(0.0, fade, input.mask_inv_res.y - fragPx.y));
   }
   half outA = mix(tint.a, 1.0h, bgVis) * glassMask;
-  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade;
+  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade * input.glass_opacity;
   return half4(col, outA);
 }
 
@@ -2855,7 +2861,7 @@ fragment half4 liquid_glass_synced_sharp_fragment(
     if (fade > 0.5) {
       mask_fade = half(smoothstep(0.0, fade, input.mask_inv_res.y - fragPx.y));
     }
-    half outA = mix(tint.a, 1.0h, bgVis) * mask_fade;
+    half outA = mix(tint.a, 1.0h, bgVis) * mask_fade * input.glass_opacity;
     return half4(mix(dst.rgb, col, outA), saturate(outA + dst.a));
   }
 
@@ -2971,7 +2977,7 @@ fragment half4 liquid_glass_synced_sharp_fragment(
     mask_fade = half(smoothstep(0.0, fade, input.mask_inv_res.y - fragPx.y));
   }
   half outA = mix(tint.a, 1.0h, bgVis) * glassMask;
-  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade;
+  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade * input.glass_opacity;
   return half4(mix(dst.rgb, col, outA), saturate(outA + dst.a));
 }
 
@@ -2979,6 +2985,7 @@ struct LiquidGlassInteriorVertexOutput {
   float4 position [[position]];
   half4 tint [[flat]];
   float2 mask_params [[flat]];
+  half glass_opacity [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -2986,6 +2993,7 @@ struct LiquidGlassInteriorFragmentInput {
   float4 position [[position]];
   half4 tint [[flat]];
   float2 mask_params [[flat]];
+  half glass_opacity [[flat]];
 };
 
 static inline void compute_glass_inner_bounds(
@@ -3029,6 +3037,8 @@ vertex LiquidGlassInteriorVertexOutput liquid_glass_synced_interior_vertex(
   float mask_bottom_y =
       quad.content_mask.bounds.origin.y + quad.content_mask.bounds.size.height;
 
+  half glass_opacity = half(saturate(1.0f - quad.background.colors[0].color.h));
+
   float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
   compute_glass_inner_bounds(quad, viewport_size, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
   if (ix1 <= ix0 || iy1 <= iy0) {
@@ -3036,6 +3046,7 @@ vertex LiquidGlassInteriorVertexOutput liquid_glass_synced_interior_vertex(
         float4(2.0f, 2.0f, 0.0f, 1.0f),
         tint,
         float2(quad.content_mask.bottom_fade, mask_bottom_y),
+        glass_opacity,
         {-1.0f, -1.0f, -1.0f, -1.0f}};
   }
   float2 unit_vertex = unit_vertices[unit_vertex_id];
@@ -3047,6 +3058,7 @@ vertex LiquidGlassInteriorVertexOutput liquid_glass_synced_interior_vertex(
       device_position,
       tint,
       float2(quad.content_mask.bottom_fade, mask_bottom_y),
+      glass_opacity,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -3062,7 +3074,7 @@ fragment half4 liquid_glass_synced_interior_fragment(
   if (fade > 0.5f) {
     mask_fade = half(smoothstep(0.0f, fade, input.mask_params.y - input.position.y));
   }
-  half outA = mix(tint.a, 1.0h, bgVis) * mask_fade;
+  half outA = mix(tint.a, 1.0h, bgVis) * mask_fade * input.glass_opacity;
   return half4(mix(dst.rgb, col, outA), saturate(outA + dst.a));
 }
 
@@ -3123,6 +3135,8 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_rim_vertex(
     rx0 = ix1; ry0 = iy0; rx1 = ox1; ry1 = iy1;
   }
 
+  half glass_opacity = half(saturate(1.0f - quad.background.colors[0].color.h));
+
   if (rx1 <= rx0 || ry1 <= ry0) {
     return LiquidGlassSyncedVertexOutput{
         float4(2.0f, 2.0f, 0.0f, 1.0f),
@@ -3134,6 +3148,7 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_rim_vertex(
         float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
         float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
         float4(0.0f),
+        glass_opacity,
         {-1.0f, -1.0f, -1.0f, -1.0f}};
   }
 
@@ -3152,6 +3167,7 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_rim_vertex(
       float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
       float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
       float4(0.0f),
+      glass_opacity,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -3273,7 +3289,7 @@ fragment half4 liquid_glass_synced_rim_fragment(
     mask_fade = half(smoothstep(0.0f, fade, input.mask_inv_res.y - fragPx.y));
   }
   half outA = mix(tint.a, 1.0h, bgVis) * glassMask;
-  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade;
+  outA = saturate(max(outA, edgeGlow * glassMask)) * mask_fade * input.glass_opacity;
   return half4(col, outA);
 }
 

@@ -6112,6 +6112,64 @@ mod offscreen_gpu_bench {
                 center_col
             );
         }
+
+        let mut dimmed_scene = Scene::default();
+        let dimmed_mask = ContentMask {
+            bounds: Bounds {
+                origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(vw as f32), ScaledPixels(vh as f32)),
+            },
+            bottom_fade: ScaledPixels(0.0),
+        };
+        dimmed_scene.quads.push(Quad {
+            order: 0,
+            border_style: crate::BorderStyle::Solid,
+            bounds: dimmed_mask.bounds,
+            content_mask: dimmed_mask.clone(),
+            background: crate::Background::from(crate::rgba(0x406080ff)),
+            border_color: Hsla::transparent_black(),
+            corner_radii: Corners::all(ScaledPixels(0.0)),
+            border_widths: Edges::all(ScaledPixels(0.0)),
+        });
+        dimmed_scene.quads.push(Quad {
+            order: 1,
+            border_style: crate::BorderStyle::Solid,
+            bounds: Bounds {
+                origin: point(ScaledPixels(200.0), ScaledPixels(200.0)),
+                size: size(ScaledPixels(1200.0), ScaledPixels(800.0)),
+            },
+            content_mask: dimmed_mask,
+            background: seam_bg.opacity(0.24),
+            border_color: Hsla::transparent_black(),
+            corner_radii: Corners::all(ScaledPixels(24.0)),
+            border_widths: Edges::all(ScaledPixels(0.0)),
+        });
+        dimmed_scene.finish();
+        let _ = render_one_frame_sync(&mut renderer, &dimmed_scene, &target, viewport, Some(1.0));
+        let dimmed_px = readback_bgra(&target, vw, vh);
+        let at_dim = |x: u32, y: u32| -> [u8; 4] {
+            let i = ((y * vw + x) * 4) as usize;
+            [dimmed_px[i], dimmed_px[i + 1], dimmed_px[i + 2], dimmed_px[i + 3]]
+        };
+        let bg_col = at_dim(50, 50);
+        let dim_center = at_dim(800, 600);
+        assert!(
+            dim_center[0] > center_col[0] && dim_center[0] < bg_col[0],
+            "dimmed LiquidGlass must blend cleanly toward backdrop without vanishing: full={center_col:?} dim={dim_center:?} bg={bg_col:?}"
+        );
+        for x in 290..1310 {
+            let p = at_dim(x, 600);
+            let diff = p[0]
+                .abs_diff(dim_center[0])
+                .max(p[1].abs_diff(dim_center[1]))
+                .max(p[2].abs_diff(dim_center[2]));
+            assert!(
+                diff <= 1,
+                "dimmed rim/interior seam detected at ({x}, 600): got {:?} expected {:?} (diff={diff})",
+                p,
+                dim_center
+            );
+        }
     }
 
     #[test]

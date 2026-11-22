@@ -15,7 +15,7 @@ use gpui::{
 use crate::{
     app::{
         lifecycle::CloseWindow,
-        motion::UiMotion,
+        motion::{INACTIVE_FADE_DELAY, UiMotion},
         state::{AppState, GlassParamKey, TabId},
         window_state::{WindowStateStore, capture_window_state, clamp_detail_height},
     },
@@ -46,7 +46,11 @@ pub struct AfterlifeApp {
     pub detail_resize: Option<DetailResizeDrag>,
     window_store: Option<WindowStateStore>,
     _bounds_subscription: Subscription,
+    _activation_subscription: Subscription,
     window_save_task: Option<Task<()>>,
+    window_active: bool,
+    inactive_dim_active: bool,
+    inactive_dim_task: Option<Task<()>>,
 }
 
 fn current_display_metrics(window: &Window, cx: &App) -> (Option<String>, f32) {
@@ -99,7 +103,16 @@ impl AfterlifeApp {
                 }
             }));
         });
-        Self {
+        let activation_subscription =
+            cx.observe_window_activation(window, move |this, window, cx| {
+                this.window_active = window.is_window_active();
+                let fade_enabled = this.state.read(cx).fade_ui_when_inactive;
+                this.sync_inactive_fade_schedule(fade_enabled, cx);
+                cx.notify();
+            });
+        let initial_active = window.is_window_active();
+        let initial_fade_enabled = state.read(cx).fade_ui_when_inactive;
+        let mut app = Self {
             state,
             perf,
             motion: UiMotion::new(),
@@ -108,8 +121,36 @@ impl AfterlifeApp {
             detail_resize: None,
             window_store,
             _bounds_subscription: bounds_subscription,
+            _activation_subscription: activation_subscription,
             window_save_task: None,
+            window_active: initial_active,
+            inactive_dim_active: false,
+            inactive_dim_task: None,
+        };
+        app.sync_inactive_fade_schedule(initial_fade_enabled, cx);
+        app
+    }
+
+    fn sync_inactive_fade_schedule(&mut self, fade_enabled: bool, cx: &mut Context<Self>) {
+        if !fade_enabled || self.window_active {
+            self.inactive_dim_task = None;
+            self.inactive_dim_active = false;
+            return;
         }
+        if self.inactive_dim_active || self.inactive_dim_task.is_some() {
+            return;
+        }
+        self.inactive_dim_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(INACTIVE_FADE_DELAY).await;
+            let _ = this.update(cx, |this, cx| {
+                this.inactive_dim_task = None;
+                let enabled = this.state.read(cx).fade_ui_when_inactive;
+                if enabled && !this.window_active {
+                    this.inactive_dim_active = true;
+                    cx.notify();
+                }
+            });
+        }));
     }
 
     pub fn persist_window_state(&self, window: &Window, cx: &App) {
@@ -164,7 +205,11 @@ impl Render for AfterlifeApp {
             .unwrap_or(0);
         let p = st.palette;
 
-        let motion = self.motion.sync(&st, Instant::now());
+        self.window_active = window.is_window_active();
+        self.sync_inactive_fade_schedule(st.fade_ui_when_inactive, cx);
+        let motion = self
+            .motion
+            .sync(&st, self.inactive_dim_active, Instant::now());
         if motion.animating {
             window.request_animation_frame();
         }
@@ -206,7 +251,8 @@ impl Render for AfterlifeApp {
         let window_height = f32::from(viewport_size.height);
         let left_pane_height = (window_height - LEFT_PANE_CHROME_HEIGHT_PX).max(300.0);
         let is_resizing_detail = self.detail_resize.is_some();
-        let tab_opacity = 0.55 + 0.45 * motion.tab_progress;
+        let ui_opacity = motion.inactive_ui_opacity;
+        let tab_opacity = (0.55 + 0.45 * motion.tab_progress) * ui_opacity;
         let tab_offset = (1.0 - motion.tab_progress) * 4.0;
 
         let root = div()
@@ -350,7 +396,7 @@ impl Render for AfterlifeApp {
                         .absolute()
                         .top(px(96.0 - (1.0 - drawer_t) * 8.0))
                         .right(SpacePx::S16.px())
-                        .opacity(drawer_t)
+                        .opacity(drawer_t * ui_opacity)
                         .child(render_appearance_drawer(
                             self,
                             &st,

@@ -542,7 +542,18 @@ pub fn render_appearance_drawer(
                         }),
                 )
                 .child(render_tint_section(st, cx))
-                .child(render_section_label(st, "Power", SpacePx::S8))
+                .child(render_section_label(st, "Inactive", SpacePx::S8))
+                .child(render_toggle_row(
+                    st,
+                    "toggle-fade-inactive",
+                    "Fade UI After 10s",
+                    st.fade_ui_when_inactive,
+                    motion.toggle_fade_inactive_progress,
+                    |st| {
+                        st.fade_ui_when_inactive = !st.fade_ui_when_inactive;
+                    },
+                    cx,
+                ))
                 .child(render_toggle_row(
                     st,
                     "toggle-pause-inactive",

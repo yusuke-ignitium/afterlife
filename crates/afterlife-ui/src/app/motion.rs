@@ -17,6 +17,10 @@ pub const TAB_ENTER_MS: u64 = 260;
 pub const SELECTION_MS: u64 = 280;
 pub const TOGGLE_MS: u64 = 220;
 pub const PULSE_MS: u64 = 300;
+pub const INACTIVE_FADE_DELAY: Duration = Duration::from_secs(10);
+pub const INACTIVE_FADE_IN_MS: u64 = 1400;
+pub const INACTIVE_FADE_OUT_MS: u64 = 260;
+pub const INACTIVE_UI_MIN_OPACITY: f32 = 0.24;
 
 pub fn ease_out_cubic(t: f32) -> f32 {
     let clamped = t.clamp(0.0, 1.0);
@@ -120,6 +124,8 @@ pub struct MotionSnapshot {
     pub toggle_youtube_mirror_progress: f32,
     pub toggle_backdrop_progress: f32,
     pub toggle_pause_progress: f32,
+    pub toggle_fade_inactive_progress: f32,
+    pub inactive_ui_opacity: f32,
     pub selection_weights: HashMap<JobId, f32>,
     pub pulses: HashMap<String, f32>,
     pub animating: bool,
@@ -150,6 +156,8 @@ pub struct UiMotion {
     toggle_youtube_mirror: ScalarTransition,
     toggle_backdrop: ScalarTransition,
     toggle_pause: ScalarTransition,
+    toggle_fade_inactive: ScalarTransition,
+    inactive_ui_opacity: ScalarTransition,
     selection_weights: HashMap<JobId, ScalarTransition>,
     pulses: HashMap<String, Instant>,
     initialized: bool,
@@ -176,6 +184,8 @@ impl UiMotion {
             toggle_youtube_mirror: ScalarTransition::settled(1.0, now),
             toggle_backdrop: ScalarTransition::settled(0.0, now),
             toggle_pause: ScalarTransition::settled(1.0, now),
+            toggle_fade_inactive: ScalarTransition::settled(0.0, now),
+            inactive_ui_opacity: ScalarTransition::settled(1.0, now),
             selection_weights: HashMap::new(),
             pulses: HashMap::new(),
             initialized: false,
@@ -186,9 +196,15 @@ impl UiMotion {
         self.pulses.insert(key.into(), Instant::now());
     }
 
-    pub fn sync(&mut self, st: &AppState, now: Instant) -> MotionSnapshot {
+    pub fn sync(
+        &mut self,
+        st: &AppState,
+        inactive_dim_active: bool,
+        now: Instant,
+    ) -> MotionSnapshot {
         let selected_job = st.detail_open.then(|| st.selected_job().cloned()).flatten();
         let selected_id = selected_job.as_ref().map(|j| j.id.clone());
+        let should_dim_ui = st.fade_ui_when_inactive && inactive_dim_active;
 
         if !self.initialized {
             self.drawer = ScalarTransition::settled(if st.settings_open { 1.0 } else { 0.0 }, now);
@@ -220,6 +236,18 @@ impl UiMotion {
                     1.0
                 } else {
                     0.0
+                },
+                now,
+            );
+            self.toggle_fade_inactive = ScalarTransition::settled(
+                if st.fade_ui_when_inactive { 1.0 } else { 0.0 },
+                now,
+            );
+            self.inactive_ui_opacity = ScalarTransition::settled(
+                if should_dim_ui {
+                    INACTIVE_UI_MIN_OPACITY
+                } else {
+                    1.0
                 },
                 now,
             );
@@ -297,6 +325,21 @@ impl UiMotion {
                 Duration::from_millis(TOGGLE_MS),
                 now,
             );
+            self.toggle_fade_inactive.set_target(
+                if st.fade_ui_when_inactive { 1.0 } else { 0.0 },
+                Duration::from_millis(TOGGLE_MS),
+                now,
+            );
+            let (inactive_target, inactive_ms) = if should_dim_ui {
+                (INACTIVE_UI_MIN_OPACITY, INACTIVE_FADE_IN_MS)
+            } else {
+                (1.0, INACTIVE_FADE_OUT_MS)
+            };
+            self.inactive_ui_opacity.set_target(
+                inactive_target,
+                Duration::from_millis(inactive_ms),
+                now,
+            );
 
             let sel_dur = Duration::from_millis(SELECTION_MS);
             if let Some(id) = &selected_id {
@@ -372,6 +415,8 @@ impl UiMotion {
             || self.toggle_youtube_mirror.is_active(now)
             || self.toggle_backdrop.is_active(now)
             || self.toggle_pause.is_active(now)
+            || self.toggle_fade_inactive.is_active(now)
+            || self.inactive_ui_opacity.is_active(now)
             || any_selection_active
             || !active_pulses.is_empty();
 
@@ -385,6 +430,8 @@ impl UiMotion {
             toggle_youtube_mirror_progress: self.toggle_youtube_mirror.value(now),
             toggle_backdrop_progress: self.toggle_backdrop.value(now),
             toggle_pause_progress: self.toggle_pause.value(now),
+            toggle_fade_inactive_progress: self.toggle_fade_inactive.value(now),
+            inactive_ui_opacity: self.inactive_ui_opacity.value(now),
             selection_weights,
             pulses: active_pulses,
             animating,
@@ -440,5 +487,49 @@ mod tests {
         let premul_r_sel = selected.r * selected.a;
         assert!(premul_r_mid <= premul_r_card + 1e-5);
         assert!(premul_r_mid >= premul_r_sel - 1e-5);
+    }
+
+    #[test]
+    fn inactive_fade_transitions_smoothly_and_preserves_visibility_floor() {
+        let mut st = AppState::new();
+        st.fade_ui_when_inactive = false;
+        let t0 = Instant::now();
+        let mut motion = UiMotion::new();
+
+        let snap0 = motion.sync(&st, true, t0);
+        assert_eq!(snap0.inactive_ui_opacity, 1.0);
+        assert!(!snap0.animating);
+
+        st.fade_ui_when_inactive = true;
+        let t1 = t0 + Duration::from_millis(10);
+        let snap1 = motion.sync(&st, true, t1);
+        assert!(snap1.animating);
+
+        let t_mid = t1 + Duration::from_millis(INACTIVE_FADE_IN_MS / 2);
+        let snap_mid = motion.sync(&st, true, t_mid);
+        assert!(snap_mid.inactive_ui_opacity < 0.8);
+        assert!(snap_mid.inactive_ui_opacity > INACTIVE_UI_MIN_OPACITY);
+        assert!(snap_mid.animating);
+
+        let t_settled = t1 + Duration::from_millis(INACTIVE_FADE_IN_MS + 50);
+        let snap_settled = motion.sync(&st, true, t_settled);
+        assert!((snap_settled.inactive_ui_opacity - INACTIVE_UI_MIN_OPACITY).abs() < 1e-4);
+        assert!(snap_settled.inactive_ui_opacity > 0.15);
+        assert!(!snap_settled.animating);
+
+        let t_wake = t_settled + Duration::from_millis(10);
+        let _ = motion.sync(&st, false, t_wake);
+        let snap_waking = motion.sync(&st, false, t_wake + Duration::from_millis(100));
+        assert!(snap_waking.inactive_ui_opacity > INACTIVE_UI_MIN_OPACITY);
+        assert!(snap_waking.inactive_ui_opacity < 1.0);
+        assert!(snap_waking.animating);
+
+        let snap_restored = motion.sync(
+            &st,
+            false,
+            t_wake + Duration::from_millis(INACTIVE_FADE_OUT_MS + 50),
+        );
+        assert_eq!(snap_restored.inactive_ui_opacity, 1.0);
+        assert!(!snap_restored.animating);
     }
 }
