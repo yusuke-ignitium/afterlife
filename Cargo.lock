@@ -123,6 +123,7 @@ dependencies = [
  "afterlife-protocol",
  "afterlife-storage",
  "axum",
+ "block",
  "cocoa 0.26.0",
  "gpui",
  "objc",
