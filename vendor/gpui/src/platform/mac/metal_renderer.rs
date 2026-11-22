@@ -5522,7 +5522,10 @@ mod offscreen_gpu_bench {
             );
         }
         renderer.instance_buffer_pool.lock().release(instance_buffer);
-        let encode_us = sample.map(|s| s.encode_us).unwrap_or(0);
+        let encode_us = sample.as_ref().map(|s| s.encode_us).unwrap_or(0);
+        if let Some(s) = sample {
+            crate::perf_telemetry::record_metal_frame(s);
+        }
         (encode_us, cb_gpu_us)
     }
 
@@ -5861,10 +5864,19 @@ mod offscreen_gpu_bench {
             }
         }
         crate::clear_particle_wave_live_video_frame();
+        crate::set_particle_wave_tuning(ParticleWaveTuning::default());
+    }
+
+    fn gpu_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     #[test]
     fn test_liquid_glass_never_samples_uncopied_backdrop() {
+        let _guard = gpu_test_lock();
         let vw = 2400u32;
         let vh = 1800u32;
         let mut renderer = MetalRenderer::new(Arc::new(Mutex::new(InstanceBufferPool::default())));
@@ -5872,14 +5884,7 @@ mod offscreen_gpu_bench {
             DevicePixels(vw as i32),
             DevicePixels(vh as i32),
         ));
-        let desc = metal::TextureDescriptor::new();
-        desc.set_texture_type(metal::MTLTextureType::D2);
-        desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-        desc.set_width(vw as u64);
-        desc.set_height(vh as u64);
-        desc.set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
-        desc.set_storage_mode(metal::MTLStorageMode::Managed);
-        let target = renderer.device.new_texture(&desc);
+        let target = make_offscreen_target(&renderer.device, vw, vh);
         let viewport = size(DevicePixels(vw as i32), DevicePixels(vh as i32));
 
         let full_mask = ContentMask {
@@ -6009,7 +6014,25 @@ mod offscreen_gpu_bench {
         cb.commit();
         cb.wait_until_completed();
 
+        crate::perf_telemetry::set_enabled(true);
+        crate::perf_telemetry::reset();
         let _ = render_one_frame_sync(&mut renderer, &scene, &target, viewport, Some(1.016));
+        let metal_samples = crate::perf_telemetry::drain_metal_samples();
+        crate::perf_telemetry::set_enabled(false);
+        let sample = metal_samples
+            .last()
+            .expect("metal perf sample must be recorded");
+        assert!(
+            sample.blit_count <= 2,
+            "sibling glass cards triggered cascading blits: blit_count={} (expected <= 2)",
+            sample.blit_count
+        );
+        assert!(
+            sample.encoder_switches <= 3,
+            "excessive render encoder switches for sibling glass cards: switches={} (expected <= 3)",
+            sample.encoder_switches
+        );
+
         let pixels = readback_bgra(&target, vw, vh);
         let mut magenta_leak_px = 0usize;
         let mut worst_rg_diff = 0i32;
@@ -6028,5 +6051,461 @@ mod offscreen_gpu_bench {
             magenta_leak_px, 0,
             "LiquidGlass sampled uncopied backdrop_texture ({magenta_leak_px} leaked pixels, worst_rg_diff={worst_rg_diff})"
         );
+
+        let mut seam_scene = Scene::default();
+        seam_scene.quads.push(Quad {
+            order: 0,
+            border_style: crate::BorderStyle::Solid,
+            bounds: full_mask.bounds,
+            content_mask: full_mask.clone(),
+            background: crate::Background::from(crate::rgba(0x406080ff)),
+            border_color: Hsla::transparent_black(),
+            corner_radii: Corners::all(ScaledPixels(0.0)),
+            border_widths: Edges::all(ScaledPixels(0.0)),
+        });
+        let mut seam_bg = crate::Background::from(crate::rgba(0x10203060));
+        seam_bg.tag = crate::BackgroundTag::LiquidGlass;
+        seam_bg.gradient_angle_or_pattern_height = 60.0;
+        seam_bg.colors[0].percentage = 40.0;
+        seam_bg.colors[0].color.s = 0.0;
+        seam_bg.colors[0].color.a = 0.24;
+        seam_bg.colors[1].percentage = 0.0;
+        seam_bg.colors[1].color.s = 0.0;
+        seam_scene.quads.push(Quad {
+            order: 1,
+            border_style: crate::BorderStyle::Solid,
+            bounds: Bounds {
+                origin: point(ScaledPixels(200.0), ScaledPixels(200.0)),
+                size: size(ScaledPixels(1200.0), ScaledPixels(800.0)),
+            },
+            content_mask: full_mask,
+            background: seam_bg,
+            border_color: Hsla::transparent_black(),
+            corner_radii: Corners::all(ScaledPixels(24.0)),
+            border_widths: Edges::all(ScaledPixels(0.0)),
+        });
+        seam_scene.finish();
+        let _ = render_one_frame_sync(&mut renderer, &seam_scene, &target, viewport, Some(1.0));
+        let seam_px = readback_bgra(&target, vw, vh);
+        let at = |x: u32, y: u32| -> [u8; 4] {
+            let i = ((y * vw + x) * 4) as usize;
+            [seam_px[i], seam_px[i + 1], seam_px[i + 2], seam_px[i + 3]]
+        };
+        let center_col = at(800, 600);
+        for x in 290..1310 {
+            let p = at(x, 600);
+            let diff = p[0].abs_diff(center_col[0]).max(p[1].abs_diff(center_col[1])).max(p[2].abs_diff(center_col[2]));
+            assert!(
+                diff <= 1,
+                "rim/interior seam detected at ({x}, 600): got {:?} expected {:?} (diff={diff})",
+                p,
+                center_col
+            );
+        }
+        for y in 290..910 {
+            let p = at(800, y);
+            let diff = p[0].abs_diff(center_col[0]).max(p[1].abs_diff(center_col[1])).max(p[2].abs_diff(center_col[2]));
+            assert!(
+                diff <= 1,
+                "rim/interior seam detected at (800, {y}): got {:?} expected {:?} (diff={diff})",
+                p,
+                center_col
+            );
+        }
+    }
+
+    #[test]
+    fn test_particle_wave_tile_grout_sharpness() {
+        let _guard = gpu_test_lock();
+        let vw = 480u32;
+        let vh = 360u32;
+        let mut renderer = MetalRenderer::new(Arc::new(Mutex::new(InstanceBufferPool::default())));
+        renderer.update_drawable_size(size(
+            DevicePixels(vw as i32),
+            DevicePixels(vh as i32),
+        ));
+        let target = make_offscreen_target(&renderer.device, vw, vh);
+        let viewport = size(DevicePixels(vw as i32), DevicePixels(vh as i32));
+        let full_mask = ContentMask {
+            bounds: Bounds {
+                origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(vw as f32), ScaledPixels(vh as f32)),
+            },
+            bottom_fade: ScaledPixels(0.0),
+        };
+
+        let mut pw_bg = crate::Background::from(crate::rgba(0x10141aff));
+        pw_bg.tag = crate::BackgroundTag::ParticleWave;
+        pw_bg.gradient_angle_or_pattern_height = 1.5;
+        let mut scene = Scene::default();
+        scene.quads.push(Quad {
+            order: 0,
+            border_style: crate::BorderStyle::Solid,
+            bounds: full_mask.bounds,
+            content_mask: full_mask,
+            background: pw_bg,
+            border_color: Hsla::transparent_black(),
+            corner_radii: Corners::all(ScaledPixels(0.0)),
+            border_widths: Edges::all(ScaledPixels(0.0)),
+        });
+        scene.finish();
+
+        let solid_w = 240u32;
+        let solid_h = 180u32;
+        let mut bright_rgba = vec![0u8; (solid_w * solid_h * 4) as usize];
+        for px in bright_rgba.chunks_exact_mut(4) {
+            px[0] = 210;
+            px[1] = 210;
+            px[2] = 210;
+            px[3] = 255;
+        }
+        crate::set_particle_wave_live_video_frame(solid_w, solid_h, bright_rgba);
+
+        for tile_px in [2u32, 3u32, 6u32] {
+            crate::set_particle_wave_tuning(ParticleWaveTuning {
+                image_enabled: true,
+                apple_music_artwork_enabled: false,
+                youtube_mirror_enabled: true,
+                tile_size_px: tile_px as f32,
+                image_hold_secs: 60.0,
+                image_brightness: 1.0,
+                image_peak_luminance: 0.9,
+                image_saturation: 0.5,
+            });
+            let _ = render_one_frame_sync(&mut renderer, &scene, &target, viewport, Some(2.5));
+            let pixels = readback_bgra(&target, vw, vh);
+            let luma_at = |x: u32, y: u32| -> f64 {
+                let i = ((y * vw + x) * 4) as usize;
+                0.114 * pixels[i] as f64
+                    + 0.587 * pixels[i + 1] as f64
+                    + 0.299 * pixels[i + 2] as f64
+            };
+
+            let mut x_sum = vec![0.0f64; tile_px as usize];
+            let mut x_cnt = vec![0usize; tile_px as usize];
+            let mut y_sum = vec![0.0f64; tile_px as usize];
+            let mut y_cnt = vec![0usize; tile_px as usize];
+            for y in 60..(vh - 60) {
+                for x in 60..(vw - 60) {
+                    let l = luma_at(x, y);
+                    let px = (x % tile_px) as usize;
+                    let py = (y % tile_px) as usize;
+                    x_sum[px] += l;
+                    x_cnt[px] += 1;
+                    y_sum[py] += l;
+                    y_cnt[py] += 1;
+                }
+            }
+            let x_means: Vec<f64> = x_sum
+                .iter()
+                .zip(x_cnt.iter())
+                .map(|(s, c)| s / (*c as f64))
+                .collect();
+            let y_means: Vec<f64> = y_sum
+                .iter()
+                .zip(y_cnt.iter())
+                .map(|(s, c)| s / (*c as f64))
+                .collect();
+            let x_contrast = x_means.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+                - x_means.iter().cloned().fold(f64::INFINITY, f64::min);
+            let y_contrast = y_means.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+                - y_means.iter().cloned().fold(f64::INFINITY, f64::min);
+            let min_expected_contrast = match tile_px {
+                2 => 12.0,
+                3 => 4.5,
+                _ => 12.0,
+            };
+            assert!(
+                x_contrast >= min_expected_contrast && y_contrast >= min_expected_contrast,
+                "tile grout blurred/collapsed at tile_size={tile_px}px: x_contrast={x_contrast:.2} y_contrast={y_contrast:.2} (x_means={x_means:?}, y_means={y_means:?})"
+            );
+
+            let best_x = x_means
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .unwrap()
+                .0 as u32;
+            let dark_x = x_means
+                .iter()
+                .enumerate()
+                .min_by(|a, b| a.1.total_cmp(b.1))
+                .unwrap()
+                .0 as u32;
+            for band_x0 in [60u32, 200u32, 340u32] {
+                let mut bright_s = 0.0;
+                let mut dark_s = 0.0;
+                let mut n = 0usize;
+                for y in 80..(vh - 80) {
+                    for x in band_x0..(band_x0 + 60) {
+                        if x % tile_px == best_x {
+                            bright_s += luma_at(x, y);
+                            n += 1;
+                        } else if x % tile_px == dark_x {
+                            dark_s += luma_at(x, y);
+                        }
+                    }
+                }
+                let local_diff = (bright_s - dark_s) / (n.max(1) as f64);
+                assert!(
+                    local_diff >= min_expected_contrast * 0.7,
+                    "tile phase drift/moire at tile_size={tile_px}px band_x={band_x0}: local_diff={local_diff:.2}"
+                );
+            }
+        }
+        crate::clear_particle_wave_live_video_frame();
+        crate::set_particle_wave_tuning(ParticleWaveTuning::default());
+    }
+
+    #[test]
+    fn test_live_video_backdrop_alignment_and_rgb_formats() {
+        let _guard = gpu_test_lock();
+        let mut renderer = MetalRenderer::new(Arc::new(Mutex::new(InstanceBufferPool::default())));
+        let mut pw_bg = crate::Background::from(crate::rgba(0x040507ff));
+        pw_bg.tag = crate::BackgroundTag::ParticleWave;
+        pw_bg.gradient_angle_or_pattern_height = 1.5;
+
+        crate::set_particle_wave_tuning(ParticleWaveTuning {
+            image_enabled: true,
+            apple_music_artwork_enabled: false,
+            youtube_mirror_enabled: true,
+            tile_size_px: 2.0,
+            image_hold_secs: 60.0,
+            image_brightness: 1.0,
+            image_peak_luminance: 0.95,
+            image_saturation: 1.3,
+        });
+
+        let vid_w = 600u32;
+        let vid_h = 338u32;
+        let mut rgba = vec![0u8; (vid_w * vid_h * 4) as usize];
+        let mut rgb = vec![0u8; (vid_w * vid_h * 3) as usize];
+        for y in 0..vid_h {
+            for x in 0..vid_w {
+                let (r, g, b) = if x < vid_w / 3 {
+                    (230u8, 25u8, 25u8)
+                } else if x < (vid_w * 2) / 3 {
+                    (25u8, 230u8, 25u8)
+                } else {
+                    (25u8, 25u8, 230u8)
+                };
+                let i4 = ((y * vid_w + x) * 4) as usize;
+                rgba[i4] = r;
+                rgba[i4 + 1] = g;
+                rgba[i4 + 2] = b;
+                rgba[i4 + 3] = 255;
+                let i3 = ((y * vid_w + x) * 3) as usize;
+                rgb[i3] = r;
+                rgb[i3 + 1] = g;
+                rgb[i3 + 2] = b;
+            }
+        }
+
+        let mut jpeg_bytes = Vec::new();
+        let img = image::RgbImage::from_raw(vid_w, vid_h, rgb).expect("rgb image");
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 98);
+        enc.encode_image(&img).expect("jpeg encode");
+
+        let mean_rgb = |pixels: &[u8], w: u32, x0: u32, y0: u32, x1: u32, y1: u32| -> (f64, f64, f64) {
+            let mut r = 0.0;
+            let mut g = 0.0;
+            let mut b = 0.0;
+            let mut n = 0usize;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = ((y * w + x) * 4) as usize;
+                    b += pixels[i] as f64;
+                    g += pixels[i + 1] as f64;
+                    r += pixels[i + 2] as f64;
+                    n += 1;
+                }
+            }
+            let d = n.max(1) as f64;
+            (r / d, g / d, b / d)
+        };
+
+        for (case_name, case_w, case_h, check_letterbox) in [
+            ("16:10_letterbox_resample", 1200u32, 754u32, true),
+            ("16:9_exact_1to1_fastpath", 1200u32, 676u32, false),
+        ] {
+            renderer.update_drawable_size(size(
+                DevicePixels(case_w as i32),
+                DevicePixels(case_h as i32),
+            ));
+            let case_target = make_offscreen_target(&renderer.device, case_w, case_h);
+            let case_viewport = size(DevicePixels(case_w as i32), DevicePixels(case_h as i32));
+            let case_mask = ContentMask {
+                bounds: Bounds {
+                    origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                    size: size(ScaledPixels(case_w as f32), ScaledPixels(case_h as f32)),
+                },
+                bottom_fade: ScaledPixels(0.0),
+            };
+            let mut case_scene = Scene::default();
+            case_scene.quads.push(Quad {
+                order: 0,
+                border_style: crate::BorderStyle::Solid,
+                bounds: case_mask.bounds,
+                content_mask: case_mask,
+                background: pw_bg,
+                border_color: Hsla::transparent_black(),
+                corner_radii: Corners::all(ScaledPixels(0.0)),
+                border_widths: Edges::all(ScaledPixels(0.0)),
+            });
+            case_scene.finish();
+
+            crate::set_particle_wave_live_video_frame(vid_w, vid_h, rgba.clone());
+            let _ = render_one_frame_sync(&mut renderer, &case_scene, &case_target, case_viewport, Some(4.0));
+            let px_rgba = readback_bgra(&case_target, case_w, case_h);
+
+            let y0 = 100u32;
+            let y1 = case_h - 100;
+            let left_band = mean_rgb(&px_rgba, case_w, 80, y0, 320, y1);
+            let mid_band = mean_rgb(&px_rgba, case_w, 480, y0, 720, y1);
+            let right_band = mean_rgb(&px_rgba, case_w, 880, y0, 1120, y1);
+            assert!(
+                left_band.0 > left_band.1 + 15.0 && left_band.0 > left_band.2 + 15.0,
+                "[{case_name}] left red band misrouted/swapped: {left_band:?}"
+            );
+            assert!(
+                mid_band.1 > mid_band.0 + 15.0 && mid_band.1 > mid_band.2 + 15.0,
+                "[{case_name}] center green band misrouted/swapped: {mid_band:?}"
+            );
+            assert!(
+                right_band.2 > right_band.0 + 15.0 && right_band.2 > right_band.1 + 15.0,
+                "[{case_name}] right blue band misrouted/swapped: {right_band:?}"
+            );
+
+            if check_letterbox {
+                let top_bar = mean_rgb(&px_rgba, case_w, 80, 0, 320, 24);
+                let bot_bar = mean_rgb(&px_rgba, case_w, 80, case_h - 24, 320, case_h);
+                assert!(
+                    top_bar.0 < left_band.0 - 15.0
+                        && bot_bar.0 < left_band.0 - 15.0
+                        && top_bar.0 < 20.0
+                        && bot_bar.0 < 20.0,
+                    "[{case_name}] 16:9 video leaked into 16:10 letterbox bars: top={top_bar:?} bot={bot_bar:?} left_band={left_band:?}"
+                );
+            }
+
+            crate::set_particle_wave_live_video_encoded(&jpeg_bytes, 16, 2560, 1440)
+                .expect("decode rgb8 jpeg");
+            let _ = render_one_frame_sync(&mut renderer, &case_scene, &case_target, case_viewport, Some(4.0));
+            let px_rgb8 = readback_bgra(&case_target, case_w, case_h);
+
+            let left_rgb8 = mean_rgb(&px_rgb8, case_w, 80, y0, 320, y1);
+            let mid_rgb8 = mean_rgb(&px_rgb8, case_w, 480, y0, 720, y1);
+            let right_rgb8 = mean_rgb(&px_rgb8, case_w, 880, y0, 1120, y1);
+            for (name, a, b) in [
+                ("left", left_band, left_rgb8),
+                ("mid", mid_band, mid_rgb8),
+                ("right", right_band, right_rgb8),
+            ] {
+                let d = (a.0 - b.0).abs().max((a.1 - b.1).abs()).max((a.2 - b.2).abs());
+                assert!(
+                    d <= 4.0,
+                    "[{case_name}] RGB8 vs RGBA8 live video mismatch in {name} band: rgba={a:?} rgb8={b:?} (diff={d:.2})"
+                );
+            }
+        }
+        crate::clear_particle_wave_live_video_frame();
+        crate::set_particle_wave_tuning(ParticleWaveTuning::default());
+    }
+
+    #[test]
+    fn test_shadow_9slice_continuity_and_tail_cutoff() {
+        let _guard = gpu_test_lock();
+        let vw = 640u32;
+        let vh = 480u32;
+        let mut renderer = MetalRenderer::new(Arc::new(Mutex::new(InstanceBufferPool::default())));
+        renderer.update_drawable_size(size(
+            DevicePixels(vw as i32),
+            DevicePixels(vh as i32),
+        ));
+        let target = make_offscreen_target(&renderer.device, vw, vh);
+        let viewport = size(DevicePixels(vw as i32), DevicePixels(vh as i32));
+        let full_mask = ContentMask {
+            bounds: Bounds {
+                origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(vw as f32), ScaledPixels(vh as f32)),
+            },
+            bottom_fade: ScaledPixels(0.0),
+        };
+
+        for (alpha_u8, sigma_mult) in [(20u8, 2.4f32), (51u8, 2.65f32), (128u8, 3.0f32)] {
+            let mut scene = Scene::default();
+            scene.quads.push(Quad {
+                order: 0,
+                border_style: crate::BorderStyle::Solid,
+                bounds: full_mask.bounds,
+                content_mask: full_mask.clone(),
+                background: crate::Background::from(crate::rgba(0xffffffff)),
+                border_color: Hsla::transparent_black(),
+                corner_radii: Corners::all(ScaledPixels(0.0)),
+                border_widths: Edges::all(ScaledPixels(0.0)),
+            });
+            let sigma = 16.0f32;
+            scene.shadows.push(Shadow {
+                order: 1,
+                blur_radius: ScaledPixels(sigma),
+                bounds: Bounds {
+                    origin: point(ScaledPixels(160.0), ScaledPixels(120.0)),
+                    size: size(ScaledPixels(320.0), ScaledPixels(240.0)),
+                },
+                corner_radii: Corners::all(ScaledPixels(14.0)),
+                content_mask: full_mask.clone(),
+                color: crate::rgba(alpha_u8 as u32).into(),
+            });
+            scene.finish();
+
+            let _ = render_one_frame_sync(&mut renderer, &scene, &target, viewport, Some(1.0));
+            let px = readback_bgra(&target, vw, vh);
+            let luma = |x: u32, y: u32| -> i32 { px[((y * vw + x) * 4 + 1) as usize] as i32 };
+
+            let cy = 240u32;
+            let cx = 320u32;
+            for x in cx..(vw - 1) {
+                let a = luma(x, cy);
+                let b = luma(x + 1, cy);
+                assert!(
+                    b + 1 >= a,
+                    "shadow horizontal non-monotonic seam at alpha={alpha_u8} x={x}->{}: {a} -> {b}",
+                    x + 1
+                );
+                assert!(
+                    (b - a).abs() <= 4,
+                    "shadow horizontal discontinuity at alpha={alpha_u8} x={x}->{}: {a} -> {b}",
+                    x + 1
+                );
+            }
+            for y in cy..(vh - 1) {
+                let a = luma(cx, y);
+                let b = luma(cx, y + 1);
+                assert!(
+                    b + 1 >= a,
+                    "shadow vertical non-monotonic seam at alpha={alpha_u8} y={y}->{}: {a} -> {b}",
+                    y + 1
+                );
+                assert!(
+                    (b - a).abs() <= 4,
+                    "shadow vertical discontinuity at alpha={alpha_u8} y={y}->{}: {a} -> {b}",
+                    y + 1
+                );
+            }
+
+            let margin = (sigma_mult * sigma).ceil() as u32;
+            let outer_x = (480 + margin).min(vw - 1);
+            let outer_y = (360 + margin).min(vh - 1);
+            assert!(
+                255 - luma(outer_x, cy) <= 2,
+                "shadow clipped harshly at right edge (alpha={alpha_u8}, x={outer_x}): luma={}",
+                luma(outer_x, cy)
+            );
+            assert!(
+                255 - luma(cx, outer_y) <= 2,
+                "shadow clipped harshly at bottom edge (alpha={alpha_u8}, y={outer_y}): luma={}",
+                luma(cx, outer_y)
+            );
+        }
     }
 }
