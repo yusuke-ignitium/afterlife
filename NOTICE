@@ -1,0 +1,32 @@
+Afterlife
+Copyright (c) 2026 yusuke-ignitium
+
+This project is licensed under the GNU Affero General Public License v3.0
+(AGPL-3.0-only). See the LICENSE file for the full license text.
+
+================================================================================
+Third-Party Components
+================================================================================
+
+GPUI (vendor/gpui)
+Copyright (c) Zed Industries, Inc.
+Licensed under the Apache License, Version 2.0 (see vendor/gpui/LICENSE-APACHE).
+
+This repository includes a modified copy of GPUI 0.2.2 (originally from
+https://github.com/zed-industries/zed). In accordance with Section 4(b) of the
+Apache License, Version 2.0, the following files in vendor/gpui have been added
+or modified by yusuke-ignitium (2026) to support Backdrop-Synced Liquid Glass,
+ParticleWave compute shading, live video backdrop streaming, bottom-fade
+clipping masks, and Metal GPU pass telemetry:
+
+  - vendor/gpui/src/color.rs
+  - vendor/gpui/src/elements/list.rs
+  - vendor/gpui/src/elements/uniform_list.rs
+  - vendor/gpui/src/gpui.rs
+  - vendor/gpui/src/perf_telemetry.rs (added)
+  - vendor/gpui/src/platform/linux/x11/clipboard.rs
+  - vendor/gpui/src/platform/mac/metal_renderer.rs
+  - vendor/gpui/src/platform/mac/shaders.metal
+  - vendor/gpui/src/platform/mac/window.rs
+  - vendor/gpui/src/style.rs
+  - vendor/gpui/src/window.rs

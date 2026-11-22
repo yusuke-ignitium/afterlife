@@ -2,6 +2,7 @@
 name = "afterlife-demos"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "border-demo"

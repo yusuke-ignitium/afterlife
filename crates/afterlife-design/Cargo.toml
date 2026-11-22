@@ -2,6 +2,7 @@
 name = "afterlife-design"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }

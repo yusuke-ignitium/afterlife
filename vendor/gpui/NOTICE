@@ -1,0 +1,21 @@
+GPUI (modified vendored copy)
+Original work: Copyright (c) Zed Industries, Inc.
+Source: https://github.com/zed-industries/zed (gpui 0.2.2)
+License: Apache License, Version 2.0 (see LICENSE-APACHE in this directory)
+
+Modifications Copyright (c) 2026 yusuke-ignitium
+
+In accordance with Section 4(b) of the Apache License, Version 2.0, the
+following files have been added or modified relative to upstream gpui 0.2.2:
+
+  - src/color.rs
+  - src/elements/list.rs
+  - src/elements/uniform_list.rs
+  - src/gpui.rs
+  - src/perf_telemetry.rs (added)
+  - src/platform/linux/x11/clipboard.rs
+  - src/platform/mac/metal_renderer.rs
+  - src/platform/mac/shaders.metal
+  - src/platform/mac/window.rs
+  - src/style.rs
+  - src/window.rs
