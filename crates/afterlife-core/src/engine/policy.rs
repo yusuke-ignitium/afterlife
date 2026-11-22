@@ -255,12 +255,26 @@ pub fn require_archive_authority(
     }
 }
 
+pub fn require_not_stopped(job: &Job) -> Result<(), TransitionError> {
+    if job.stopped {
+        return Err(TransitionError::JobStopped {
+            job_id: job.id.clone(),
+        });
+    }
+    Ok(())
+}
+
 pub fn require_mutation_lease(
     actor: &Actor,
     job: &Job,
     provided: Option<FencingToken>,
     at: TimestampMs,
 ) -> Result<(), TransitionError> {
+    if !actor.is_human() && job.stopped {
+        return Err(TransitionError::JobStopped {
+            job_id: job.id.clone(),
+        });
+    }
     match (actor.is_human(), provided, &job.lease) {
         (true, None, _) => Ok(()),
         (_, Some(tok), Some(lease)) => {

@@ -103,6 +103,12 @@ pub struct Job {
     pub pinned_philosophy_version: Option<PhilosophyVersion>,
     pub pinned_spec_version: Option<SpecVersion>,
     pub lease: Option<JobLease>,
+    #[serde(default)]
+    pub stopped: bool,
+    #[serde(default)]
+    pub stopped_at: Option<TimestampMs>,
+    #[serde(default)]
+    pub stopped_reason: Option<String>,
     pub artifacts: Vec<Artifact>,
     pub gate_verifications: Vec<GateVerification>,
     #[serde(default)]
@@ -148,6 +154,12 @@ pub struct ExecutionContext {
     pub owner_id: OwnerId,
     pub district_id: DistrictId,
     pub district_name: String,
+    #[serde(default)]
+    pub stopped: bool,
+    #[serde(default)]
+    pub stopped_at: Option<TimestampMs>,
+    #[serde(default)]
+    pub stopped_reason: Option<String>,
     pub philosophy: Philosophy,
     pub stage: StageDef,
     pub sub_stage: Option<SubStageDef>,

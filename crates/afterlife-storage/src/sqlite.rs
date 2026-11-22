@@ -37,6 +37,8 @@ fn event_type_name(ev: &JobEvent) -> &'static str {
         JobEvent::JobArchived { .. } => "job_archived",
         JobEvent::JobTransitioned { .. } => "job_transitioned",
         JobEvent::JobReworked { .. } => "job_reworked",
+        JobEvent::JobStopped { .. } => "job_stopped",
+        JobEvent::JobResumed { .. } => "job_resumed",
         JobEvent::JobClaimed { .. } => "job_claimed",
         JobEvent::JobLeaseRenewed { .. } => "job_lease_renewed",
         JobEvent::JobLeaseReleased { .. } => "job_lease_released",

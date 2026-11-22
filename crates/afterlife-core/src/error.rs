@@ -99,6 +99,12 @@ pub enum TransitionError {
         district_id: DistrictId,
         stage_id: StageId,
     },
+    JobStopped {
+        job_id: JobId,
+    },
+    JobNotStopped {
+        job_id: JobId,
+    },
     GateVerificationRequired {
         job_id: JobId,
         district_id: DistrictId,
@@ -144,6 +150,8 @@ impl TransitionError {
             Self::InvalidProposedTemplate { .. } => "invalid_proposed_template",
             Self::InvalidInput { .. } => "invalid_input",
             Self::JobAlreadyInDistrict { .. } => "job_already_in_district",
+            Self::JobStopped { .. } => "job_stopped",
+            Self::JobNotStopped { .. } => "job_not_stopped",
             Self::GateVerificationRequired { .. } => "gate_verification_required",
             Self::StepRecordIncomplete { .. } => "step_record_incomplete",
         }
@@ -268,6 +276,12 @@ impl fmt::Display for TransitionError {
                 f,
                 "job {job_id} is already in {district_id}/{stage_id}; agents cannot reassign in-district jobs"
             ),
+            Self::JobStopped { job_id } => {
+                write!(f, "job {job_id} is currently stopped by a human operator")
+            }
+            Self::JobNotStopped { job_id } => {
+                write!(f, "job {job_id} is not stopped")
+            }
             Self::GateVerificationRequired {
                 job_id,
                 district_id,

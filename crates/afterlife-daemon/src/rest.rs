@@ -29,6 +29,8 @@ pub fn authorize_command(
     let required = match cmd {
         EngineCommand::QueueJob { .. } => Scope::JobsCreate,
         EngineCommand::ApproveJob { .. }
+        | EngineCommand::StopJob { .. }
+        | EngineCommand::ResumeJob { .. }
         | EngineCommand::ApprovePhilosophyProposal { .. }
         | EngineCommand::ApproveSpecProposal { .. }
         | EngineCommand::ApproveTemplateProposal { .. } => Scope::ApprovalsDecide,
@@ -107,6 +109,8 @@ pub fn transition_error_to_dispatch(te: afterlife_core::TransitionError) -> Disp
         | afterlife_core::TransitionError::LeaseExpired { .. }
         | afterlife_core::TransitionError::LeaseMissing { .. }
         | afterlife_core::TransitionError::JobAlreadyInDistrict { .. }
+        | afterlife_core::TransitionError::JobStopped { .. }
+        | afterlife_core::TransitionError::JobNotStopped { .. }
         | afterlife_core::TransitionError::PhilosophyVersionConflict { .. }
         | afterlife_core::TransitionError::SpecVersionConflict { .. } => StatusCode::CONFLICT,
         _ => StatusCode::UNPROCESSABLE_ENTITY,

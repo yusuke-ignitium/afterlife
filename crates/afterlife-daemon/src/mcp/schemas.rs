@@ -9,7 +9,7 @@ pub fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "jobs_list",
-            "description": "List Jobs in the authenticated user's workspace with pagination (optionally filtered by district_id; archived jobs excluded unless include_archived is true).",
+            "description": "List Jobs in the authenticated user's workspace with pagination, including human-governed stopped state (optionally filtered by district_id; archived jobs excluded unless include_archived is true).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -23,7 +23,7 @@ pub fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "job_get_context",
-            "description": "Compile the full hierarchical ExecutionContext (District Philosophy + Stage Procedure + Sub-Stage Procedure + GateRubric + recent Feedbacks) for a Job.",
+            "description": "Compile the full hierarchical ExecutionContext (stopped state + District Philosophy + Stage Procedure + Sub-Stage Procedure + GateRubric + recent Feedbacks) for a Job.",
             "inputSchema": {
                 "type": "object",
                 "required": ["job_id"],

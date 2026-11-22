@@ -221,7 +221,7 @@ pub fn validate_command(
             }
             Ok(())
         }
-        EngineCommand::ReworkJob { reason, .. } => {
+        EngineCommand::ReworkJob { reason, .. } | EngineCommand::StopJob { reason, .. } => {
             if let Some(r) = reason {
                 require_non_empty("reason", r)?;
             }

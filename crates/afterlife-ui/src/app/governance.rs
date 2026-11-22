@@ -84,4 +84,51 @@ impl AppState {
         })
         .map(|_| ())
     }
+
+    pub fn stop_job(&mut self, job_id: JobId) -> Result<(), String> {
+        self.dispatch(EngineCommand::StopJob {
+            job_id,
+            reason: None,
+            expected_revision: None,
+            at: now_ms(),
+        })
+        .map(|_| ())
+    }
+
+    pub fn resume_job(&mut self, job_id: JobId) -> Result<(), String> {
+        self.dispatch(EngineCommand::ResumeJob {
+            job_id,
+            expected_revision: None,
+            at: now_ms(),
+        })
+        .map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use afterlife_core::DistrictId;
+
+    use super::*;
+
+    #[test]
+    fn app_state_stop_and_resume_sync_job_state_without_losing_stage() {
+        let mut st = AppState::new_ephemeral();
+        let dist_id = DistrictId::from("DIST-001");
+        let jid = st.engine_mut().queue_preset_job("UI Stop Target", Some(&dist_id));
+        st.engine_mut()
+            .assign_job_to_district(&jid, &dist_id)
+            .unwrap();
+        let loc_before = st.engine.find_job(&jid).unwrap().location.clone();
+
+        st.stop_job(jid.clone()).unwrap();
+        let stopped = st.engine.find_job(&jid).unwrap();
+        assert!(stopped.stopped);
+        assert_eq!(stopped.location, loc_before);
+
+        st.resume_job(jid.clone()).unwrap();
+        let resumed = st.engine.find_job(&jid).unwrap();
+        assert!(!resumed.stopped);
+        assert_eq!(resumed.location, loc_before);
+    }
 }

@@ -6,6 +6,7 @@ mod artifact_uris_and_specs;
 mod governance_and_rework;
 mod seed_invariants;
 mod step_artifacts;
+mod stop_resume;
 mod workflow_and_concurrency;
 
 pub(super) fn agent_actor(owner: &OwnerId, name: &str) -> Actor {

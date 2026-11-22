@@ -62,6 +62,22 @@ pub enum JobEvent {
         reason: Option<String>,
         at: TimestampMs,
     },
+    JobStopped {
+        owner_id: OwnerId,
+        actor: Actor,
+        job_id: JobId,
+        revision: u64,
+        revoked_fencing_token: Option<FencingToken>,
+        reason: Option<String>,
+        at: TimestampMs,
+    },
+    JobResumed {
+        owner_id: OwnerId,
+        actor: Actor,
+        job_id: JobId,
+        revision: u64,
+        at: TimestampMs,
+    },
     JobClaimed {
         owner_id: OwnerId,
         actor: Actor,
@@ -204,6 +220,8 @@ impl JobEvent {
             | Self::JobArchived { owner_id, .. }
             | Self::JobTransitioned { owner_id, .. }
             | Self::JobReworked { owner_id, .. }
+            | Self::JobStopped { owner_id, .. }
+            | Self::JobResumed { owner_id, .. }
             | Self::JobClaimed { owner_id, .. }
             | Self::JobLeaseRenewed { owner_id, .. }
             | Self::JobLeaseReleased { owner_id, .. }
@@ -229,6 +247,8 @@ impl JobEvent {
             | Self::JobArchived { at, .. }
             | Self::JobTransitioned { at, .. }
             | Self::JobReworked { at, .. }
+            | Self::JobStopped { at, .. }
+            | Self::JobResumed { at, .. }
             | Self::JobClaimed { at, .. }
             | Self::JobLeaseRenewed { at, .. }
             | Self::JobLeaseReleased { at, .. }

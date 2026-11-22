@@ -94,6 +94,17 @@ pub enum EngineCommand {
         reason: Option<String>,
         at: TimestampMs,
     },
+    StopJob {
+        job_id: JobId,
+        reason: Option<String>,
+        expected_revision: Option<u64>,
+        at: TimestampMs,
+    },
+    ResumeJob {
+        job_id: JobId,
+        expected_revision: Option<u64>,
+        at: TimestampMs,
+    },
     AttachArtifact {
         job_id: JobId,
         kind: ArtifactKind,

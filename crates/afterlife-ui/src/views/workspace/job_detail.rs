@@ -73,6 +73,8 @@ pub(super) fn render_artifact_row(
     )
 }
 
+const DETAIL_TOGGLE_WIDTH_PX: f32 = 76.0;
+
 pub(super) fn render_job_detail_sheet(
     st: &AppState,
     job: Job,
@@ -85,11 +87,13 @@ pub(super) fn render_job_detail_sheet(
     let detail_t = motion.detail_progress;
             let jid_adv = job.id.clone();
             let jid_rew = job.id.clone();
+            let jid_stop = job.id.clone();
             let jid_arch = job.id.clone();
             let in_district = matches!(job.location, JobLocation::InDistrict { .. });
+            let is_stopped = job.stopped;
             let at_approval_gate = st.engine.is_job_at_approval_gate(&job);
             let is_archived = matches!(job.location, JobLocation::Archived);
-            let stage_label = match &job.location {
+            let base_stage_label = match &job.location {
                 JobLocation::Queue => "Jobs (Queued)".to_string(),
                 JobLocation::InDistrict {
                     district_id,
@@ -116,6 +120,11 @@ pub(super) fn render_job_detail_sheet(
                     .map(|s| format!("{} (Done)", s.label))
                     .unwrap_or_else(|| "Completed".into()),
                 JobLocation::Archived => "Archived".into(),
+            };
+            let stage_label = if is_stopped {
+                format!("{base_stage_label} · Stopped")
+            } else {
+                base_stage_label
             };
             let swap_t = motion.detail_swap_progress;
             let inner_pt = (1.0 - detail_t) * 6.0 + (1.0 - swap_t) * 2.0;
@@ -238,7 +247,7 @@ pub(super) fn render_job_detail_sheet(
                                                 RadiusPx::R0,
                                                 None,
                                                 None,
-                                                p.accent,
+                                                if is_stopped { p.coral } else { p.accent },
                                                 st.show_centerline,
                                                 p.centerline,
                                                 [SharedString::from(job.id.to_string())
@@ -312,7 +321,11 @@ pub(super) fn render_job_detail_sheet(
                                                 RadiusPx::R0,
                                                 None,
                                                 None,
-                                                p.text_secondary,
+                                                if is_stopped {
+                                                    with_alpha(p.coral, 0.85)
+                                                } else {
+                                                    p.text_secondary
+                                                },
                                                 st.show_centerline,
                                                 p.centerline,
                                                 [SharedString::from(stage_label)
@@ -425,6 +438,36 @@ pub(super) fn render_job_detail_sheet(
                                         .gap(SpacePx::S8.px())
                                         .pt(SpacePx::S4.px())
                                         .when(in_district, |row| {
+                                            let stop_bg = if is_stopped {
+                                                p.active_bg
+                                            } else {
+                                                with_alpha(p.coral_inactive, 0.30)
+                                            };
+                                            let stop_fg = if is_stopped { p.accent } else { p.coral };
+                                            let stop_chip = div()
+                                                .id("detail-stop-resume")
+                                                .cursor_pointer()
+                                                .w(px(DETAIL_TOGGLE_WIDTH_PX))
+                                                .h(RowHeightPx::H28.px())
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded(p.radius_f32(&st.glass, 0.75))
+                                                .bg(stop_bg)
+                                                .hover(|s| s.opacity(0.88))
+                                                .text_size(FontPx::F12.px())
+                                                .text_color(stop_fg)
+                                                .child(if is_stopped { "Resume" } else { "Stop" })
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.state.update(cx, |st, _| {
+                                                        if is_stopped {
+                                                            let _ = st.resume_job(jid_stop.clone());
+                                                        } else {
+                                                            let _ = st.stop_job(jid_stop.clone());
+                                                        }
+                                                    });
+                                                    cx.notify();
+                                                }));
                                             row.when(at_approval_gate, |r| {
                                                 r.child(chip_btn(
                                                     st,
@@ -447,6 +490,7 @@ pub(super) fn render_job_detail_sheet(
                                                     cx,
                                                 ))
                                             })
+                                            .child(stop_chip)
                                             .child(chip_btn(
                                                 st,
                                                 "detail-rework",

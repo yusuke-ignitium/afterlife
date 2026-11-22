@@ -1,6 +1,7 @@
 pub mod command;
 mod governance;
 pub mod policy;
+mod stop_resume;
 pub mod validate;
 pub mod validation;
 
@@ -205,6 +206,9 @@ impl AfterlifeEngine {
             owner_id: self.owner_id.clone(),
             district_id: district.id.clone(),
             district_name: district.name.clone(),
+            stopped: job.stopped,
+            stopped_at: job.stopped_at,
+            stopped_reason: job.stopped_reason.clone(),
             philosophy,
             gate_rubric: stage.gate_rubric.clone(),
             stage,
@@ -286,6 +290,9 @@ impl AfterlifeEngine {
                     pinned_philosophy_version: None,
                     pinned_spec_version: None,
                     lease: None,
+                    stopped: false,
+                    stopped_at: None,
+                    stopped_reason: None,
                     artifacts: vec![Artifact::simple(
                         format!("{id}-drop"),
                         "queue-drop.json",
@@ -392,6 +399,9 @@ impl AfterlifeEngine {
                 let from = job.location.clone();
                 job.location = JobLocation::Archived;
                 job.lease = None;
+                job.stopped = false;
+                job.stopped_at = None;
+                job.stopped_reason = None;
                 job.revision += 1;
                 job.updated_at = at;
                 let rev = job.revision;
@@ -522,6 +532,7 @@ impl AfterlifeEngine {
                             reason: "cannot claim completed or archived job".into(),
                         });
                     }
+                    policy::require_not_stopped(job)?;
                     if let Some((cur_dist, cur_stage)) = self.current_stage_for_job(job) {
                         policy::require_stage_authority(actor, cur_dist, cur_stage, "claim")?;
                     }
@@ -579,6 +590,7 @@ impl AfterlifeEngine {
                     let job = self
                         .find_job(&job_id)
                         .ok_or_else(|| TransitionError::JobNotFound(job_id.clone()))?;
+                    policy::require_not_stopped(job)?;
                     if let Some((cur_dist, cur_stage)) = self.current_stage_for_job(job) {
                         policy::require_stage_authority(actor, cur_dist, cur_stage, "heartbeat")?;
                     }
@@ -982,6 +994,9 @@ impl AfterlifeEngine {
                 let from = target.location.clone();
                 target.location = to.clone();
                 target.lease = None;
+                target.stopped = false;
+                target.stopped_at = None;
+                target.stopped_reason = None;
                 if let Some(fid) = fb_id {
                     target.feedback_ids.push(fid);
                 }
@@ -1128,6 +1143,9 @@ impl AfterlifeEngine {
                 let from = target.location.clone();
                 target.location = to.clone();
                 target.lease = None;
+                target.stopped = false;
+                target.stopped_at = None;
+                target.stopped_reason = None;
                 if let Some(fid) = fb_id {
                     target.feedback_ids.push(fid);
                 }
@@ -1171,6 +1189,17 @@ impl AfterlifeEngine {
                 });
                 emitted
             }
+            EngineCommand::StopJob {
+                job_id,
+                reason,
+                expected_revision,
+                at,
+            } => self.apply_stop_job(owner_id, actor, job_id, reason, expected_revision, at)?,
+            EngineCommand::ResumeJob {
+                job_id,
+                expected_revision,
+                at,
+            } => self.apply_resume_job(owner_id, actor, job_id, expected_revision, at)?,
             EngineCommand::AttachArtifact {
                 job_id,
                 kind,

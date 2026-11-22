@@ -21,6 +21,19 @@ use crate::{
     views::root::AfterlifeApp,
 };
 
+const CARD_TOGGLE_WIDTH_PX: f32 = 66.0;
+
+fn pause_glyph(color: gpui::Rgba) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(2.0))
+        .child(div().w(px(2.0)).h(px(7.0)).rounded(px(1.0)).bg(color))
+        .child(div().w(px(2.0)).h(px(7.0)).rounded(px(1.0)).bg(color))
+        .into_any_element()
+}
+
 pub fn render_right_districts_pane(
     st: &AppState,
     motion: &MotionSnapshot,
@@ -347,21 +360,43 @@ pub fn render_right_districts_pane(
                                         && st.selected_proposal_id.is_none()
                                         && st.selected_job_id == job.id;
                                     let sel_t = motion.selection_weight(&job.id, is_sel);
+                                    let is_stopped = job.stopped;
+                                    let can_toggle = matches!(
+                                        job.location,
+                                        JobLocation::InDistrict { .. }
+                                    ) && !is_terminal;
                                     let target_bg = if is_gate {
                                         p.glass_gate
                                     } else {
                                         p.glass_selected
                                     };
                                     let base_border = if is_gate { p.amber } else { p.border_rim };
-                                    let card_bg = lerp_glass_rgba(p.glass_card, target_bg, sel_t);
-                                    let card_border = lerp_rgba(base_border, p.accent, sel_t);
-                                    let id_color = if is_gate {
+                                    let card_bg = if is_stopped {
+                                        with_alpha(p.coral_inactive, if is_sel { 0.20 } else { 0.12 })
+                                    } else {
+                                        lerp_glass_rgba(p.glass_card, target_bg, sel_t)
+                                    };
+                                    let card_border = if is_stopped {
+                                        with_alpha(p.coral, if is_sel { 0.72 } else { 0.28 })
+                                    } else {
+                                        lerp_rgba(base_border, p.accent, sel_t)
+                                    };
+                                    let id_color = if is_stopped {
+                                        p.coral
+                                    } else if is_gate {
                                         p.amber
                                     } else {
                                         lerp_rgba(p.text_secondary, p.accent, sel_t)
                                     };
+                                    let title_color = if is_stopped {
+                                        p.text_secondary
+                                    } else {
+                                        p.text_primary
+                                    };
                                     let hover_tint = with_alpha(
-                                        if is_gate {
+                                        if is_stopped {
+                                            p.coral_inactive
+                                        } else if is_gate {
                                             p.amber_inactive
                                         } else {
                                             p.accent_inactive
@@ -371,6 +406,7 @@ pub fn render_right_districts_pane(
                                     let grp =
                                         SharedString::from(format!("stage-job-grp-{}", job.id));
                                     let jid = job.id.clone();
+                                    let jid_toggle = job.id.clone();
                                     let sub_tag = match &job.location {
                                         JobLocation::InDistrict {
                                             sub_stage_id: Some(sid),
@@ -378,12 +414,76 @@ pub fn render_right_districts_pane(
                                         } => format!(" ({})", sid),
                                         _ => String::new(),
                                     };
+                                    let toggle_btn = can_toggle.then(|| {
+                                        let grp_hover = grp.clone();
+                                        div()
+                                            .id(SharedString::from(format!(
+                                                "stage-job-toggle-{}",
+                                                job.id
+                                            )))
+                                            .cursor_pointer()
+                                            .w(px(CARD_TOGGLE_WIDTH_PX))
+                                            .h(RowHeightPx::H22.px())
+                                            .rounded(p.radius_f32(&st.glass, 0.5))
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .justify_center()
+                                            .gap(SpacePx::S4.px())
+                                            .flex_shrink_0()
+                                            .when(!is_stopped, |d| {
+                                                d.opacity(0.0)
+                                                    .group_hover(grp_hover, |s| s.opacity(1.0))
+                                                    .hover(move |s| {
+                                                        s.bg(with_alpha(p.coral_inactive, 0.28))
+                                                    })
+                                                    .child(pause_glyph(with_alpha(
+                                                        p.text_secondary,
+                                                        0.85,
+                                                    )))
+                                                    .child(
+                                                        div()
+                                                            .text_size(FontPx::F11.px())
+                                                            .text_color(p.text_secondary)
+                                                            .child("Stop"),
+                                                    )
+                                            })
+                                            .when(is_stopped, |d| {
+                                                d.hover(move |s| {
+                                                    s.bg(with_alpha(p.accent_inactive, 0.28))
+                                                })
+                                                .child(
+                                                    div()
+                                                        .w(px(5.0))
+                                                        .h(px(5.0))
+                                                        .rounded(px(2.5))
+                                                        .bg(p.coral),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(FontPx::F11.px())
+                                                        .text_color(p.coral)
+                                                        .child("Resume"),
+                                                )
+                                            })
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.state.update(cx, |st, _| {
+                                                    if is_stopped {
+                                                        let _ = st.resume_job(jid_toggle.clone());
+                                                    } else {
+                                                        let _ = st.stop_job(jid_toggle.clone());
+                                                    }
+                                                });
+                                                cx.notify();
+                                            }))
+                                    });
                                     GlassSurface::card(&p, &st.glass)
                                         .pad(SpacePx::S8)
                                         .gap(SpacePx::S4)
                                         .border(Some(card_border))
                                         .bg(Some(card_bg))
-                                        .accent(if is_gate {
+                                        .accent(if is_stopped || is_gate {
                                             EdgeAccent::Gate
                                         } else {
                                             EdgeAccent::Selected
@@ -400,24 +500,36 @@ pub fn render_right_districts_pane(
                                             cx.notify();
                                         }))
                                         .child(card_hover_sheen(grp, card_radius, hover_tint))
-                                        .child(single_line(
-                                            RowHeightPx::H22,
-                                            SpacePx::S0,
-                                            SpacePx::S4,
-                                            FontPx::F11,
-                                            p.radius(RadiusPx::R2),
-                                            None,
-                                            None,
-                                            id_color,
-                                            st.show_centerline,
-                                            p.centerline,
-                                            [SharedString::from(format!("{}{}", job.id, sub_tag))
-                                                .into_any_element()],
-                                        ))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap(SpacePx::S8.px())
+                                                .child(single_line(
+                                                    RowHeightPx::H22,
+                                                    SpacePx::S0,
+                                                    SpacePx::S4,
+                                                    FontPx::F11,
+                                                    p.radius(RadiusPx::R2),
+                                                    None,
+                                                    None,
+                                                    id_color,
+                                                    st.show_centerline,
+                                                    p.centerline,
+                                                    [SharedString::from(format!(
+                                                        "{}{}",
+                                                        job.id, sub_tag
+                                                    ))
+                                                    .into_any_element()],
+                                                ))
+                                                .when_some(toggle_btn, |d, btn| d.child(btn)),
+                                        )
                                         .child(
                                             div()
                                                 .text_size(FontPx::F13.px())
-                                                .text_color(p.text_primary)
+                                                .text_color(title_color)
                                                 .child(linkified_text(
                                                     SharedString::from(format!("s-title-{}", job.id)),
                                                     &job.title,
