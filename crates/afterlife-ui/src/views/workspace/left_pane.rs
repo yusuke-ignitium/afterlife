@@ -19,7 +19,14 @@ use crate::{
         drag::{DragPreview, DraggedJob},
         inline_text::linkified_text,
     },
-    views::{root::AfterlifeApp, workspace::job_detail::render_job_detail_sheet},
+    views::{
+        root::AfterlifeApp,
+        workspace::{
+            job_detail::render_job_detail_sheet,
+            proposal_detail::render_proposal_detail_sheet,
+            proposals_list::render_proposals_section,
+        },
+    },
 };
 
 pub fn render_left_pane(
@@ -33,11 +40,14 @@ pub fn render_left_pane(
     let jobs = st.engine.queued_jobs();
     let approvals = st.engine.approval_jobs();
     let detail_t = motion.detail_progress;
-    let detail_job = (detail_t > 0.005)
+    let detail_proposal = (detail_t > 0.005)
+        .then(|| motion.detail_proposal_id.clone())
+        .flatten();
+    let detail_job = (detail_t > 0.005 && detail_proposal.is_none())
         .then(|| motion.detail_job.clone())
         .flatten();
     let detail_target_h = clamp_detail_height(st.detail_height, pane_height);
-    let queue_fade = if detail_job.is_some() {
+    let queue_fade = if detail_proposal.is_some() || detail_job.is_some() {
         FadePx::F0
     } else {
         FadePx::F16
@@ -106,7 +116,9 @@ pub fn render_left_pane(
                                         let jid_approve = job.id.clone();
                                         let jid_rework = job.id.clone();
                                         let jid_sel = job.id.clone();
-                                        let is_sel = st.detail_open && st.selected_job_id == job.id;
+                                        let is_sel = st.detail_open
+                                            && st.selected_proposal_id.is_none()
+                                            && st.selected_job_id == job.id;
                                         let sel_t = motion.selection_weight(&job.id, is_sel);
                                         let card_bg =
                                             lerp_glass_rgba(p.glass_card, p.glass_gate, sel_t);
@@ -129,8 +141,7 @@ pub fn render_left_pane(
                                             .cursor_pointer()
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.state.update(cx, |st, _| {
-                                                    st.selected_job_id = jid_sel.clone();
-                                                    st.detail_open = true;
+                                                    st.open_job_detail(jid_sel.clone());
                                                 });
                                                 cx.notify();
                                             }))
@@ -259,7 +270,9 @@ pub fn render_left_pane(
                                     let jid_click = job.id.clone();
                                     let jid_drag = job.id.clone();
                                     let title_drag = job.title.clone();
-                                    let is_sel = st.detail_open && st.selected_job_id == job.id;
+                                    let is_sel = st.detail_open
+                                        && st.selected_proposal_id.is_none()
+                                        && st.selected_job_id == job.id;
                                     let sel_t = motion.selection_weight(&job.id, is_sel);
                                     let card_bg =
                                         lerp_glass_rgba(p.glass_card, p.glass_selected, sel_t);
@@ -284,8 +297,7 @@ pub fn render_left_pane(
                                         .cursor_grab()
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.state.update(cx, |st, _| {
-                                                st.selected_job_id = jid_click.clone();
-                                                st.detail_open = true;
+                                                st.open_job_detail(jid_click.clone());
                                             });
                                             cx.notify();
                                         }))
@@ -336,15 +348,29 @@ pub fn render_left_pane(
                                             div()
                                                 .text_size(FontPx::F13.px())
                                                 .text_color(p.text_primary)
-                                                .child(linkified_text(
-                                                    SharedString::from(format!("q-title-{}", job.id)),
-                                                    &job.title,
-                                                    p.accent,
-                                                )),
-                                        )
+                                            .child(linkified_text(
+                                                SharedString::from(format!("q-title-{}", job.id)),
+                                                &job.title,
+                                                p.accent,
+                                            )),
+                                    )
                                 })),
-                        ),
+                        )
+                        .when_some(render_proposals_section(st, cx), |d, sec| d.child(sec)),
                 )
+                .when_some(detail_proposal, |d, pid| {
+                    d.when_some(
+                        render_proposal_detail_sheet(
+                            st,
+                            pid,
+                            motion,
+                            detail_target_h,
+                            is_resizing_detail,
+                            cx,
+                        ),
+                        |el, sheet| el.child(sheet),
+                    )
+                })
                 .when_some(detail_job, |d, job| {
                     d.child(render_job_detail_sheet(
                         st,

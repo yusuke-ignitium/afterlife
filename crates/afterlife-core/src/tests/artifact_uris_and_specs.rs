@@ -28,6 +28,7 @@ fn find_stage_for_job_prefers_pinned_spec_version_and_falls_back_to_active() {
             EngineCommand::ProposeSpecUpdate {
                 district_id: dist_id.clone(),
                 base_version: SpecVersion::new(1),
+                proposed_district_name: None,
                 stages: v2_stages,
                 changelog: "Rename design stage in v2".into(),
                 rationale: "Test pinned spec resolution".into(),

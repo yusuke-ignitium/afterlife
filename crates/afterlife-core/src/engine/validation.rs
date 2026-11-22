@@ -153,12 +153,16 @@ pub fn validate_command(
             Ok(())
         }
         EngineCommand::ProposePhilosophyUpdate {
+            proposed_district_name,
             summary,
             principles,
             rationale,
             source_feedback_ids,
             ..
         } => {
+            if let Some(name) = proposed_district_name {
+                require_non_empty("proposed_district_name", name)?;
+            }
             require_non_empty("summary", summary)?;
             require_non_empty("rationale", rationale)?;
             if principles.is_empty() {
@@ -176,11 +180,15 @@ pub fn validate_command(
             Ok(())
         }
         EngineCommand::ProposeSpecUpdate {
+            proposed_district_name,
             changelog,
             rationale,
             source_feedback_ids,
             ..
         } => {
+            if let Some(name) = proposed_district_name {
+                require_non_empty("proposed_district_name", name)?;
+            }
             require_non_empty("changelog", changelog)?;
             require_non_empty("rationale", rationale)?;
             validate_feedback_refs(engine, source_feedback_ids)?;

@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use afterlife_core::{Job, JobId};
+use afterlife_core::{Job, JobId, ProposalId};
 use afterlife_design::UiStyle;
 use gpui::Rgba;
 
@@ -120,6 +120,7 @@ pub struct MotionSnapshot {
     pub detail_progress: f32,
     pub detail_swap_progress: f32,
     pub detail_job: Option<Job>,
+    pub detail_proposal_id: Option<ProposalId>,
     pub tab_progress: f32,
     pub toggle_apple_music_progress: f32,
     pub toggle_youtube_mirror_progress: f32,
@@ -153,6 +154,7 @@ pub struct UiMotion {
     detail: ScalarTransition,
     last_detail_job: Option<Job>,
     last_detail_job_id: Option<JobId>,
+    last_detail_proposal_id: Option<ProposalId>,
     detail_swap_started: Option<Instant>,
     last_tab: TabId,
     tab_enter_started: Option<Instant>,
@@ -184,6 +186,7 @@ impl UiMotion {
             detail: ScalarTransition::settled(0.0, now),
             last_detail_job: None,
             last_detail_job_id: None,
+            last_detail_proposal_id: None,
             detail_swap_started: None,
             last_tab: TabId::Workspace,
             tab_enter_started: None,
@@ -211,7 +214,13 @@ impl UiMotion {
         inactive_dim_active: bool,
         now: Instant,
     ) -> MotionSnapshot {
-        let selected_job = st.detail_open.then(|| st.selected_job().cloned()).flatten();
+        let selected_proposal = st
+            .detail_open
+            .then(|| st.selected_proposal_id.clone())
+            .flatten();
+        let selected_job = (st.detail_open && selected_proposal.is_none())
+            .then(|| st.selected_job().cloned())
+            .flatten();
         let selected_id = selected_job.as_ref().map(|j| j.id.clone());
         let should_dim_ui = st.inactive_fade_delay_secs().is_some() && inactive_dim_active;
 
@@ -219,10 +228,17 @@ impl UiMotion {
             self.drawer = ScalarTransition::settled(if st.settings_open { 1.0 } else { 0.0 }, now);
             self.inspector =
                 ScalarTransition::settled(if st.inspector_open { 1.0 } else { 0.0 }, now);
-            self.detail =
-                ScalarTransition::settled(if selected_job.is_some() { 1.0 } else { 0.0 }, now);
+            self.detail = ScalarTransition::settled(
+                if selected_proposal.is_some() || selected_job.is_some() {
+                    1.0
+                } else {
+                    0.0
+                },
+                now,
+            );
             self.last_detail_job = selected_job.clone();
             self.last_detail_job_id = selected_id.clone();
+            self.last_detail_proposal_id = selected_proposal.clone();
             self.last_tab = st.active_tab;
             self.toggle_apple_music = ScalarTransition::settled(
                 if st.glass.bg_apple_music_artwork_enabled {
@@ -300,7 +316,7 @@ impl UiMotion {
             self.inspector
                 .set_target(inspector_target, Duration::from_millis(inspector_ms), now);
 
-            let detail_visible = selected_job.is_some();
+            let detail_visible = selected_proposal.is_some() || selected_job.is_some();
             let detail_target = if detail_visible { 1.0 } else { 0.0 };
             let detail_ms = if detail_visible {
                 DETAIL_OPEN_MS
@@ -311,15 +327,27 @@ impl UiMotion {
             self.detail
                 .set_target(detail_target, Duration::from_millis(detail_ms), now);
 
-            if let Some(job) = selected_job {
-                if was_open && self.last_detail_job_id.as_ref() != Some(&job.id) {
+            if let Some(pid) = selected_proposal {
+                if was_open && self.last_detail_proposal_id.as_ref() != Some(&pid) {
                     self.detail_swap_started = Some(now);
                 }
+                self.last_detail_proposal_id = Some(pid);
+                self.last_detail_job = None;
+                self.last_detail_job_id = None;
+            } else if let Some(job) = selected_job {
+                if was_open
+                    && (self.last_detail_proposal_id.is_some()
+                        || self.last_detail_job_id.as_ref() != Some(&job.id))
+                {
+                    self.detail_swap_started = Some(now);
+                }
+                self.last_detail_proposal_id = None;
                 self.last_detail_job_id = Some(job.id.clone());
                 self.last_detail_job = Some(job);
             } else if self.detail.value(now) <= 0.005 {
                 self.last_detail_job = None;
                 self.last_detail_job_id = None;
+                self.last_detail_proposal_id = None;
             }
 
             if self.last_tab != st.active_tab {
@@ -481,6 +509,7 @@ impl UiMotion {
             detail_progress: self.detail.value(now),
             detail_swap_progress,
             detail_job: self.last_detail_job.clone(),
+            detail_proposal_id: self.last_detail_proposal_id.clone(),
             tab_progress,
             toggle_apple_music_progress: self.toggle_apple_music.value(now),
             toggle_youtube_mirror_progress: self.toggle_youtube_mirror.value(now),

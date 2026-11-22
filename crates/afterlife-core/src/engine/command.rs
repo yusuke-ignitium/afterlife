@@ -121,6 +121,8 @@ pub enum EngineCommand {
     ProposePhilosophyUpdate {
         district_id: DistrictId,
         base_version: PhilosophyVersion,
+        #[serde(default)]
+        proposed_district_name: Option<String>,
         summary: String,
         principles: Vec<Principle>,
         anti_patterns: Vec<String>,
@@ -136,6 +138,8 @@ pub enum EngineCommand {
     ProposeSpecUpdate {
         district_id: DistrictId,
         base_version: SpecVersion,
+        #[serde(default)]
+        proposed_district_name: Option<String>,
         stages: Vec<StageDef>,
         changelog: String,
         rationale: String,

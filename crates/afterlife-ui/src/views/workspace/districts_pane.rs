@@ -343,7 +343,9 @@ pub fn render_right_districts_pane(
                                     )
                                 })
                                 .children(stage_jobs.into_iter().map(|job| {
-                                    let is_sel = st.detail_open && st.selected_job_id == job.id;
+                                    let is_sel = st.detail_open
+                                        && st.selected_proposal_id.is_none()
+                                        && st.selected_job_id == job.id;
                                     let sel_t = motion.selection_weight(&job.id, is_sel);
                                     let target_bg = if is_gate {
                                         p.glass_gate
@@ -393,8 +395,7 @@ pub fn render_right_districts_pane(
                                         .cursor_pointer()
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.state.update(cx, |st, _| {
-                                                st.selected_job_id = jid.clone();
-                                                st.detail_open = true;
+                                                st.open_job_detail(jid.clone());
                                             });
                                             cx.notify();
                                         }))

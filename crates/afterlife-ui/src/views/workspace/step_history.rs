@@ -502,6 +502,7 @@ mod tests {
                 EngineCommand::ProposeSpecUpdate {
                     district_id: dist_id.clone(),
                     base_version: SpecVersion::new(1),
+                    proposed_district_name: None,
                     stages: v2_stages,
                     changelog: "Update design labels in v2".into(),
                     rationale: "Verify pinned spec resolution in UI".into(),

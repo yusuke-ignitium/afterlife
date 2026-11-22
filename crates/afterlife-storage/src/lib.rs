@@ -466,4 +466,89 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn legacy_proposal_json_without_district_name_loads_cleanly() {
+        let dir = temp_path("legacy_proposal_compat");
+        let db_path = dir.join("afterlife.db");
+        let owner = OwnerId::from("prop-compat-owner");
+        let human = Actor::local_human(owner.clone());
+        let dist_id = afterlife_core::DistrictId::from("DIST-001");
+
+        let store = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let snap = store.load_workspace(&owner).unwrap();
+        let stages = snap.engine.find_district(&dist_id).unwrap().stages().to_vec();
+        store
+            .execute_command(CommandEnvelope {
+                command_id: CommandId::from("cmd-leg-phil"),
+                actor: human.clone(),
+                command: EngineCommand::ProposePhilosophyUpdate {
+                    district_id: dist_id.clone(),
+                    base_version: afterlife_core::PhilosophyVersion::new(1),
+                    proposed_district_name: None,
+                    summary: "Legacy philosophy v2".into(),
+                    principles: vec![afterlife_core::Principle {
+                        id: "P-1".into(),
+                        title: "Keep Compat".into(),
+                        statement: "Never break legacy snapshots.".into(),
+                        rationale: "Safety.".into(),
+                    }],
+                    anti_patterns: vec![],
+                    decision_heuristics: vec![],
+                    rationale: "Compat check".into(),
+                    source_feedback_ids: vec![],
+                    at: 1_763_600_000_000,
+                },
+            })
+            .unwrap();
+        store
+            .execute_command(CommandEnvelope {
+                command_id: CommandId::from("cmd-leg-spec"),
+                actor: human,
+                command: EngineCommand::ProposeSpecUpdate {
+                    district_id: dist_id,
+                    base_version: afterlife_core::SpecVersion::new(1),
+                    proposed_district_name: None,
+                    stages,
+                    changelog: "Legacy spec v2".into(),
+                    rationale: "Compat check".into(),
+                    source_feedback_ids: vec![],
+                    at: 1_763_600_001_000,
+                },
+            })
+            .unwrap();
+        drop(store);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let state_json: String = conn
+            .query_row(
+                "SELECT state_json FROM workspaces WHERE owner_id = ?1",
+                rusqlite::params![owner.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut parsed: serde_json::Value = serde_json::from_str(&state_json).unwrap();
+        for key in ["philosophy_proposals", "spec_proposals"] {
+            if let Some(arr) = parsed[key].as_array_mut() {
+                for item in arr {
+                    if let Some(obj) = item.as_object_mut() {
+                        obj.remove("proposed_district_name");
+                    }
+                }
+            }
+        }
+        conn.execute(
+            "UPDATE workspaces SET state_json = ?1 WHERE owner_id = ?2",
+            rusqlite::params![serde_json::to_string(&parsed).unwrap(), owner.as_str()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let reopened = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let snap = reopened.load_workspace(&owner).unwrap();
+        assert_eq!(snap.engine.philosophy_proposals.len(), 1);
+        assert_eq!(snap.engine.spec_proposals.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

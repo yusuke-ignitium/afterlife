@@ -127,6 +127,7 @@ fn feedback_and_philosophy_evolution_workflow() {
             EngineCommand::ProposePhilosophyUpdate {
                 district_id: dist_id.clone(),
                 base_version: PhilosophyVersion::new(1),
+                proposed_district_name: None,
                 summary: "計測駆動・型安全・無停止マイグレーション原則".into(),
                 principles: vec![Principle {
                     id: "P-DEV-6".into(),
@@ -231,4 +232,128 @@ fn rework_moves_back_and_records_feedback() {
 
     let ctx = engine.compile_execution_context(&job_id).unwrap();
     assert_eq!(ctx.step_records.last(), Some(rework_rec));
+}
+
+#[test]
+fn proposals_can_rename_district_on_human_approval_and_reject_blank_names() {
+    let mut engine = AfterlifeEngine::new();
+    let human = engine.local_actor();
+    let agent = agent_actor(&engine.owner_id, "evolve-bot");
+    let dist_id = DistrictId::from("DIST-002");
+
+    let blank_err = engine
+        .apply(
+            &agent,
+            EngineCommand::ProposePhilosophyUpdate {
+                district_id: dist_id.clone(),
+                base_version: PhilosophyVersion::new(1),
+                proposed_district_name: Some("   ".into()),
+                summary: "Updated summary".into(),
+                principles: vec![Principle {
+                    id: "P-1".into(),
+                    title: "Title".into(),
+                    statement: "Statement".into(),
+                    rationale: "Rationale".into(),
+                }],
+                anti_patterns: vec![],
+                decision_heuristics: vec![],
+                rationale: "Check blank rejection".into(),
+                source_feedback_ids: vec![],
+                at: 1_800_000_000_000,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        blank_err,
+        TransitionError::InvalidInput { ref field, .. } if field == "proposed_district_name"
+    ));
+
+    let phil_ev = engine
+        .apply(
+            &agent,
+            EngineCommand::ProposePhilosophyUpdate {
+                district_id: dist_id.clone(),
+                base_version: PhilosophyVersion::new(1),
+                proposed_district_name: Some("  DISTRICT 02 - Discovery & Shaping  ".into()),
+                summary: "Updated philosophy".into(),
+                principles: vec![Principle {
+                    id: "P-1".into(),
+                    title: "Title".into(),
+                    statement: "Statement".into(),
+                    rationale: "Rationale".into(),
+                }],
+                anti_patterns: vec![],
+                decision_heuristics: vec![],
+                rationale: "Evolve role".into(),
+                source_feedback_ids: vec![],
+                at: 1_800_000_001_000,
+            },
+        )
+        .unwrap();
+    let phil_pid = match &phil_ev[0] {
+        JobEvent::PhilosophyProposed { proposal_id, .. } => proposal_id.clone(),
+        _ => unreachable!(),
+    };
+    assert_eq!(engine.pending_philosophy_proposals().len(), 1);
+    assert!(matches!(
+        engine.apply(
+            &agent,
+            EngineCommand::ApprovePhilosophyProposal {
+                proposal_id: phil_pid.clone(),
+                at: 1_800_000_002_000,
+            },
+        ),
+        Err(TransitionError::HumanApprovalRequired { .. })
+    ));
+
+    engine
+        .apply(
+            &human,
+            EngineCommand::ApprovePhilosophyProposal {
+                proposal_id: phil_pid,
+                at: 1_800_000_003_000,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.find_district(&dist_id).unwrap().name,
+        "DISTRICT 02 - Discovery & Shaping"
+    );
+    assert!(engine.pending_philosophy_proposals().is_empty());
+
+    let stages = engine.find_district(&dist_id).unwrap().stages().to_vec();
+    let spec_ev = engine
+        .apply(
+            &agent,
+            EngineCommand::ProposeSpecUpdate {
+                district_id: dist_id.clone(),
+                base_version: SpecVersion::new(1),
+                proposed_district_name: Some("DISTRICT 02 - Shaped Delivery".into()),
+                stages,
+                changelog: "Rename via spec".into(),
+                rationale: "Align district name with spec".into(),
+                source_feedback_ids: vec![],
+                at: 1_800_000_004_000,
+            },
+        )
+        .unwrap();
+    let spec_pid = match &spec_ev[0] {
+        JobEvent::SpecProposed { proposal_id, .. } => proposal_id.clone(),
+        _ => unreachable!(),
+    };
+    assert_eq!(engine.pending_spec_proposals().len(), 1);
+    engine
+        .apply(
+            &human,
+            EngineCommand::ApproveSpecProposal {
+                proposal_id: spec_pid,
+                at: 1_800_000_005_000,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.find_district(&dist_id).unwrap().name,
+        "DISTRICT 02 - Shaped Delivery"
+    );
+    assert!(engine.pending_spec_proposals().is_empty());
 }

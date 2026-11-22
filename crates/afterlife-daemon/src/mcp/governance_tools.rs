@@ -279,6 +279,10 @@ pub(super) fn handle_philosophy_propose(
             Err(e) => return invalid_arg(id, "source_feedback_ids", &e.to_string()),
         },
     };
+    let proposed_district_name = match parse_optional_str(&args, "proposed_district_name") {
+        Ok(v) => v.map(str::to_string),
+        Err(msg) => return invalid_arg(id, "proposed_district_name", &msg),
+    };
     run_mcp_cmd(
         state,
         principal,
@@ -287,6 +291,7 @@ pub(super) fn handle_philosophy_propose(
         EngineCommand::ProposePhilosophyUpdate {
             district_id: DistrictId::from(did),
             base_version: PhilosophyVersion::new(base),
+            proposed_district_name,
             summary: summary.to_string(),
             principles,
             anti_patterns,
@@ -332,6 +337,10 @@ pub(super) fn handle_spec_propose(
             Err(e) => return invalid_arg(id, "source_feedback_ids", &e.to_string()),
         },
     };
+    let proposed_district_name = match parse_optional_str(&args, "proposed_district_name") {
+        Ok(v) => v.map(str::to_string),
+        Err(msg) => return invalid_arg(id, "proposed_district_name", &msg),
+    };
     run_mcp_cmd(
         state,
         principal,
@@ -340,6 +349,7 @@ pub(super) fn handle_spec_propose(
         EngineCommand::ProposeSpecUpdate {
             district_id: DistrictId::from(did),
             base_version: SpecVersion::new(base),
+            proposed_district_name,
             stages,
             changelog: changelog.to_string(),
             rationale: rationale.to_string(),

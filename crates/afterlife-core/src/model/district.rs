@@ -77,6 +77,8 @@ pub struct SpecProposal {
     pub district_id: DistrictId,
     pub base_version: SpecVersion,
     pub proposed: ProcedureSpec,
+    #[serde(default)]
+    pub proposed_district_name: Option<String>,
     pub rationale: String,
     pub source_feedback_ids: Vec<FeedbackId>,
     pub proposed_by: Actor,

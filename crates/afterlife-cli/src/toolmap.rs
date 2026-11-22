@@ -403,6 +403,11 @@ pub const TOOLMAP: &[ToolSpec] = &[
         positionals: &[PositionalSpec::new("district_id", "district_id")],
         flags: &[
             FlagSpec::req("--base-version", "base_version", FlagKind::U64),
+            FlagSpec::opt(
+                "--district-name",
+                "proposed_district_name",
+                FlagKind::String,
+            ),
             FlagSpec::req("--summary", "summary", FlagKind::String),
             FlagSpec::req("--rationale", "rationale", FlagKind::String),
             FlagSpec::req("--principles-json", "principles", FlagKind::Json),
@@ -421,6 +426,11 @@ pub const TOOLMAP: &[ToolSpec] = &[
         positionals: &[PositionalSpec::new("district_id", "district_id")],
         flags: &[
             FlagSpec::req("--base-version", "base_version", FlagKind::U64),
+            FlagSpec::opt(
+                "--district-name",
+                "proposed_district_name",
+                FlagKind::String,
+            ),
             FlagSpec::req("--changelog", "changelog", FlagKind::String),
             FlagSpec::req("--rationale", "rationale", FlagKind::String),
             FlagSpec::req("--stages-json", "stages", FlagKind::Json),

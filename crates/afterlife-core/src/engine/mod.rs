@@ -1,4 +1,5 @@
 pub mod command;
+mod governance;
 pub mod policy;
 pub mod validate;
 pub mod validation;
@@ -12,14 +13,13 @@ use crate::{
     error::{TransitionError, ValidationError},
     fixtures,
     ids::{
-        ArtifactId, DistrictId, FeedbackId, FencingToken, JobId, LeaseId, OwnerId, ProposalId,
-        StageId, SubMachineTemplateId, TimestampMs,
+        ArtifactId, DistrictId, FeedbackId, FencingToken, JobId, LeaseId, OwnerId, StageId,
+        SubMachineTemplateId, TimestampMs,
     },
     model::{
         Actor, Artifact, ArtifactKind, District, ExecutionContext, Feedback, FeedbackKind,
-        GateVerification, Job, JobEvent, JobLease, JobLocation, Philosophy, PhilosophyProposal,
-        ProcedureSpec, ProposalStatus, SpecProposal, StageDef, StepRecord, StepRecordOutcome,
-        SubMachineTemplate,
+        GateVerification, Job, JobEvent, JobLease, JobLocation, PhilosophyProposal, SpecProposal,
+        StageDef, StepRecord, StepRecordOutcome, SubMachineTemplate,
     },
 };
 
@@ -1331,6 +1331,7 @@ impl AfterlifeEngine {
             EngineCommand::ProposePhilosophyUpdate {
                 district_id,
                 base_version,
+                proposed_district_name,
                 summary,
                 principles,
                 anti_patterns,
@@ -1338,208 +1339,46 @@ impl AfterlifeEngine {
                 rationale,
                 source_feedback_ids,
                 at,
-            } => {
-                let district = self
-                    .find_district(&district_id)
-                    .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
-                if district.active_philosophy_version != base_version {
-                    return Err(TransitionError::PhilosophyVersionConflict {
-                        district_id,
-                        expected: base_version,
-                        actual: district.active_philosophy_version,
-                    });
-                }
-                let next_ver = base_version.next();
-                let pid = ProposalId::new(format!("PROP-PHIL-{:04}", self.next_proposal_seq));
-                self.next_proposal_seq += 1;
-                let proposed = Philosophy {
-                    version: next_ver,
-                    summary,
-                    principles,
-                    anti_patterns,
-                    decision_heuristics,
-                    source_feedback_ids: source_feedback_ids.clone(),
-                    updated_by: actor.clone(),
-                    updated_at: at,
-                };
-                self.philosophy_proposals.push(PhilosophyProposal {
-                    id: pid.clone(),
-                    owner_id: owner_id.clone(),
-                    district_id: district_id.clone(),
-                    base_version,
-                    proposed,
-                    rationale,
-                    source_feedback_ids,
-                    proposed_by: actor.clone(),
-                    status: ProposalStatus::Pending,
-                    created_at: at,
-                    resolved_at: None,
-                });
-                vec![JobEvent::PhilosophyProposed {
-                    owner_id,
-                    actor: actor.clone(),
-                    proposal_id: pid,
-                    district_id,
-                    base_version,
-                    proposed_version: next_ver,
-                    at,
-                }]
-            }
+            } => self.apply_propose_philosophy_update(
+                owner_id,
+                actor,
+                district_id,
+                base_version,
+                proposed_district_name,
+                summary,
+                principles,
+                anti_patterns,
+                decision_heuristics,
+                rationale,
+                source_feedback_ids,
+                at,
+            )?,
             EngineCommand::ApprovePhilosophyProposal { proposal_id, at } => {
-                if !actor.is_human() {
-                    return Err(TransitionError::HumanApprovalRequired {
-                        action: format!("approve philosophy proposal {proposal_id}"),
-                    });
-                }
-                let prop = self
-                    .philosophy_proposals
-                    .iter()
-                    .find(|p| p.id == proposal_id)
-                    .cloned()
-                    .ok_or_else(|| TransitionError::ProposalNotFound(proposal_id.clone()))?;
-                if prop.status != ProposalStatus::Pending {
-                    return Err(TransitionError::ProposalAlreadyResolved(proposal_id));
-                }
-                let district = self
-                    .districts
-                    .iter_mut()
-                    .find(|d| d.id == prop.district_id)
-                    .ok_or_else(|| TransitionError::DistrictNotFound(prop.district_id.clone()))?;
-                if district.active_philosophy_version != prop.base_version {
-                    return Err(TransitionError::PhilosophyVersionConflict {
-                        district_id: prop.district_id,
-                        expected: prop.base_version,
-                        actual: district.active_philosophy_version,
-                    });
-                }
-                let new_version = prop.proposed.version;
-                district.philosophy_history.push(prop.proposed);
-                district.active_philosophy_version = new_version;
-
-                let p_mut = self
-                    .philosophy_proposals
-                    .iter_mut()
-                    .find(|p| p.id == proposal_id)
-                    .unwrap();
-                p_mut.status = ProposalStatus::Approved;
-                p_mut.resolved_at = Some(at);
-
-                vec![JobEvent::PhilosophyUpdated {
-                    owner_id,
-                    actor: actor.clone(),
-                    proposal_id,
-                    district_id: prop.district_id,
-                    new_version,
-                    at,
-                }]
+                self.apply_approve_philosophy_proposal(owner_id, actor, proposal_id, at)?
             }
             EngineCommand::ProposeSpecUpdate {
                 district_id,
                 base_version,
+                proposed_district_name,
                 stages,
                 changelog,
                 rationale,
                 source_feedback_ids,
                 at,
-            } => {
-                let district = self
-                    .find_district(&district_id)
-                    .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
-                if district.active_spec_version != base_version {
-                    return Err(TransitionError::SpecVersionConflict {
-                        district_id,
-                        expected: base_version,
-                        actual: district.active_spec_version,
-                    });
-                }
-                let errs = validate_stages(&district_id, &stages, &self.templates);
-                if !errs.is_empty() {
-                    return Err(TransitionError::InvalidProposedSpec {
-                        district_id,
-                        reasons: errs.into_iter().map(|e| e.to_string()).collect(),
-                    });
-                }
-                let next_ver = base_version.next();
-                let pid = ProposalId::new(format!("PROP-SPEC-{:04}", self.next_proposal_seq));
-                self.next_proposal_seq += 1;
-                let proposed = ProcedureSpec {
-                    version: next_ver,
-                    stages,
-                    changelog,
-                    source_feedback_ids: source_feedback_ids.clone(),
-                    updated_by: actor.clone(),
-                    updated_at: at,
-                };
-                self.spec_proposals.push(SpecProposal {
-                    id: pid.clone(),
-                    owner_id: owner_id.clone(),
-                    district_id: district_id.clone(),
-                    base_version,
-                    proposed,
-                    rationale,
-                    source_feedback_ids,
-                    proposed_by: actor.clone(),
-                    status: ProposalStatus::Pending,
-                    created_at: at,
-                    resolved_at: None,
-                });
-                vec![JobEvent::SpecProposed {
-                    owner_id,
-                    actor: actor.clone(),
-                    proposal_id: pid,
-                    district_id,
-                    base_version,
-                    proposed_version: next_ver,
-                    at,
-                }]
-            }
+            } => self.apply_propose_spec_update(
+                owner_id,
+                actor,
+                district_id,
+                base_version,
+                proposed_district_name,
+                stages,
+                changelog,
+                rationale,
+                source_feedback_ids,
+                at,
+            )?,
             EngineCommand::ApproveSpecProposal { proposal_id, at } => {
-                if !actor.is_human() {
-                    return Err(TransitionError::HumanApprovalRequired {
-                        action: format!("approve spec proposal {proposal_id}"),
-                    });
-                }
-                let prop = self
-                    .spec_proposals
-                    .iter()
-                    .find(|p| p.id == proposal_id)
-                    .cloned()
-                    .ok_or_else(|| TransitionError::ProposalNotFound(proposal_id.clone()))?;
-                if prop.status != ProposalStatus::Pending {
-                    return Err(TransitionError::ProposalAlreadyResolved(proposal_id));
-                }
-                let district = self
-                    .districts
-                    .iter_mut()
-                    .find(|d| d.id == prop.district_id)
-                    .ok_or_else(|| TransitionError::DistrictNotFound(prop.district_id.clone()))?;
-                if district.active_spec_version != prop.base_version {
-                    return Err(TransitionError::SpecVersionConflict {
-                        district_id: prop.district_id,
-                        expected: prop.base_version,
-                        actual: district.active_spec_version,
-                    });
-                }
-                let new_version = prop.proposed.version;
-                district.spec_history.push(prop.proposed);
-                district.active_spec_version = new_version;
-
-                let p_mut = self
-                    .spec_proposals
-                    .iter_mut()
-                    .find(|p| p.id == proposal_id)
-                    .unwrap();
-                p_mut.status = ProposalStatus::Approved;
-                p_mut.resolved_at = Some(at);
-
-                vec![JobEvent::SpecUpdated {
-                    owner_id,
-                    actor: actor.clone(),
-                    proposal_id,
-                    district_id: prop.district_id,
-                    new_version,
-                    at,
-                }]
+                self.apply_approve_spec_proposal(owner_id, actor, proposal_id, at)?
             }
             EngineCommand::SetStageSubTemplate {
                 district_id,

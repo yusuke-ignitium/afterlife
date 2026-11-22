@@ -263,8 +263,7 @@ pub(super) fn render_job_detail_sheet(
                                                 .hover(move |s| s.text_color(p.text_primary))
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.state.update(cx, |st, _| {
-                                                        st.detail_open = false;
-                                                        st.close_artifact_preview();
+                                                        st.close_detail();
                                                     });
                                                     cx.notify();
                                                 })),
