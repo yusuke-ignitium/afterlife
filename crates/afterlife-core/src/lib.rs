@@ -181,6 +181,20 @@ mod tests {
         assert!(engine.approval_jobs().is_empty());
         assert_eq!(engine.districts.len(), 5);
         assert_eq!(engine.template_order.len(), 7);
+        let dist2 = engine
+            .find_district(&DistrictId::from("DIST-002"))
+            .expect("DIST-002 must exist");
+        let dist2_stage_ids: Vec<&str> = dist2.stages().iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            dist2_stage_ids,
+            vec!["recon", "options", "shape", "approve", "shaped"]
+        );
+        let shape_stage = dist2
+            .stages()
+            .iter()
+            .find(|s| s.id.as_str() == "shape")
+            .unwrap();
+        assert_eq!(shape_stage.required_artifact_kinds, vec![ArtifactKind::Spec]);
         for district in &engine.districts {
             assert_eq!(
                 district.active_philosophy().version,
