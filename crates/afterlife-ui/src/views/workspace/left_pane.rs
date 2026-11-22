@@ -38,6 +38,10 @@ fn group_step_records<'a>(records: &'a [StepRecord]) -> Vec<StepStageRun<'a>> {
         if let Some(last) = runs.last_mut()
             && last.district_id == &rec.district_id
             && last.stage_id == &rec.stage_id
+            && last
+                .records
+                .last()
+                .is_some_and(|prev| prev.outcome != StepRecordOutcome::Reworked)
         {
             last.records.push(rec);
             continue;
@@ -66,9 +70,10 @@ fn format_relative_age(now: TimestampMs, recorded_at: TimestampMs) -> String {
 
 fn resolve_step_field_defs<'a>(
     engine: &'a AfterlifeEngine,
+    job: &Job,
     rec: &StepRecord,
 ) -> Option<&'a [StepFieldDef]> {
-    let stage = engine.find_stage(&rec.district_id, &rec.stage_id)?;
+    let stage = engine.find_stage_for_job(job, &rec.district_id, &rec.stage_id)?;
     if let (Some(tid), Some(sub_id)) = (&stage.sub_template_id, &rec.sub_stage_id) {
         if let Some(sub) = engine
             .templates
@@ -81,10 +86,14 @@ fn resolve_step_field_defs<'a>(
     Some(&stage.record_fields)
 }
 
-fn ordered_step_fields(engine: &AfterlifeEngine, rec: &StepRecord) -> Vec<(String, String)> {
+fn ordered_step_fields(
+    engine: &AfterlifeEngine,
+    job: &Job,
+    rec: &StepRecord,
+) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    if let Some(defs) = resolve_step_field_defs(engine, rec) {
+    if let Some(defs) = resolve_step_field_defs(engine, job, rec) {
         for def in defs {
             if let Some(val) = rec.fields.get(&def.key) {
                 seen.insert(def.key.as_str());
@@ -98,6 +107,7 @@ fn ordered_step_fields(engine: &AfterlifeEngine, rec: &StepRecord) -> Vec<(Strin
                 "decision" => "判断と根拠".to_string(),
                 "execution" => "実行内容と結果".to_string(),
                 "note" => "承認メモ".to_string(),
+                "reason" => "差し戻し理由".to_string(),
                 other => other.to_string(),
             };
             out.push((label, v.clone()));
@@ -133,7 +143,9 @@ fn render_step_history(
             [SharedString::from("Steps").into_any_element()],
         ))
         .children(runs.into_iter().enumerate().map(|(group_idx, run)| {
-            let stage_def = st.engine.find_stage(run.district_id, run.stage_id);
+            let stage_def = st
+                .engine
+                .find_stage_for_job(job, run.district_id, run.stage_id);
             let stage_label = stage_def
                 .map(|s| s.label.clone())
                 .unwrap_or_else(|| run.stage_id.to_string());
@@ -145,15 +157,33 @@ fn render_step_history(
                 .records
                 .last()
                 .is_some_and(|r| r.outcome == StepRecordOutcome::Approved);
+            let is_reworked = run
+                .records
+                .last()
+                .is_some_and(|r| r.outcome == StepRecordOutcome::Reworked);
             let right_meta = if collapsed {
                 format!("{}", run.records.len())
             } else if is_approved {
                 "Approved".to_string()
+            } else if is_reworked {
+                "Reworked".to_string()
             } else {
                 run.records
                     .last()
                     .map(|r| format_relative_age(now, r.recorded_at))
                     .unwrap_or_default()
+            };
+            let right_meta_color = if is_approved {
+                p.amber
+            } else if is_reworked {
+                p.coral
+            } else {
+                with_alpha(p.text_tertiary, 0.72)
+            };
+            let wash_bg = if is_reworked {
+                with_alpha(p.coral, 0.045)
+            } else {
+                with_alpha(p.text_primary, 0.028)
             };
             let jid_toggle = job.id.clone();
 
@@ -205,11 +235,7 @@ fn render_step_history(
                         .child(
                             div()
                                 .text_size(FontPx::F11.px())
-                                .text_color(if is_approved {
-                                    p.amber
-                                } else {
-                                    with_alpha(p.text_tertiary, 0.72)
-                                })
+                                .text_color(right_meta_color)
                                 .child(right_meta),
                         ),
                 )
@@ -219,7 +245,7 @@ fn render_step_history(
                             .px(SpacePx::S8.px())
                             .py(SpacePx::S8.px())
                             .rounded(p.radius_f32(&st.glass, 0.65))
-                            .bg(with_alpha(p.text_primary, 0.028))
+                            .bg(wash_bg)
                             .flex()
                             .flex_col()
                             .gap(SpacePx::S8.px())
@@ -232,8 +258,14 @@ fn render_step_history(
                                         .map(|sub| sub.label.clone())
                                         .unwrap_or_else(|| sub_id.to_string())
                                 });
+                                let sub_label_color = if rec.outcome == StepRecordOutcome::Reworked
+                                {
+                                    p.coral
+                                } else {
+                                    p.text_secondary
+                                };
                                 let actor_label = rec.actor.display_label().to_string();
-                                let fields = ordered_step_fields(&st.engine, rec);
+                                let fields = ordered_step_fields(&st.engine, job, rec);
                                 let step_artifacts: Vec<&Artifact> = rec
                                     .artifact_ids
                                     .iter()
@@ -255,7 +287,7 @@ fn render_step_history(
                                                 .child(
                                                     div()
                                                         .text_size(FontPx::F11.px())
-                                                        .text_color(p.text_secondary)
+                                                        .text_color(sub_label_color)
                                                         .child(sub),
                                                 )
                                                 .child(
@@ -670,7 +702,7 @@ pub fn render_left_pane(
                 } => {
                     let sname = st
                         .engine
-                        .find_stage(district_id, stage_id)
+                        .find_stage_for_job(&job, district_id, stage_id)
                         .map(|s| s.label.clone())
                         .unwrap_or_else(|| stage_id.to_string());
                     match sub_stage_id {
@@ -684,7 +716,7 @@ pub fn render_left_pane(
                     ..
                 } => st
                     .engine
-                    .find_stage(district_id, terminal_stage_id)
+                    .find_stage_for_job(&job, district_id, terminal_stage_id)
                     .map(|s| format!("{} (Done)", s.label))
                     .unwrap_or_else(|| "Completed".into()),
                 JobLocation::Archived => "Archived".into(),
@@ -1082,18 +1114,24 @@ pub fn render_left_pane(
 mod tests {
     use std::collections::BTreeMap;
 
-    use afterlife_core::{Actor, OwnerId, SubStageId};
+    use afterlife_core::{Actor, JobEvent, OwnerId, SpecVersion, SubStageId};
 
     use super::*;
 
-    fn mk_record(stage: &str, sub: Option<&str>, fields: &[(&str, &str)], at: u64) -> StepRecord {
+    fn mk_record(
+        stage: &str,
+        sub: Option<&str>,
+        outcome: StepRecordOutcome,
+        fields: &[(&str, &str)],
+        at: u64,
+    ) -> StepRecord {
         StepRecord {
             district_id: DistrictId::from("DIST-001"),
             stage_id: StageId::from(stage),
             sub_stage_id: sub.map(SubStageId::from),
             revision: 1,
             actor: Actor::local_human(OwnerId::from("local-owner")),
-            outcome: StepRecordOutcome::Advanced,
+            outcome,
             fields: fields
                 .iter()
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -1105,24 +1143,38 @@ mod tests {
 
     #[test]
     fn group_step_records_preserves_rework_runs_and_field_order() {
-        let engine = AfterlifeEngine::new();
+        let mut engine = AfterlifeEngine::new();
+        let dist_id = DistrictId::from("DIST-001");
+        let job_id = engine.queue_preset_job("Step order test", Some(&dist_id));
+        engine.assign_job_to_district(&job_id, &dist_id).unwrap();
+        let job = engine.find_job(&job_id).unwrap().clone();
+
         let records = vec![
             mk_record(
                 "discover",
                 Some("trace_sources"),
+                StepRecordOutcome::Advanced,
                 &[("findings", "f1"), ("sources_read", "s1")],
                 1_000,
             ),
             mk_record(
                 "discover",
                 Some("isolate_probe"),
+                StepRecordOutcome::Advanced,
                 &[("probe_method", "p1"), ("observed_behavior", "o1")],
                 2_000,
             ),
-            mk_record("design", None, &[("decision", "d1")], 3_000),
+            mk_record(
+                "design",
+                None,
+                StepRecordOutcome::Advanced,
+                &[("decision", "d1")],
+                3_000,
+            ),
             mk_record(
                 "discover",
                 Some("trace_sources"),
+                StepRecordOutcome::Advanced,
                 &[("sources_read", "s2"), ("findings", "f2")],
                 4_000,
             ),
@@ -1136,12 +1188,129 @@ mod tests {
         assert_eq!(runs[2].stage_id.as_str(), "discover");
         assert_eq!(runs[2].records.len(), 1);
 
-        let ordered = ordered_step_fields(&engine, &records[0]);
+        let ordered = ordered_step_fields(&engine, &job, &records[0]);
         assert_eq!(ordered.len(), 2);
         assert_eq!(ordered[0].0, "参照した一次ソース");
         assert_eq!(ordered[0].1, "s1");
         assert_eq!(ordered[1].0, "確認した事実と制約");
         assert_eq!(ordered[1].1, "f1");
+    }
+
+    #[test]
+    fn rework_step_record_splits_same_stage_runs_and_labels_reason() {
+        let mut engine = AfterlifeEngine::new();
+        let dist_id = DistrictId::from("DIST-001");
+        let job_id = engine.queue_preset_job("Rework history test", Some(&dist_id));
+        engine.assign_job_to_district(&job_id, &dist_id).unwrap();
+        let job = engine.find_job(&job_id).unwrap().clone();
+
+        let records = vec![
+            mk_record(
+                "build",
+                Some("apply_change"),
+                StepRecordOutcome::Advanced,
+                &[("decision", "d1"), ("execution", "e1")],
+                1_000,
+            ),
+            mk_record(
+                "build",
+                Some("run_checks"),
+                StepRecordOutcome::Reworked,
+                &[("reason", "境界値テスト不足")],
+                2_000,
+            ),
+            mk_record(
+                "build",
+                Some("apply_change"),
+                StepRecordOutcome::Advanced,
+                &[("decision", "d2"), ("execution", "e2")],
+                3_000,
+            ),
+        ];
+
+        let runs = group_step_records(&records);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].records.len(), 2);
+        assert_eq!(runs[0].records[1].outcome, StepRecordOutcome::Reworked);
+        assert_eq!(runs[1].records.len(), 1);
+
+        let ordered = ordered_step_fields(&engine, &job, &records[1]);
+        assert_eq!(
+            ordered,
+            vec![("差し戻し理由".to_string(), "境界値テスト不足".to_string())]
+        );
+    }
+
+    #[test]
+    fn step_labels_prefer_job_pinned_spec_version_over_active_spec() {
+        let mut engine = AfterlifeEngine::new();
+        let human = engine.local_actor();
+        let dist_id = DistrictId::from("DIST-001");
+        let v1_job_id = engine.queue_preset_job("V1 job", Some(&dist_id));
+        engine
+            .assign_job_to_district(&v1_job_id, &dist_id)
+            .unwrap();
+
+        let mut v2_stages = engine
+            .find_district(&dist_id)
+            .unwrap()
+            .active_spec()
+            .stages
+            .clone();
+        let design = v2_stages
+            .iter_mut()
+            .find(|s| s.id == StageId::from("design"))
+            .unwrap();
+        design.label = "Design V2".into();
+        design.record_fields[0].label = "V2設計判断ラベル".into();
+
+        let prop_ev = engine
+            .apply(
+                &human,
+                EngineCommand::ProposeSpecUpdate {
+                    district_id: dist_id.clone(),
+                    base_version: SpecVersion::new(1),
+                    stages: v2_stages,
+                    changelog: "Update design labels in v2".into(),
+                    rationale: "Verify pinned spec resolution in UI".into(),
+                    source_feedback_ids: Vec::new(),
+                    at: 1_900_000_000_000,
+                },
+            )
+            .unwrap();
+        let prop_id = match &prop_ev[0] {
+            JobEvent::SpecProposed { proposal_id, .. } => proposal_id.clone(),
+            _ => unreachable!(),
+        };
+        engine
+            .apply(
+                &human,
+                EngineCommand::ApproveSpecProposal {
+                    proposal_id: prop_id,
+                    at: 1_900_000_001_000,
+                },
+            )
+            .unwrap();
+
+        let v2_job_id = engine.queue_preset_job("V2 job", Some(&dist_id));
+        engine
+            .assign_job_to_district(&v2_job_id, &dist_id)
+            .unwrap();
+
+        let v1_job = engine.find_job(&v1_job_id).unwrap().clone();
+        let v2_job = engine.find_job(&v2_job_id).unwrap().clone();
+        let rec = mk_record(
+            "design",
+            None,
+            StepRecordOutcome::Advanced,
+            &[("decision", "design choice")],
+            5_000,
+        );
+
+        let v1_fields = ordered_step_fields(&engine, &v1_job, &rec);
+        assert_eq!(v1_fields[0].0, "採用設計と全体整合の根拠");
+        let v2_fields = ordered_step_fields(&engine, &v2_job, &rec);
+        assert_eq!(v2_fields[0].0, "V2設計判断ラベル");
     }
 
     #[test]

@@ -112,9 +112,16 @@ pub fn require_step_record(
     let missing_artifact_kinds = if required_artifact_kinds.is_empty() {
         Vec::new()
     } else {
-        let satisfied = job.artifacts.iter().any(|art| {
-            art.produced_at_stage.as_ref() == Some(&stage.id)
-                && required_artifact_kinds.contains(&art.kind)
+        let step_entry_revision = job.step_records.last().map(|r| r.revision).unwrap_or(0);
+        let expected_sub_stage = sub_stage.map(|s| &s.id);
+        let satisfied = artifact_ids.iter().any(|aid| {
+            job.artifacts.iter().any(|art| {
+                &art.id == aid
+                    && required_artifact_kinds.contains(&art.kind)
+                    && art.produced_at_stage.as_ref() == Some(&stage.id)
+                    && art.produced_at_sub_stage.as_ref() == expected_sub_stage
+                    && art.revision_at_capture > step_entry_revision
+            })
         });
         if satisfied {
             Vec::new()

@@ -1288,22 +1288,30 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
             )
             .await;
         let token = claim["events"][0]["fencing_token"].as_u64().unwrap();
+        let mut artifact_ids: Vec<String> = Vec::new();
         if let Some(kind) = ctx["required_artifact_kinds"]
             .as_array()
             .and_then(|arr| arr.first())
             .and_then(|v| v.as_str())
         {
-            mcp.call_ok(
-                "artifacts_attach",
-                json!({
-                    "job_id": gate_job_id,
-                    "kind": kind,
-                    "label": "desktop-evidence.json",
-                    "uri": "https://example.com/desktop-evidence.json",
-                    "fencing_token": token
-                }),
-            )
-            .await;
+            let attached = mcp
+                .call_ok(
+                    "artifacts_attach",
+                    json!({
+                        "job_id": gate_job_id,
+                        "kind": kind,
+                        "label": "desktop-evidence.json",
+                        "uri": "https://example.com/desktop-evidence.json",
+                        "fencing_token": token
+                    }),
+                )
+                .await;
+            artifact_ids.push(
+                attached["events"][0]["artifact_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            );
         }
         let mut fields = serde_json::Map::new();
         for f in ctx["required_step_fields"].as_array().unwrap() {
@@ -1316,6 +1324,7 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
                 json!({
                     "job_id": gate_job_id,
                     "fields": fields,
+                    "artifact_ids": artifact_ids,
                     "fencing_token": token
                 }),
             )
@@ -1342,6 +1351,7 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
                 json!({
                     "job_id": gate_job_id,
                     "fields": fields,
+                    "artifact_ids": artifact_ids,
                     "fencing_token": token
                 }),
             )

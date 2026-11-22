@@ -126,6 +126,33 @@ impl AfterlifeEngine {
             .find(|s| &s.id == stage_id)
     }
 
+    pub fn find_stage_for_job<'a>(
+        &'a self,
+        job: &Job,
+        district_id: &DistrictId,
+        stage_id: &StageId,
+    ) -> Option<&'a StageDef> {
+        let district = self.find_district(district_id)?;
+        let use_pinned = match &job.location {
+            JobLocation::InDistrict {
+                district_id: cur, ..
+            }
+            | JobLocation::Completed {
+                district_id: cur, ..
+            } => cur == district_id,
+            JobLocation::Queue | JobLocation::Archived => true,
+        };
+        if use_pinned
+            && let Some(stage) = job
+                .pinned_spec_version
+                .and_then(|v| district.spec_at(v))
+                .and_then(|spec| spec.stages.iter().find(|s| &s.id == stage_id))
+        {
+            return Some(stage);
+        }
+        district.stages().iter().find(|s| &s.id == stage_id)
+    }
+
     pub fn find_job(&self, job_id: &JobId) -> Option<&Job> {
         self.jobs.iter().find(|j| &j.id == job_id)
     }
@@ -1021,7 +1048,7 @@ impl AfterlifeEngine {
                 let JobLocation::InDistrict {
                     district_id,
                     stage_id,
-                    ..
+                    sub_stage_id,
                 } = job_snap.location.clone()
                 else {
                     return Err(TransitionError::InvalidLocation {
@@ -1062,8 +1089,10 @@ impl AfterlifeEngine {
                     sub_stage_id: sub_id,
                 };
 
+                let mut fields = BTreeMap::new();
                 let mut emitted = Vec::new();
                 let fb_id = if let Some(ref body) = reason {
+                    fields.insert("reason".to_string(), body.clone());
                     let fid = FeedbackId::new(format!("FB-{:04}", self.next_feedback_seq));
                     self.next_feedback_seq += 1;
                     self.feedbacks.push(Feedback {
@@ -1081,9 +1110,9 @@ impl AfterlifeEngine {
                         owner_id: owner_id.clone(),
                         actor: actor.clone(),
                         feedback_id: fid.clone(),
-                        district_id,
+                        district_id: district_id.clone(),
                         job_id: Some(job_id.clone()),
-                        stage_id: Some(stage_id),
+                        stage_id: Some(stage_id.clone()),
                         kind: FeedbackKind::ReworkReason,
                         at,
                     });
@@ -1101,20 +1130,42 @@ impl AfterlifeEngine {
                 }
                 target.revision += 1;
                 target.updated_at = at;
+                target.step_records.push(StepRecord {
+                    district_id: district_id.clone(),
+                    stage_id: stage_id.clone(),
+                    sub_stage_id: sub_stage_id.clone(),
+                    revision: target.revision,
+                    actor: actor.clone(),
+                    outcome: StepRecordOutcome::Reworked,
+                    fields,
+                    artifact_ids: Vec::new(),
+                    recorded_at: at,
+                });
 
                 emitted.insert(
                     0,
-                    JobEvent::JobReworked {
-                        owner_id,
+                    JobEvent::StepRecorded {
+                        owner_id: owner_id.clone(),
                         actor: actor.clone(),
-                        job_id,
+                        job_id: job_id.clone(),
+                        district_id,
+                        stage_id,
+                        sub_stage_id,
                         revision: target.revision,
-                        from,
-                        to,
-                        reason,
+                        outcome: StepRecordOutcome::Reworked,
                         at,
                     },
                 );
+                emitted.push(JobEvent::JobReworked {
+                    owner_id,
+                    actor: actor.clone(),
+                    job_id,
+                    revision: target.revision,
+                    from,
+                    to,
+                    reason,
+                    at,
+                });
                 emitted
             }
             EngineCommand::AttachArtifact {
@@ -1135,9 +1186,13 @@ impl AfterlifeEngine {
                 }
                 policy::require_mutation_lease(actor, &job_snap, fencing_token, at)?;
 
-                let produced_at_stage = match &job_snap.location {
-                    JobLocation::InDistrict { stage_id, .. } => Some(stage_id.clone()),
-                    _ => None,
+                let (produced_at_stage, produced_at_sub_stage) = match &job_snap.location {
+                    JobLocation::InDistrict {
+                        stage_id,
+                        sub_stage_id,
+                        ..
+                    } => (Some(stage_id.clone()), sub_stage_id.clone()),
+                    _ => (None, None),
                 };
                 let art_id = ArtifactId::new(format!("art-{:05}", self.next_artifact_seq));
                 self.next_artifact_seq += 1;
@@ -1152,6 +1207,7 @@ impl AfterlifeEngine {
                     uri: uri.clone(),
                     sha256,
                     produced_at_stage,
+                    produced_at_sub_stage,
                     revision_at_capture: target.revision,
                 });
 

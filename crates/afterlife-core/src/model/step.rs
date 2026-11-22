@@ -68,6 +68,7 @@ pub fn default_step_fields() -> Vec<StepFieldDef> {
 pub enum StepRecordOutcome {
     Advanced,
     Approved,
+    Reworked,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

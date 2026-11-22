@@ -205,4 +205,61 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn legacy_workspace_json_without_artifact_sub_stage_loads_cleanly() {
+        let dir = temp_path("legacy_artifact_compat");
+        let db_path = dir.join("afterlife.db");
+        let owner = OwnerId::from("legacy-owner");
+
+        let store = SqliteWorkspaceStore::open(&db_path).unwrap();
+        store
+            .execute_command(CommandEnvelope {
+                command_id: CommandId::from("cmd-legacy-1"),
+                actor: Actor::local_human(owner.clone()),
+                command: EngineCommand::QueueJob {
+                    title: "Legacy compat job".into(),
+                    raw_input: "raw".into(),
+                    target_district_hint: None,
+                    at: 1_763_600_000_000,
+                },
+            })
+            .unwrap();
+        drop(store);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let state_json: String = conn
+            .query_row(
+                "SELECT state_json FROM workspaces WHERE owner_id = ?1",
+                rusqlite::params![owner.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut parsed: serde_json::Value = serde_json::from_str(&state_json).unwrap();
+        if let Some(jobs) = parsed["jobs"].as_array_mut() {
+            for job in jobs {
+                if let Some(arts) = job["artifacts"].as_array_mut() {
+                    for art in arts {
+                        if let Some(obj) = art.as_object_mut() {
+                            obj.remove("produced_at_sub_stage");
+                        }
+                    }
+                }
+            }
+        }
+        let stripped = serde_json::to_string(&parsed).unwrap();
+        conn.execute(
+            "UPDATE workspaces SET state_json = ?1 WHERE owner_id = ?2",
+            rusqlite::params![stripped, owner.as_str()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let reopened = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let snap = reopened.load_workspace(&owner).unwrap();
+        assert_eq!(snap.engine.jobs.len(), 1);
+        assert_eq!(snap.engine.jobs[0].artifacts.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

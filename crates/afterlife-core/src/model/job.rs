@@ -35,6 +35,8 @@ pub struct Artifact {
     pub uri: String,
     pub sha256: Option<String>,
     pub produced_at_stage: Option<StageId>,
+    #[serde(default)]
+    pub produced_at_sub_stage: Option<SubStageId>,
     pub revision_at_capture: u64,
 }
 
@@ -48,6 +50,7 @@ impl Artifact {
             label,
             sha256: None,
             produced_at_stage: None,
+            produced_at_sub_stage: None,
             revision_at_capture: 1,
         }
     }

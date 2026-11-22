@@ -538,6 +538,15 @@ mod tests {
             crate::mcp::mcp_tool_definitions(),
             "schemas/mcp-tools.schema.json drifted from mcp::mcp_tool_definitions()"
         );
+        let jobs_advance_desc = schema_json["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "jobs_advance")
+            .and_then(|t| t["description"].as_str())
+            .expect("jobs_advance tool description must exist");
+        assert!(jobs_advance_desc.contains("job_get_context"));
+        assert!(!jobs_advance_desc.contains("context_compile"));
     }
 
     #[tokio::test]

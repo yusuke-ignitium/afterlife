@@ -189,7 +189,7 @@ pub fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "jobs_advance",
-            "description": "Advance a Job to its next sub-stage or parent stage as Actor::Agent. Atomically records a StepRecord whose fields satisfy required_step_fields (from context_compile) and any required_artifact_kinds; requires active fencing_token and passing GateVerification on parent-stage exit. Human ApprovalGates cannot be bypassed by agents. Advancing releases the current stage lease so the next step requires a fresh jobs_claim.",
+            "description": "Advance a Job to its next sub-stage or parent stage as Actor::Agent. Atomically records a StepRecord whose fields satisfy required_step_fields (from job_get_context) and whose artifact_ids link at least one artifact produced in the current step matching required_artifact_kinds; requires active fencing_token and passing GateVerification on parent-stage exit. Human ApprovalGates cannot be bypassed by agents. Advancing releases the current stage lease so the next step requires a fresh jobs_claim.",
             "inputSchema": {
                 "type": "object",
                 "required": ["job_id", "fields"],
@@ -212,7 +212,7 @@ pub fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "jobs_rework",
-            "description": "Send a Job back to the stage's rework target and record the reason as Feedback.",
+            "description": "Send a Job back to the stage's rework target, append a reworked StepRecord, and record the reason as Feedback.",
             "inputSchema": {
                 "type": "object",
                 "required": ["job_id"],
