@@ -117,7 +117,7 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
 
         let (ok, dists) = run_cli(&url_clone, &["districts"]);
         assert!(ok);
-        assert_eq!(dists["districts"].as_array().unwrap().len(), 1);
+        assert_eq!(dists["districts"].as_array().unwrap().len(), 5);
 
         let (ok, created) = run_cli(
             &url_clone,

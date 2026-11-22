@@ -69,12 +69,43 @@ mod tests {
         assert!(engine.jobs.is_empty());
         assert!(engine.queued_jobs().is_empty());
         assert!(engine.approval_jobs().is_empty());
-        assert_eq!(engine.districts.len(), 1);
-        assert_eq!(engine.template_order.len(), 4);
-        assert_eq!(
-            engine.districts[0].active_philosophy().version,
-            PhilosophyVersion::new(1)
-        );
+        assert_eq!(engine.districts.len(), 5);
+        assert_eq!(engine.template_order.len(), 7);
+        for district in &engine.districts {
+            assert_eq!(
+                district.active_philosophy().version,
+                PhilosophyVersion::new(1)
+            );
+            let stages = district.stages();
+            assert!(
+                stages.iter().any(|s| s.is_gate()),
+                "district {} must include a human approval gate",
+                district.id
+            );
+            assert!(
+                stages.iter().any(|s| s.is_terminal()),
+                "district {} must include a terminal stage",
+                district.id
+            );
+        }
+        let serialized = format!("{:?}{:?}", engine.districts, engine.templates);
+        for forbidden in [
+            "gpu-perf-optimize",
+            "AGENTS.md",
+            ".cursor",
+            ".agents",
+            "Antigravity",
+            "Cursor",
+            "cargo",
+            "Metal",
+            "1 分で",
+            "1分で",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "generic workspace seed must not contain environment-specific or time-boxed token `{forbidden}`"
+            );
+        }
     }
 
     #[test]
@@ -107,7 +138,7 @@ mod tests {
             JobLocation::InDistrict {
                 district_id: DistrictId::from("DIST-001"),
                 stage_id: StageId::from("discover"),
-                sub_stage_id: Some(SubStageId::from("lock_scope")),
+                sub_stage_id: Some(SubStageId::from("lock_criteria")),
             }
         );
 
@@ -509,7 +540,7 @@ mod tests {
             JobLocation::InDistrict {
                 district_id: DistrictId::from("DIST-001"),
                 stage_id: StageId::from("build"),
-                sub_stage_id: Some(SubStageId::from("implement_core")),
+                sub_stage_id: Some(SubStageId::from("apply_change")),
             }
         );
         assert_eq!(engine.feedbacks.len(), 1);
