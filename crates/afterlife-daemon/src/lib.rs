@@ -142,9 +142,81 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    fn seed_active_and_gate_jobs(
+        state: &Arc<AppDaemonState>,
+    ) -> (afterlife_core::JobId, afterlife_core::JobId) {
+        let owner = afterlife_core::OwnerId::from(afterlife_core::fixtures::LOCAL_OWNER_ID);
+        let human = afterlife_core::Actor::local_human(owner.clone());
+        let dist_id = afterlife_core::DistrictId::from("DIST-001");
+        let mut seq = 1u64;
+        let mut run = |cmd: afterlife_core::EngineCommand| {
+            let id = afterlife_core::CommandId::new(format!("seed-cmd-{seq}"));
+            seq += 1;
+            state
+                .ports
+                .store
+                .execute_command(afterlife_protocol::CommandEnvelope {
+                    command_id: id,
+                    actor: human.clone(),
+                    command: cmd,
+                })
+                .unwrap()
+        };
+
+        let out_active = run(afterlife_core::EngineCommand::QueueJob {
+            title: "Active Work Job".into(),
+            raw_input: "seed active".into(),
+            target_district_hint: Some(dist_id.clone()),
+            at: 1_900_000_000_000,
+        });
+        let active_id = match &out_active.events[0] {
+            afterlife_core::JobEvent::JobQueued { job_id, .. } => job_id.clone(),
+            _ => unreachable!(),
+        };
+        run(afterlife_core::EngineCommand::AssignJobToDistrict {
+            job_id: active_id.clone(),
+            district_id: dist_id.clone(),
+            expected_revision: None,
+            at: 1_900_000_001_000,
+        });
+
+        let out_gate = run(afterlife_core::EngineCommand::QueueJob {
+            title: "Approval Gate Job".into(),
+            raw_input: "seed gate".into(),
+            target_district_hint: Some(dist_id.clone()),
+            at: 1_900_000_002_000,
+        });
+        let gate_id = match &out_gate.events[0] {
+            afterlife_core::JobEvent::JobQueued { job_id, .. } => job_id.clone(),
+            _ => unreachable!(),
+        };
+        run(afterlife_core::EngineCommand::AssignJobToDistrict {
+            job_id: gate_id.clone(),
+            district_id: dist_id,
+            expected_revision: None,
+            at: 1_900_000_003_000,
+        });
+        for step in 0..32u64 {
+            let snap = state.ports.store.load_workspace(&owner).unwrap();
+            let job = snap.engine.find_job(&gate_id).unwrap();
+            if snap.engine.is_job_at_approval_gate(job) {
+                break;
+            }
+            run(afterlife_core::EngineCommand::AdvanceJob {
+                job_id: gate_id.clone(),
+                expected_revision: None,
+                fencing_token: None,
+                at: 1_900_000_004_000 + step * 1_000,
+            });
+        }
+
+        (active_id, gate_id)
+    }
+
     #[tokio::test]
     async fn full_oauth_pkce_dcr_to_mcp_workflow_and_security_guards() {
         let (state, dir) = test_state("oauth_mcp");
+        let (active_job_id, gate_job_id) = seed_active_and_gate_jobs(&state);
         let app = build_router(state);
 
         let resp = app
@@ -249,7 +321,7 @@ mod tests {
                             "method": "tools/call",
                             "params": {
                                 "name": "job_get_context",
-                                "arguments": { "job_id": "JOB-043" }
+                                "arguments": { "job_id": active_job_id.as_str() }
                             }
                         })
                         .to_string(),
@@ -261,21 +333,21 @@ mod tests {
         assert_eq!(ctx_resp.status(), StatusCode::OK);
         let ctx_json = read_json(ctx_resp).await;
         let text = ctx_json["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("Measure Before Optimize"));
+        assert!(text.contains("Ship Every State as a Whole"));
         assert_eq!(ctx_json["result"]["isError"], false);
 
         for (req_id, tool_name, arguments) in [
             (
                 2,
                 "jobs_claim",
-                json!({ "job_id": "JOB-041", "ttl_ms": 60000 }),
+                json!({ "job_id": gate_job_id.as_str(), "ttl_ms": 60000 }),
             ),
             (
                 3,
                 "jobs_assign",
-                json!({ "job_id": "JOB-041", "district_id": "DIST-001" }),
+                json!({ "job_id": gate_job_id.as_str(), "district_id": "DIST-001" }),
             ),
-            (4, "jobs_advance", json!({ "job_id": "JOB-041" })),
+            (4, "jobs_advance", json!({ "job_id": gate_job_id.as_str() })),
         ] {
             let resp = app
                 .clone()
@@ -380,6 +452,7 @@ mod tests {
     #[tokio::test]
     async fn local_mcp_protocol_compat_agent_guard_and_metrics_logging() {
         let (state, dir) = test_state("local_mcp_compat");
+        let (active_job_id, gate_job_id) = seed_active_and_gate_jobs(&state);
         let app = build_router(state);
 
         let notif = app
@@ -464,7 +537,7 @@ mod tests {
                             "method": "tools/call",
                             "params": {
                                 "name": "jobs_claim",
-                                "arguments": { "job_id": "JOB-041" }
+                                "arguments": { "job_id": gate_job_id.as_str() }
                             }
                         })
                         .to_string(),
@@ -498,7 +571,7 @@ mod tests {
                             "method": "tools/call",
                             "params": {
                                 "name": "jobs_claim",
-                                "arguments": { "job_id": "JOB-043", "ttl_ms": -100 }
+                                "arguments": { "job_id": active_job_id.as_str(), "ttl_ms": -100 }
                             }
                         })
                         .to_string(),

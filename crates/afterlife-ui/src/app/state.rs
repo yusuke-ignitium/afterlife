@@ -301,6 +301,15 @@ impl AppState {
         let ephemeral = std::env::var("AFTERLIFE_EPHEMERAL").is_ok()
             || std::env::var("AFTERLIFE_PERF_SCENARIO").is_ok();
         let perf_use_live_data = std::env::var("AFTERLIFE_PERF_USE_LIVE_DATA").is_ok();
+        Self::new_with_mode(ephemeral, perf_use_live_data)
+    }
+
+    #[cfg(test)]
+    fn new_ephemeral() -> Self {
+        Self::new_with_mode(true, false)
+    }
+
+    fn new_with_mode(ephemeral: bool, perf_use_live_data: bool) -> Self {
         let backdrop_store = (!ephemeral).then(BackdropStore::open_default);
 
         let style = UiStyle::LiquidGlass;
@@ -375,7 +384,7 @@ impl AppState {
             .jobs
             .first()
             .map(|j| j.id.clone())
-            .unwrap_or_else(|| JobId::from("JOB-041"));
+            .unwrap_or_else(|| JobId::from(""));
 
         Self {
             engine: Arc::new(engine),
@@ -777,8 +786,7 @@ mod tests {
 
     #[test]
     fn switching_displays_applies_scale_and_preserves_per_display_tile_memory() {
-        let mut st = AppState::new();
-        st.backdrop_store = None;
+        let mut st = AppState::new_ephemeral();
         st.display_tile_sizes.clear();
         st.base_tile_size_px = 3.0;
         st.glass.bg_tile_size_px = 3.0;
@@ -803,7 +811,7 @@ mod tests {
 
     #[test]
     fn inspector_toggles_guard_tab_and_exclusivity_with_appearance() {
-        let mut st = AppState::new();
+        let mut st = AppState::new_ephemeral();
         assert!(!st.inspector_open);
         assert!(!st.settings_open);
         assert!(st.active_tab == TabId::Workspace);

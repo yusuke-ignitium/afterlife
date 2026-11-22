@@ -117,7 +117,7 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
 
         let (ok, dists) = run_cli(&url_clone, &["districts"]);
         assert!(ok);
-        assert_eq!(dists["districts"].as_array().unwrap().len(), 2);
+        assert_eq!(dists["districts"].as_array().unwrap().len(), 1);
 
         let (ok, created) = run_cli(
             &url_clone,
@@ -139,65 +139,109 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
 
         let (ok, ctx) = run_cli(&url_clone, &["jobs", "context", &job_id]);
         assert!(ok);
-        assert_eq!(ctx["stage"]["id"], "design");
-        let checks: Vec<String> = ctx["stage"]["gate_rubric"]["checks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| format!("{}=true", c.as_str().unwrap()))
-            .collect();
+        assert_eq!(ctx["stage"]["id"], "discover");
 
-        let (ok, claimed) = run_cli(
-            &url_clone,
-            &["jobs", "claim", &job_id, "--runner", "Grok Bot CLI"],
-        );
-        assert!(ok, "claim failed: {claimed}");
-        let token = claimed["events"][0]["fencing_token"]
-            .as_u64()
-            .unwrap()
-            .to_string();
+        loop {
+            let (ok, ctx) = run_cli(&url_clone, &["jobs", "context", &job_id]);
+            assert!(ok, "context failed: {ctx}");
+            let is_human_gate = ctx["stage"]["kind"] == "approval_gate"
+                || ctx["stage"]["gate_rubric"]["requires_human_approval"] == true;
+            if is_human_gate {
+                break;
+            }
 
-        let (ok, _) = run_cli(
-            &url_clone,
-            &[
-                "artifacts",
-                "attach",
-                &job_id,
-                "--kind",
-                "spec",
-                "--label",
-                "design.md",
-                "--uri",
-                "https://example.com/design.md",
-                "--fencing-token",
-                &token,
-            ],
-        );
-        assert!(ok);
+            let (ok, claimed) = run_cli(
+                &url_clone,
+                &["jobs", "claim", &job_id, "--runner", "Grok Bot CLI"],
+            );
+            assert!(ok, "claim failed: {claimed}");
+            let token = claimed["events"][0]["fencing_token"]
+                .as_u64()
+                .unwrap()
+                .to_string();
 
-        let mut gate_args = vec![
-            "gate",
-            "verify",
-            &job_id,
-            "--verdict",
-            "pass",
-            "--summary",
-            "Design verified via CLI",
-            "--fencing-token",
-            &token,
-        ];
-        for c in &checks {
-            gate_args.push("--check");
-            gate_args.push(c.as_str());
+            let (ok, _) = run_cli(
+                &url_clone,
+                &[
+                    "artifacts",
+                    "attach",
+                    &job_id,
+                    "--kind",
+                    "spec",
+                    "--label",
+                    "evidence.md",
+                    "--uri",
+                    "https://example.com/evidence.md",
+                    "--fencing-token",
+                    &token,
+                ],
+            );
+            assert!(ok);
+
+            if ctx["sub_stage"].is_null() {
+                if let Some(checks_arr) = ctx["stage"]["gate_rubric"]["checks"].as_array() {
+                    let checks: Vec<String> = checks_arr
+                        .iter()
+                        .map(|c| format!("{}=true", c.as_str().unwrap()))
+                        .collect();
+                    let mut gate_args = vec![
+                        "gate",
+                        "verify",
+                        &job_id,
+                        "--verdict",
+                        "pass",
+                        "--summary",
+                        "Verified via CLI",
+                        "--fencing-token",
+                        &token,
+                    ];
+                    for c in &checks {
+                        gate_args.push("--check");
+                        gate_args.push(c.as_str());
+                    }
+                    let (ok, _) = run_cli(&url_clone, &gate_args);
+                    assert!(ok);
+                }
+            } else {
+                let (ok, adv) = run_cli(
+                    &url_clone,
+                    &["jobs", "advance", &job_id, "--fencing-token", &token],
+                );
+                if ok {
+                    continue;
+                }
+                assert_eq!(adv["code"], "gate_verification_required");
+                let checks: Vec<String> = ctx["stage"]["gate_rubric"]["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| format!("{}=true", c.as_str().unwrap()))
+                    .collect();
+                let mut gate_args = vec![
+                    "gate",
+                    "verify",
+                    &job_id,
+                    "--verdict",
+                    "pass",
+                    "--summary",
+                    "Stage exit verified via CLI",
+                    "--fencing-token",
+                    &token,
+                ];
+                for c in &checks {
+                    gate_args.push("--check");
+                    gate_args.push(c.as_str());
+                }
+                let (ok, _) = run_cli(&url_clone, &gate_args);
+                assert!(ok);
+            }
+
+            let (ok, _) = run_cli(
+                &url_clone,
+                &["jobs", "advance", &job_id, "--fencing-token", &token],
+            );
+            assert!(ok);
         }
-        let (ok, _) = run_cli(&url_clone, &gate_args);
-        assert!(ok);
-
-        let (ok, _) = run_cli(
-            &url_clone,
-            &["jobs", "advance", &job_id, "--fencing-token", &token],
-        );
-        assert!(ok);
 
         let (ok, _) = run_cli(
             &url_clone,
@@ -220,14 +264,14 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
         assert!(ok);
         assert!(!list["jobs"].as_array().unwrap().is_empty());
 
-        let (ok, err) = run_cli(&url_clone, &["jobs", "advance", "JOB-041"]);
+        let (ok, err) = run_cli(&url_clone, &["jobs", "advance", &job_id]);
         assert!(!ok, "CLI must NOT be able to advance ApprovalGate");
         assert_eq!(err["status"], 403);
         assert_eq!(err["code"], "human_approval_required");
 
         let (ok, err) = run_cli(
             &url_clone,
-            &["jobs", "archive", "JOB-041", "--reason", "try bypass"],
+            &["jobs", "archive", &job_id, "--reason", "try bypass"],
         );
         assert!(!ok, "CLI must NOT be able to archive ApprovalGate job");
         assert_eq!(err["status"], 403);

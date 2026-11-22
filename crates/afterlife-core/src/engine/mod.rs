@@ -63,20 +63,19 @@ impl AfterlifeEngine {
     }
 
     pub fn new_for_owner(owner_id: OwnerId) -> Self {
-        let (templates, template_order, districts, jobs, next_job_seq, next_fencing_token) =
-            fixtures::sample_workspace(&owner_id);
+        let seed = fixtures::default_workspace(&owner_id);
         Self {
             owner_id,
-            templates,
-            template_order,
-            districts,
-            jobs,
+            templates: seed.templates,
+            template_order: seed.template_order,
+            districts: seed.districts,
+            jobs: seed.jobs,
             feedbacks: Vec::new(),
             philosophy_proposals: Vec::new(),
             spec_proposals: Vec::new(),
             event_log: Vec::new(),
-            next_job_seq,
-            next_fencing_token,
+            next_job_seq: seed.next_job_seq,
+            next_fencing_token: seed.next_fencing_token,
             next_feedback_seq: 1,
             next_proposal_seq: 1,
             next_artifact_seq: 1,

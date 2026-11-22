@@ -32,13 +32,45 @@ mod tests {
         }
     }
 
+    fn seed_job_in_district(engine: &mut AfterlifeEngine, title: &str) -> JobId {
+        let dist_id = DistrictId::from("DIST-001");
+        let job_id = engine.queue_preset_job(title, Some(&dist_id));
+        let human = engine.local_actor();
+        engine
+            .apply(
+                &human,
+                EngineCommand::AssignJobToDistrict {
+                    job_id: job_id.clone(),
+                    district_id: dist_id,
+                    expected_revision: None,
+                    at: 1_763_600_010_000,
+                },
+            )
+            .unwrap();
+        job_id
+    }
+
+    fn seed_job_at_approval_gate(engine: &mut AfterlifeEngine, title: &str) -> JobId {
+        let job_id = seed_job_in_district(engine, title);
+        for _ in 0..32 {
+            let job = engine.find_job(&job_id).unwrap();
+            if engine.is_job_at_approval_gate(job) {
+                return job_id;
+            }
+            engine.advance_job(&job_id).unwrap();
+        }
+        panic!("job {job_id} did not reach approval gate");
+    }
+
     #[test]
-    fn sample_workspace_passes_graph_validation() {
+    fn default_workspace_passes_graph_validation() {
         let engine = AfterlifeEngine::new();
         assert!(engine.validate().is_ok());
-        assert_eq!(engine.queued_jobs().len(), 3);
-        assert_eq!(engine.approval_jobs().len(), 2);
-        assert_eq!(engine.districts.len(), 2);
+        assert!(engine.jobs.is_empty());
+        assert!(engine.queued_jobs().is_empty());
+        assert!(engine.approval_jobs().is_empty());
+        assert_eq!(engine.districts.len(), 1);
+        assert_eq!(engine.template_order.len(), 4);
         assert_eq!(
             engine.districts[0].active_philosophy().version,
             PhilosophyVersion::new(1)
@@ -48,15 +80,14 @@ mod tests {
     #[test]
     fn advance_steps_through_sub_machine_before_parent_stage() {
         let mut engine = AfterlifeEngine::new();
-        let job_id = JobId::from("JOB-042");
+        let job_id = seed_job_in_district(&mut engine, "Sub-stage stepping test");
 
-        engine.advance_job(&job_id).unwrap();
         assert_eq!(
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
                 district_id: DistrictId::from("DIST-001"),
-                stage_id: StageId::from("pr_pipeline"),
-                sub_stage_id: Some(SubStageId::from("ci_green")),
+                stage_id: StageId::from("discover"),
+                sub_stage_id: Some(SubStageId::from("trace_sources")),
             }
         );
 
@@ -65,7 +96,59 @@ mod tests {
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
                 district_id: DistrictId::from("DIST-001"),
-                stage_id: StageId::from("approval_gate"),
+                stage_id: StageId::from("discover"),
+                sub_stage_id: Some(SubStageId::from("isolate_probe")),
+            }
+        );
+
+        engine.advance_job(&job_id).unwrap();
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().location,
+            JobLocation::InDistrict {
+                district_id: DistrictId::from("DIST-001"),
+                stage_id: StageId::from("discover"),
+                sub_stage_id: Some(SubStageId::from("lock_scope")),
+            }
+        );
+
+        engine.advance_job(&job_id).unwrap();
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().location,
+            JobLocation::InDistrict {
+                district_id: DistrictId::from("DIST-001"),
+                stage_id: StageId::from("design"),
+                sub_stage_id: None,
+            }
+        );
+
+        engine.advance_job(&job_id).unwrap();
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().location,
+            JobLocation::InDistrict {
+                district_id: DistrictId::from("DIST-001"),
+                stage_id: StageId::from("baseline_guard"),
+                sub_stage_id: Some(SubStageId::from("capture_baseline")),
+            }
+        );
+
+        engine.advance_job(&job_id).unwrap();
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().location,
+            JobLocation::InDistrict {
+                district_id: DistrictId::from("DIST-001"),
+                stage_id: StageId::from("baseline_guard"),
+                sub_stage_id: Some(SubStageId::from("lock_regression_guards")),
+            }
+        );
+
+        for _ in 0..7 {
+            engine.advance_job(&job_id).unwrap();
+        }
+        assert_eq!(
+            engine.find_job(&job_id).unwrap().location,
+            JobLocation::InDistrict {
+                district_id: DistrictId::from("DIST-001"),
+                stage_id: StageId::from("approve"),
                 sub_stage_id: None,
             }
         );
@@ -76,7 +159,7 @@ mod tests {
             JobLocation::Completed {
                 ref terminal_stage_id,
                 ..
-            } if terminal_stage_id == &StageId::from("merged")
+            } if terminal_stage_id == &StageId::from("shipped")
         ));
 
         assert!(matches!(
@@ -89,7 +172,7 @@ mod tests {
     fn agent_cannot_bypass_human_approval_gate_or_philosophy_approval() {
         let mut engine = AfterlifeEngine::new();
         let agent = agent_actor(&engine.owner_id, "cursor-agent");
-        let job_id = JobId::from("JOB-041");
+        let job_id = seed_job_at_approval_gate(&mut engine, "Gate guard job");
 
         let claim_err = engine
             .apply(
@@ -144,7 +227,9 @@ mod tests {
         let mut engine = AfterlifeEngine::new();
         let agent_a = agent_actor(&engine.owner_id, "claude");
         let agent_b = agent_actor(&engine.owner_id, "codex");
-        let job_id = JobId::from("JOB-043");
+        let job_id = seed_job_in_district(&mut engine, "Lease fencing job");
+        engine.advance_job(&job_id).unwrap();
+        engine.advance_job(&job_id).unwrap();
 
         let t0 = 2_000_000_000_000;
         let ev_a = engine
@@ -235,20 +320,23 @@ mod tests {
             TransitionError::GateVerificationRequired { .. }
         ));
 
+        let required_checks = engine
+            .compile_execution_context(&job_id)
+            .unwrap()
+            .stage
+            .gate_rubric
+            .unwrap()
+            .checks;
+        let checklist_results = required_checks.into_iter().map(|c| (c, true)).collect();
+
         engine
             .apply(
                 &agent_b,
                 EngineCommand::RecordGateVerification {
                     job_id: job_id.clone(),
                     verdict: GateVerdict::Pass,
-                    summary: "All tests and philosophy checks passed".into(),
-                    checklist_results: vec![
-                        ("cargo check / test が全 pass している".into(), true),
-                        (
-                            "District Philosophy のアンチパターンに抵触していない".into(),
-                            true,
-                        ),
-                    ],
+                    summary: "All discovery checks passed".into(),
+                    checklist_results,
                     fencing_token: Some(token_b),
                     at: t0 + 20_000,
                 },
@@ -292,14 +380,15 @@ mod tests {
         let human = engine.local_actor();
         let frontier_model = agent_actor(&engine.owner_id, "claude-opus");
         let dist_id = DistrictId::from("DIST-001");
+        let job_id = seed_job_at_approval_gate(&mut engine, "Evolution job");
 
         let fb_ev = engine
             .apply(
                 &human,
                 EngineCommand::SubmitFeedback {
                     district_id: dist_id.clone(),
-                    job_id: Some(JobId::from("JOB-041")),
-                    stage_id: Some(StageId::from("approval_gate")),
+                    job_id: Some(job_id.clone()),
+                    stage_id: Some(StageId::from("approve")),
                     kind: FeedbackKind::PhilosophyInsight,
                     body: "DBスキーマ変更時はダウンタイムゼロ互換マイグレーションを必須にしたい"
                         .into(),
@@ -320,10 +409,10 @@ mod tests {
                     base_version: PhilosophyVersion::new(1),
                     summary: "計測駆動・型安全・無停止マイグレーション原則".into(),
                     principles: vec![Principle {
-                        id: "P-CODE-3".into(),
+                        id: "P-DEV-6".into(),
                         title: "Zero-Downtime Migrations".into(),
                         statement: "DBスキーマは必ず expand-and-contract で後方互換にする。".into(),
-                        rationale: "Fargate ローリングデプロイ中の旧タスクと衝突させないため。"
+                        rationale: "ローリングデプロイ中の旧インスタンスと衝突させないため。"
                             .into(),
                     }],
                     anti_patterns: vec!["既存カラムの即時DROP".into()],
@@ -366,9 +455,7 @@ mod tests {
                 .active_philosophy_version,
             PhilosophyVersion::new(2)
         );
-        let ctx = engine
-            .compile_execution_context(&JobId::from("JOB-041"))
-            .unwrap();
+        let ctx = engine.compile_execution_context(&job_id).unwrap();
         assert_eq!(ctx.philosophy.version, PhilosophyVersion::new(1));
         assert_eq!(ctx.recent_feedbacks.len(), 1);
     }
@@ -377,7 +464,7 @@ mod tests {
     fn optimistic_cas_detects_revision_conflict() {
         let mut engine = AfterlifeEngine::new();
         let actor = engine.local_actor();
-        let job_id = JobId::from("JOB-041");
+        let job_id = seed_job_at_approval_gate(&mut engine, "CAS conflict job");
         let stale_rev = engine.find_job(&job_id).unwrap().revision - 1;
 
         let err = engine
@@ -403,7 +490,7 @@ mod tests {
     fn rework_moves_back_and_records_feedback() {
         let mut engine = AfterlifeEngine::new();
         let actor = engine.local_actor();
-        let job_id = JobId::from("JOB-041");
+        let job_id = seed_job_at_approval_gate(&mut engine, "Rework target job");
 
         engine
             .apply(
@@ -421,8 +508,8 @@ mod tests {
             engine.find_job(&job_id).unwrap().location,
             JobLocation::InDistrict {
                 district_id: DistrictId::from("DIST-001"),
-                stage_id: StageId::from("implement"),
-                sub_stage_id: Some(SubStageId::from("extract_prop")),
+                stage_id: StageId::from("build"),
+                sub_stage_id: Some(SubStageId::from("implement_core")),
             }
         );
         assert_eq!(engine.feedbacks.len(), 1);
@@ -437,8 +524,8 @@ mod tests {
                 &actor,
                 EngineCommand::SetStageSubTemplate {
                     district_id: DistrictId::from("DIST-001"),
-                    stage_id: StageId::from("approval_gate"),
-                    template_id: Some(SubMachineTemplateId::from("tmpl-pr-ci")),
+                    stage_id: StageId::from("approve"),
+                    template_id: Some(SubMachineTemplateId::from("tmpl-build-loop")),
                     at: 1000,
                 },
             )
@@ -451,7 +538,7 @@ mod tests {
     fn queue_and_pull_emits_audit_events() {
         let mut engine = AfterlifeEngine::new();
         let new_id = engine.queue_preset_job("Test job", Some(&DistrictId::from("DIST-001")));
-        assert_eq!(new_id.as_str(), "JOB-048");
+        assert_eq!(new_id.as_str(), "JOB-001");
         let pulled = engine
             .pull_next_job_into_district(&DistrictId::from("DIST-001"))
             .unwrap();
@@ -468,6 +555,7 @@ mod tests {
             owner_id: owner.clone(),
             email: "owner@local".into(),
         };
+        let gate_job_id = seed_job_at_approval_gate(&mut engine, "Approval gate guard target");
 
         let created = engine
             .apply(
@@ -523,7 +611,7 @@ mod tests {
             .apply(
                 &agent,
                 EngineCommand::UpdateJob {
-                    job_id: JobId::from("JOB-041"),
+                    job_id: gate_job_id.clone(),
                     title: Some("Tamper approval gate".into()),
                     raw_input: None,
                     spec_summary: None,
@@ -540,7 +628,7 @@ mod tests {
             .apply(
                 &agent,
                 EngineCommand::ArchiveJob {
-                    job_id: JobId::from("JOB-041"),
+                    job_id: gate_job_id,
                     reason: Some("Suppress gate".into()),
                     expected_revision: None,
                     fencing_token: None,

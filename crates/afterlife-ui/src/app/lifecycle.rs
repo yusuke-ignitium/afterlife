@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use afterlife_core::JobId;
 use afterlife_daemon::AppDaemonState;
 use afterlife_design::UiStyle;
 use gpui::{
@@ -307,12 +306,13 @@ pub fn run_app() {
                         let s = step / 2;
                         let _ = cx.update(|cx| {
                             state_for_perf.update(cx, |st, _| {
-                                let ids = [
-                                    "JOB-041", "JOB-042", "JOB-043", "JOB-044", "JOB-045",
-                                    "JOB-046", "JOB-047",
-                                ];
-                                st.selected_job_id = JobId::from(ids[s % ids.len()]);
-                                st.detail_open = !s.is_multiple_of(5);
+                                if !st.engine.jobs.is_empty() {
+                                    let idx = s % st.engine.jobs.len();
+                                    st.selected_job_id = st.engine.jobs[idx].id.clone();
+                                    st.detail_open = !s.is_multiple_of(5);
+                                } else {
+                                    st.detail_open = false;
+                                }
                                 st.glass.bg_brightness = 1.2 + ((s % 8) as f32) * 0.1;
                                 st.refresh_palette();
                             });

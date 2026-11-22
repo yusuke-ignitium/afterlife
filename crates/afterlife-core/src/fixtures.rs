@@ -2,334 +2,442 @@ use std::collections::HashMap;
 
 use crate::{
     ids::{
-        DistrictId, FencingToken, JobId, LeaseId, OwnerId, PhilosophyVersion, RunnerId,
-        SpecVersion, StageId, SubMachineTemplateId, SubStageId,
+        DistrictId, OwnerId, PhilosophyVersion, SpecVersion, StageId, SubMachineTemplateId,
+        SubStageId,
     },
     model::{
-        Actor, Artifact, ArtifactKind, District, GateRubric, Job, JobLease, JobLocation,
-        Philosophy, Principle, ProcedureSpec, RunnerKind, StageDef, StageKind, SubMachineTemplate,
-        SubStageDef,
+        Actor, District, GateRubric, Job, Philosophy, Principle, ProcedureSpec, RunnerKind,
+        StageDef, StageKind, SubMachineTemplate, SubStageDef,
     },
 };
 
 pub const LOCAL_OWNER_ID: &str = "local-owner";
 const SEED_TS: u64 = 1_763_600_000_000;
-const SEED_TTL: u64 = 300_000;
 
-fn seed_lease(seq: u64, runner_id: &str, runner_label: &str) -> JobLease {
-    JobLease {
-        lease_id: LeaseId::new(format!("lease-seed-{seq}")),
-        fencing_token: FencingToken::new(seq),
-        runner_id: RunnerId::from(runner_id),
-        runner_label: runner_label.into(),
-        holder_client_id: None,
-        acquired_at: SEED_TS,
-        expires_at: SEED_TS + SEED_TTL,
-    }
+pub struct WorkspaceSeed {
+    pub templates: HashMap<SubMachineTemplateId, SubMachineTemplate>,
+    pub template_order: Vec<SubMachineTemplateId>,
+    pub districts: Vec<District>,
+    pub jobs: Vec<Job>,
+    pub next_job_seq: u32,
+    pub next_fencing_token: u64,
 }
 
-pub fn sample_workspace(
-    owner_id: &OwnerId,
-) -> (
-    HashMap<SubMachineTemplateId, SubMachineTemplate>,
-    Vec<SubMachineTemplateId>,
-    Vec<District>,
-    Vec<Job>,
-    u32,
-    u64,
-) {
+pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let seed_actor = Actor::local_human(owner_id.clone());
 
     let mut templates = HashMap::new();
-    let tmpl_pr_ci = SubMachineTemplate {
-        id: SubMachineTemplateId::from("tmpl-pr-ci"),
-        name: "PR CI Watch".into(),
-        description: "PR作成からCI監視、失敗時の自動修正ループ".into(),
-        philosophy_notes: "CIが赤のまま人間レビューに回さない。差分は小さく自己説明的に保つ。"
+
+    let tmpl_evidence = SubMachineTemplate {
+        id: SubMachineTemplateId::from("tmpl-evidence"),
+        name: "Evidence & Spike".into(),
+        description: "一次仕様・既存実装トレースから隔離環境での実機検証、スコープ確定まで"
             .into(),
+        philosophy_notes:
+            "推測で設計しない。一次ソースと隔離再現で事実を確定させてから着手する。".into(),
         stages: vec![
             SubStageDef {
-                id: SubStageId::from("create_pr"),
-                label: "Create PR".into(),
-                runner: "Dots (Git)".into(),
+                id: SubStageId::from("trace_sources"),
+                label: "Trace Sources".into(),
+                runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
-                procedure: "変更差分を要約し、検証コマンド・ロールバック手順付きでPRを作成する。"
-                    .into(),
+                procedure:
+                    "既存実装・関連シンボル・公式ドキュメント・制約条件を一次情報から網羅的に確認する。"
+                        .into(),
                 gate_checks: vec![
-                    "PR本文に検証ログがある".into(),
-                    "不要な差分が混入していない".into(),
+                    "関連シンボルと影響範囲の一次確認が完了している".into(),
+                    "外部仕様や依存制約に一次ソースの裏付けがある".into(),
                 ],
             },
             SubStageDef {
-                id: SubStageId::from("watch_ci"),
-                label: "Watch CI".into(),
-                runner: "CI Poller".into(),
-                runner_kind: RunnerKind::Deterministic,
-                procedure: "全CIチェック完了を監視し、失敗時は失敗ログを抽出して修正ループを回す。"
-                    .into(),
-                gate_checks: vec!["全必須チェックが緑である".into()],
-            },
-            SubStageDef {
-                id: SubStageId::from("ci_green"),
-                label: "CI Green".into(),
-                runner: "Gate Ready".into(),
-                runner_kind: RunnerKind::Deterministic,
-                procedure: "CI緑の証跡Artifactを添付し、承認ゲートへ引き渡す。".into(),
-                gate_checks: vec!["CiReport Artifact が紐づいている".into()],
-            },
-        ],
-    };
-
-    let tmpl_formal = SubMachineTemplate {
-        id: SubMachineTemplateId::from("tmpl-formal"),
-        name: "Formal Verify".into(),
-        description: "仕様抽出からZ3・Lean検証、証明出力".into(),
-        philosophy_notes: "エッジケースは勘ではなく不変条件と自動検証で潰す。".into(),
-        stages: vec![
-            SubStageDef {
-                id: SubStageId::from("extract_prop"),
-                label: "Extract Inv".into(),
-                runner: "Claude Duet".into(),
-                runner_kind: RunnerKind::Ai,
-                procedure: "仕様から不変条件（競合・権限・状態遷移）を抽出しテスト仕様化する。"
-                    .into(),
-                gate_checks: vec!["最低1つ以上の異常系不変条件が定義されている".into()],
-            },
-            SubStageDef {
-                id: SubStageId::from("z3_prove"),
-                label: "Z3 Prove".into(),
-                runner: "Z3 Verifier".into(),
-                runner_kind: RunnerKind::Deterministic,
-                procedure: "抽出した不変条件を検証器／ユニットテストで実行し証跡を残す。".into(),
-                gate_checks: vec!["全検証が pass している".into()],
-            },
-        ],
-    };
-
-    let tmpl_research = SubMachineTemplate {
-        id: SubMachineTemplateId::from("tmpl-research"),
-        name: "Deep Triage".into(),
-        description: "一次情報収集と比較要約".into(),
-        philosophy_notes: "推測で補完せず、一次ソース・実測値・トレードオフを明記する。".into(),
-        stages: vec![
-            SubStageDef {
-                id: SubStageId::from("crawl"),
-                label: "Crawl Docs".into(),
-                runner: "Grok Bot".into(),
-                runner_kind: RunnerKind::Ai,
-                procedure: "公式ドキュメント・一次実装・ベンチマークから根拠付きメモを収集する。"
-                    .into(),
-                gate_checks: vec!["すべての主張に一次ソースまたは実測根拠がある".into()],
-            },
-            SubStageDef {
-                id: SubStageId::from("synthesize"),
-                label: "Synthesize".into(),
-                runner: "Claude Duet".into(),
+                id: SubStageId::from("isolate_probe"),
+                label: "Isolate Probe".into(),
+                runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "意思決定に必要な比較軸（速度・コスト・堅牢性）で構造化ブリーフを作成する。"
+                    "未確定の挙動・互換性・性能仮説は一時環境や最小再現で実機検証し、推測を排除する。"
                         .into(),
-                gate_checks: vec!["推奨案と棄却案の理由が明記されている".into()],
+                gate_checks: vec![
+                    "未確定事項が実機検証または実測で確認済みである".into(),
+                ],
+            },
+            SubStageDef {
+                id: SubStageId::from("lock_scope"),
+                label: "Lock Scope".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                procedure:
+                    "変更対象・非対象・後方互換条件・守るべき不変条件を簡潔に確定する。"
+                        .into(),
+                gate_checks: vec![
+                    "変更対象・非対象・守るべき不変条件が明記されている".into(),
+                ],
+            },
+        ],
+    };
+
+    let tmpl_baseline_guard = SubMachineTemplate {
+        id: SubMachineTemplateId::from("tmpl-baseline-guard"),
+        name: "Baseline & Guard".into(),
+        description: "メイン実装に着手する前のBeforeベースライン採取とデグレガード先行固定"
+            .into(),
+        philosophy_notes:
+            "メイン実装より先にBeforeベースラインとデグレ検知ガードを固定し、後付けの甘い検証を構造的に防ぐ。"
+                .into(),
+        stages: vec![
+            SubStageDef {
+                id: SubStageId::from("capture_baseline"),
+                label: "Capture Baseline".into(),
+                runner: "Verifier".into(),
+                runner_kind: RunnerKind::Deterministic,
+                procedure:
+                    "変更前の現行状態について、再現手順・品質指標・性能や出力のBeforeベースラインを同一条件で再測定可能な形で記録する。"
+                        .into(),
+                gate_checks: vec![
+                    "変更前（Before）の比較基準と再現条件が記録されている".into(),
+                ],
+            },
+            SubStageDef {
+                id: SubStageId::from("lock_regression_guards"),
+                label: "Lock Guards".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                procedure:
+                    "メインスコープ実装前に、守るべき既存品質・不変条件・境界条件の決定論的デグレガード（自動テスト／検証器）を先行実装し、現行状態で通過することを確認する。"
+                        .into(),
+                gate_checks: vec![
+                    "メイン実装より先にデグレガードが実装され現行状態で通過している".into(),
+                    "意図的な退行や境界違反を検知できる検証内容になっている".into(),
+                ],
+            },
+        ],
+    };
+
+    let tmpl_build_loop = SubMachineTemplate {
+        id: SubMachineTemplateId::from("tmpl-build-loop"),
+        name: "Build & Hygiene".into(),
+        description: "先行ガード下での土台整合実装、新機能テスト追加、警告ゼロ検証ループ".into(),
+        philosophy_notes:
+            "先行固定したデグレガードを破らずに土台から整え、警告ゼロ・全緑になるまで妥協しない。"
+                .into(),
+        stages: vec![
+            SubStageDef {
+                id: SubStageId::from("implement_core"),
+                label: "Implement Core".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                procedure:
+                    "設計に従い、既存アーキテクチャ・トークン・永続化互換と整合する形でメインスコープを本質的に実装する。"
+                        .into(),
+                gate_checks: vec![
+                    "パッチワークや場当たり上書きがなく全体と整合している".into(),
+                    "ローカル固有パスや機密情報が混入していない".into(),
+                ],
+            },
+            SubStageDef {
+                id: SubStageId::from("add_feature_tests"),
+                label: "Feature Tests".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                procedure:
+                    "追加・変更した仕様の正常系・異常系・境界条件を検証する決定論的テストを整備する。"
+                        .into(),
+                gate_checks: vec![
+                    "新仕様と異常系を網羅する自動テストが追加または更新されている".into(),
+                ],
+            },
+            SubStageDef {
+                id: SubStageId::from("hygiene_gate"),
+                label: "Hygiene Gate".into(),
+                runner: "Build & Test".into(),
+                runner_kind: RunnerKind::Deterministic,
+                procedure:
+                    "先行デグレガードを含む全テスト・ビルド・lint・規約チェックを実行し、警告ゼロ・全緑になるまで修正ループを回す。"
+                        .into(),
+                gate_checks: vec![
+                    "先行デグレガードを含む全テスト・ビルド・lint が警告ゼロで通過している"
+                        .into(),
+                ],
+            },
+        ],
+    };
+
+    let tmpl_verify_ship = SubMachineTemplate {
+        id: SubMachineTemplateId::from("tmpl-verify-ship"),
+        name: "Verify & Diff".into(),
+        description: "実機・本番相当ビルド検証、Before/After前後比較、証跡とWhyの整理".into(),
+        philosophy_notes:
+            "動いたつもりで出荷しない。Beforeベースラインとの同一条件比較と実機確認で退行ゼロを実証し、人間レビューに必要な証跡だけを渡す。"
+                .into(),
+        stages: vec![
+            SubStageDef {
+                id: SubStageId::from("live_verify"),
+                label: "Live Run".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                procedure:
+                    "実機・本番相当ビルド・E2E パスで実際のユーザー操作と永続化／再起動挙動を検証する。"
+                        .into(),
+                gate_checks: vec![
+                    "実機または本番相当環境での動作確認が完了している".into(),
+                ],
+            },
+            SubStageDef {
+                id: SubStageId::from("compare_baseline"),
+                label: "Before/After Diff".into(),
+                runner: "Verifier".into(),
+                runner_kind: RunnerKind::Deterministic,
+                procedure:
+                    "Baseline & Guard で記録したBefore基準と変更後（After）を同一条件で比較し、品質・性能・互換性の退行ゼロを実証する。"
+                        .into(),
+                gate_checks: vec![
+                    "Before/After の同一条件比較で品質・性能・互換性の退行ゼロが確認済みである"
+                        .into(),
+                ],
+            },
+            SubStageDef {
+                id: SubStageId::from("bundle_evidence"),
+                label: "Bundle Evidence".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                procedure:
+                    "前後比較結果・証跡 Artifact・変更の Why（設計判断・互換性・不変条件）を整理し人間ゲートへ引き渡す。"
+                        .into(),
+                gate_checks: vec![
+                    "人間承認に必要な前後比較証跡と Why 要約が揃っている".into(),
+                ],
             },
         ],
     };
 
     let template_order = vec![
-        tmpl_pr_ci.id.clone(),
-        tmpl_formal.id.clone(),
-        tmpl_research.id.clone(),
+        tmpl_evidence.id.clone(),
+        tmpl_baseline_guard.id.clone(),
+        tmpl_build_loop.id.clone(),
+        tmpl_verify_ship.id.clone(),
     ];
-    templates.insert(tmpl_pr_ci.id.clone(), tmpl_pr_ci);
-    templates.insert(tmpl_formal.id.clone(), tmpl_formal);
-    templates.insert(tmpl_research.id.clone(), tmpl_research);
+    templates.insert(tmpl_evidence.id.clone(), tmpl_evidence);
+    templates.insert(tmpl_baseline_guard.id.clone(), tmpl_baseline_guard);
+    templates.insert(tmpl_build_loop.id.clone(), tmpl_build_loop);
+    templates.insert(tmpl_verify_ship.id.clone(), tmpl_verify_ship);
 
-    let code_philosophy = Philosophy {
+    let delivery_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
-        summary: "計測駆動・型安全・ロールバック可能性を最優先にする本番実装ディストリクト。"
-            .into(),
+        summary:
+            "一次情報と実機検証を起点に、実装前ベースラインとデグレガード先行固定でパッチワークを排し、人間承認境界で常に商用完成度を保つ汎用プロダクト開発ディストリクト。"
+                .into(),
         principles: vec![
             Principle {
-                id: "P-CODE-1".into(),
-                title: "Measure Before Optimize".into(),
-                statement: "性能変更は必ず Before/After の定量実測値を伴わせる。".into(),
-                rationale: "勘による最適化は複雑さだけ増やし逆行を見逃すため。".into(),
+                id: "P-DEV-1".into(),
+                title: "Ship Every State as a Whole".into(),
+                statement:
+                    "応急処置や場当たりハックを積まず、要件変更時は土台から整合させて常に商用完成品として保つ。"
+                        .into(),
+                rationale:
+                    "局所パッチの積み上げは設計破綻と保守不能な分岐を生み、品質と開発速度を同時に落とすため。"
+                        .into(),
             },
             Principle {
-                id: "P-CODE-2".into(),
-                title: "Fail Closed on Boundaries".into(),
-                statement: "権限・データ境界・競合ロックはアプリ層とDB層の両方で安全側に倒す。"
-                    .into(),
+                id: "P-DEV-2".into(),
+                title: "Primary Evidence & Live Probe First".into(),
+                statement:
+                    "推測で進めない。公式仕様・既存実装の一次確認と、隔離環境での実機検証・定量計測を先行させる。"
+                        .into(),
                 rationale:
-                    "エージェントの暴走やネットワーク遅延によるデータ破損を構造的に防ぐため。"
+                    "誤った前提に基づく設計や勘による最適化を防ぎ、手戻りと隠れた退行を根絶するため。"
+                        .into(),
+            },
+            Principle {
+                id: "P-DEV-3".into(),
+                title: "Baseline & Regression Guards Before Implementation".into(),
+                statement:
+                    "メインスコープの実装に着手する前に、Beforeベースラインの記録と決定論的デグレガードの固定を完了させる。"
+                        .into(),
+                rationale:
+                    "実装後の後付けテストは現行挙動への追従になりやすく、前後比較と退行検知の客観性を損なうため。"
+                        .into(),
+            },
+            Principle {
+                id: "P-DEV-4".into(),
+                title: "Minimal Invariants, Single Source of Truth".into(),
+                statement:
+                    "冗長な手順書や二重管理を排し、単一ソースに最小の不変原則だけを残して仕様・実装・契約のドリフトを防ぐ。"
+                        .into(),
+                rationale:
+                    "肥大化したドキュメントや重複設定は即座に陳腐化し、エージェントと人間の判断を狂わせるため。"
+                        .into(),
+            },
+            Principle {
+                id: "P-DEV-5".into(),
+                title: "Fail-Closed Governance & Resilient State".into(),
+                statement:
+                    "実行は AI に積極委譲しつつ最終承認・破壊的判断は人間ゲートで止め、永続化はアトミック書き込み・サニタイズ・後方互換を徹底する。"
+                        .into(),
+                rationale:
+                    "自律実行の速度を最大化しながら、データ破損・権限逸脱・ローカル固有情報や機密の混入を構造的に防ぐため。"
                         .into(),
             },
         ],
         anti_patterns: vec![
-            "テストやビルドを通さずに次ステージへ進める".into(),
-            "承認ゲートをエージェント自身の判断でバイパスする".into(),
+            "症状だけを隠すパッチワークやアドホックな上書きを残す".into(),
+            "一次ソースや実機・実測の裏付けなしに設計や最適化を決める".into(),
+            "Beforeベースラインやデグレガードを固定しないままメイン実装へ着手する".into(),
+            "ビルド・テスト・lint・前後比較を通さず次ステージや承認へ回す".into(),
+            "人間承認ゲートをエージェント自身の判断で迂回する".into(),
+            "試行錯誤のログ・ローカル固有パス・秘密情報を成果物やコミットに残す".into(),
         ],
         decision_heuristics: vec![
-            "迷ったら状態変更を小さく刻み、各ステップを独立コミット可能にする".into(),
-            "抽象化はローカル⇔クラウドの切替点（Port）だけに限定する".into(),
+            "仕様や挙動が曖昧なら推測で進めず、隔離検証（一時ディレクトリ・最小再現）で事実を確定させてから進む"
+                .into(),
+            "メイン実装より先にBeforeベースラインと決定論的デグレガードを固定し、完了後に同一条件で前後比較して退行ゼロを実証する"
+                .into(),
+            "要件が揺れたら表面を繕わず、共通の土台・トークン・抽象境界を一段整理してから実装する"
+                .into(),
+            "変更は論理単位で刻み、コミットには diff から読めない Why（設計判断・互換性・不変条件）を残す"
+                .into(),
         ],
         source_feedback_ids: vec![],
         updated_by: seed_actor.clone(),
         updated_at: SEED_TS,
     };
 
-    let code_spec = ProcedureSpec {
+    let delivery_spec = ProcedureSpec {
         version: SpecVersion::new(1),
-        changelog: "Initial code implementation district procedure spec".into(),
-        source_feedback_ids: vec![],
-        updated_by: seed_actor.clone(),
-        updated_at: SEED_TS,
-        stages: vec![
-            StageDef {
-                id: StageId::from("design"),
-                label: "Design".into(),
-                runner: "Claude Duet".into(),
-                runner_kind: RunnerKind::Ai,
-                kind: StageKind::Work,
-                procedure: "要件・制約・境界条件を整理し、型定義と変更対象ファイルを明示した設計メモを作成する。".into(),
-                gate_rubric: Some(GateRubric {
-                    checks: vec![
-                        "変更対象と非対象が明記されている".into(),
-                        "異常系・ロールバック方針がある".into(),
-                    ],
-                    auto_verify_by_llm: true,
-                    requires_human_approval: false,
-                }),
-                sub_template_id: None,
-                next: vec![StageId::from("implement")],
-                rework_to: None,
-            },
-            StageDef {
-                id: StageId::from("implement"),
-                label: "Implement".into(),
-                runner: "Dots".into(),
-                runner_kind: RunnerKind::Ai,
-                kind: StageKind::Work,
-                procedure: "設計メモに従い最小差分で実装し、ユニットテストと警告ゼロのチェックを通す。".into(),
-                gate_rubric: Some(GateRubric {
-                    checks: vec![
-                        "cargo check / test が全 pass している".into(),
-                        "District Philosophy のアンチパターンに抵触していない".into(),
-                    ],
-                    auto_verify_by_llm: true,
-                    requires_human_approval: false,
-                }),
-                sub_template_id: Some(SubMachineTemplateId::from("tmpl-formal")),
-                next: vec![StageId::from("pr_pipeline")],
-                rework_to: Some(StageId::from("design")),
-            },
-            StageDef {
-                id: StageId::from("pr_pipeline"),
-                label: "PR & CI".into(),
-                runner: "Dots + CI".into(),
-                runner_kind: RunnerKind::Ai,
-                kind: StageKind::Work,
-                procedure: "PRを作成し全CIが緑になるまで監視・修正を回す。".into(),
-                gate_rubric: Some(GateRubric {
-                    checks: vec!["CI がすべて green である".into()],
-                    auto_verify_by_llm: true,
-                    requires_human_approval: false,
-                }),
-                sub_template_id: Some(SubMachineTemplateId::from("tmpl-pr-ci")),
-                next: vec![StageId::from("approval_gate")],
-                rework_to: Some(StageId::from("implement")),
-            },
-            StageDef {
-                id: StageId::from("approval_gate"),
-                label: "Approval".into(),
-                runner: "You".into(),
-                runner_kind: RunnerKind::Human,
-                kind: StageKind::ApprovalGate,
-                procedure: "LLM事前検証サマリとArtifactを確認し、人間オーナーがApproveまたは理由付きReworkを行う。".into(),
-                gate_rubric: Some(GateRubric {
-                    checks: vec![
-                        "District Philosophy に合致している".into(),
-                        "本番デプロイ時のリスクが許容範囲内である".into(),
-                    ],
-                    auto_verify_by_llm: true,
-                    requires_human_approval: true,
-                }),
-                sub_template_id: None,
-                next: vec![StageId::from("merged")],
-                rework_to: Some(StageId::from("implement")),
-            },
-            StageDef {
-                id: StageId::from("merged"),
-                label: "Merged".into(),
-                runner: "Done".into(),
-                runner_kind: RunnerKind::Deterministic,
-                kind: StageKind::Terminal,
-                procedure: "マージ完了・テレメトリ記録済み。".into(),
-                gate_rubric: None,
-                sub_template_id: None,
-                next: vec![],
-                rework_to: None,
-            },
-        ],
-    };
-
-    let research_philosophy = Philosophy {
-        version: PhilosophyVersion::new(1),
-        summary: "一次情報と実測を武器に、意思決定コストを最小化するリサーチディストリクト。"
-            .into(),
-        principles: vec![Principle {
-            id: "P-RES-1".into(),
-            title: "Primary Evidence Only".into(),
-            statement: "推測と一次事実を明確に分離し、取得不能な情報はその場で申告する。".into(),
-            rationale: "誤った前提に基づく設計ミスを根絶するため。".into(),
-        }],
-        anti_patterns: vec!["出典や実測値のない一般論で比較表を埋める".into()],
-        decision_heuristics: vec!["2〜3案に絞り、推奨案と撤退条件を必ず添える".into()],
-        source_feedback_ids: vec![],
-        updated_by: seed_actor.clone(),
-        updated_at: SEED_TS,
-    };
-
-    let research_spec = ProcedureSpec {
-        version: SpecVersion::new(1),
-        changelog: "Initial research & spec district procedure spec".into(),
+        changelog: "Initial general-purpose product delivery procedure spec".into(),
         source_feedback_ids: vec![],
         updated_by: seed_actor,
         updated_at: SEED_TS,
         stages: vec![
             StageDef {
-                id: StageId::from("investigate"),
-                label: "Investigate".into(),
-                runner: "Grok Bot".into(),
+                id: StageId::from("discover"),
+                label: "Discover & Probe".into(),
+                runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "一次ソース収集・比較表・コスト/リスク試算を作成してArtifactとして添付する。"
+                    "既存実装・一次仕様・影響範囲をトレースし、未確定事項は隔離環境で実機検証してからスコープと守るべき不変条件を確定する。"
                         .into(),
                 gate_rubric: Some(GateRubric {
-                    checks: vec!["一次ソースと具体的な数値根拠が含まれる".into()],
+                    checks: vec![
+                        "関連シンボル・影響範囲と一次仕様が確認済みである".into(),
+                        "変更対象・非対象・守るべき不変条件が明確である".into(),
+                    ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
                 }),
-                sub_template_id: Some(SubMachineTemplateId::from("tmpl-research")),
-                next: vec![StageId::from("brief_gate")],
+                sub_template_id: Some(SubMachineTemplateId::from("tmpl-evidence")),
+                next: vec![StageId::from("design")],
                 rework_to: None,
             },
             StageDef {
-                id: StageId::from("brief_gate"),
-                label: "Approval".into(),
+                id: StageId::from("design"),
+                label: "Design Whole".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                kind: StageKind::Work,
+                procedure:
+                    "場当たりハックを避け、プロダクト全体の設計・型・境界条件・後方互換・UX 整合にフィットするアプローチと、前後比較・デグレガード計画を定める。"
+                        .into(),
+                gate_rubric: Some(GateRubric {
+                    checks: vec![
+                        "パッチワークではなく全体整合した設計になっている".into(),
+                        "永続化・後方互換・異常系・境界条件の方針がある".into(),
+                        "Beforeベースライン計測と先行デグレガードの計画が具体化されている"
+                            .into(),
+                    ],
+                    auto_verify_by_llm: true,
+                    requires_human_approval: false,
+                }),
+                sub_template_id: None,
+                next: vec![StageId::from("baseline_guard")],
+                rework_to: Some(StageId::from("discover")),
+            },
+            StageDef {
+                id: StageId::from("baseline_guard"),
+                label: "Baseline & Guard".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                kind: StageKind::Work,
+                procedure:
+                    "メインスコープ実装前に、変更前（Before）の比較ベースラインを記録し、既存品質・不変条件を守る決定論的デグレガードを先行実装・固定する。"
+                        .into(),
+                gate_rubric: Some(GateRubric {
+                    checks: vec![
+                        "変更前（Before）の比較ベースラインと再現条件が記録されている".into(),
+                        "メイン実装に先立つデグレガードが実装され現行状態で通過している".into(),
+                    ],
+                    auto_verify_by_llm: true,
+                    requires_human_approval: false,
+                }),
+                sub_template_id: Some(SubMachineTemplateId::from("tmpl-baseline-guard")),
+                next: vec![StageId::from("build")],
+                rework_to: Some(StageId::from("design")),
+            },
+            StageDef {
+                id: StageId::from("build"),
+                label: "Build Core".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                kind: StageKind::Work,
+                procedure:
+                    "先行固定したデグレガードを破らずにメインスコープを土台整合で実装し、新仕様テストを追加。ビルド・全テスト・lint 警告ゼロと移植性を満たす。"
+                        .into(),
+                gate_rubric: Some(GateRubric {
+                    checks: vec![
+                        "先行デグレガードと新仕様テストがすべて通過している".into(),
+                        "ビルド・全テスト・lint が警告ゼロで通過している".into(),
+                        "ローカル固有情報・機密・不要な差分が混入していない".into(),
+                    ],
+                    auto_verify_by_llm: true,
+                    requires_human_approval: false,
+                }),
+                sub_template_id: Some(SubMachineTemplateId::from("tmpl-build-loop")),
+                next: vec![StageId::from("verify")],
+                rework_to: Some(StageId::from("design")),
+            },
+            StageDef {
+                id: StageId::from("verify"),
+                label: "Verify & Diff".into(),
+                runner: "AI Agent".into(),
+                runner_kind: RunnerKind::Ai,
+                kind: StageKind::Work,
+                procedure:
+                    "実機・本番相当ビルド・E2E で動作確認し、Baseline & Guard で記録した Before 基準と同一条件で前後比較して退行ゼロを実証する。証跡 Artifact と Why 要約を揃える。"
+                        .into(),
+                gate_rubric: Some(GateRubric {
+                    checks: vec![
+                        "実機または本番相当環境での動作確認証跡がある".into(),
+                        "Before/After の同一条件比較で品質・性能・互換性の退行ゼロが確認済みである"
+                            .into(),
+                        "証跡 Artifact と Why 要約が揃っている".into(),
+                    ],
+                    auto_verify_by_llm: true,
+                    requires_human_approval: false,
+                }),
+                sub_template_id: Some(SubMachineTemplateId::from("tmpl-verify-ship")),
+                next: vec![StageId::from("approve")],
+                rework_to: Some(StageId::from("build")),
+            },
+            StageDef {
+                id: StageId::from("approve"),
+                label: "Human Gate".into(),
                 runner: "You".into(),
                 runner_kind: RunnerKind::Human,
                 kind: StageKind::ApprovalGate,
-                procedure: "調査ブリーフの十分性と意思決定の妥当性を人間オーナーが最終確認する。"
-                    .into(),
+                procedure:
+                    "前後比較結果・証跡 Artifact・変更の妥当性を人間オーナーが最終確認し、Approve または理由付き Rework を行う。"
+                        .into(),
                 gate_rubric: Some(GateRubric {
-                    checks: vec!["次の実装フェーズに着手できる明確さがある".into()],
+                    checks: vec![
+                        "District Philosophy の原則と商用完成度を満たしている".into(),
+                        "リリース・公開・破壊的変更のリスクが許容範囲内である".into(),
+                    ],
                     auto_verify_by_llm: true,
                     requires_human_approval: true,
                 }),
                 sub_template_id: None,
                 next: vec![StageId::from("shipped")],
-                rework_to: Some(StageId::from("investigate")),
+                rework_to: Some(StageId::from("build")),
             },
             StageDef {
                 id: StageId::from("shipped"),
@@ -337,7 +445,9 @@ pub fn sample_workspace(
                 runner: "Done".into(),
                 runner_kind: RunnerKind::Deterministic,
                 kind: StageKind::Terminal,
-                procedure: "調査ブリーフ確定済み。".into(),
+                procedure:
+                    "人間承認・Why を記したクリーンなコミット・出荷完了。学びは Feedback として次版へ還元可能な状態。"
+                        .into(),
                 gate_rubric: None,
                 sub_template_id: None,
                 next: vec![],
@@ -346,200 +456,23 @@ pub fn sample_workspace(
         ],
     };
 
-    let districts = vec![
-        District {
-            id: DistrictId::from("DIST-001"),
-            owner_id: owner_id.clone(),
-            name: "DISTRICT 01 - Code Implementation".into(),
-            setup_by: "AI Setup: Claude Duet".into(),
-            active_philosophy_version: PhilosophyVersion::new(1),
-            philosophy_history: vec![code_philosophy],
-            active_spec_version: SpecVersion::new(1),
-            spec_history: vec![code_spec],
-        },
-        District {
-            id: DistrictId::from("DIST-002"),
-            owner_id: owner_id.clone(),
-            name: "DISTRICT 02 - Research & Spec".into(),
-            setup_by: "AI Setup: Grok Bot".into(),
-            active_philosophy_version: PhilosophyVersion::new(1),
-            philosophy_history: vec![research_philosophy],
-            active_spec_version: SpecVersion::new(1),
-            spec_history: vec![research_spec],
-        },
-    ];
+    let districts = vec![District {
+        id: DistrictId::from("DIST-001"),
+        owner_id: owner_id.clone(),
+        name: "DISTRICT 01 - Product Delivery".into(),
+        setup_by: "General Delivery Blueprint".into(),
+        active_philosophy_version: PhilosophyVersion::new(1),
+        philosophy_history: vec![delivery_philosophy],
+        active_spec_version: SpecVersion::new(1),
+        spec_history: vec![delivery_spec],
+    }];
 
-    let jobs = vec![
-        Job {
-            id: JobId::from("JOB-041"),
-            owner_id: owner_id.clone(),
-            revision: 4,
-            title: "UIのpxトークンと縦中央揃えの決定論的ガードを適用".into(),
-            raw_input: "uiのpxとボーダー幅をルール化してズレないようにしたい".into(),
-            spec_summary: "Guard SpacePx/FontPx/RowHeightPx; enforce cap-height centering & Backdrop-Synced Glass.".into(),
-            location: JobLocation::InDistrict {
-                district_id: DistrictId::from("DIST-001"),
-                stage_id: StageId::from("approval_gate"),
-                sub_stage_id: None,
-            },
-            target_district_hint: Some(DistrictId::from("DIST-001")),
-            pinned_philosophy_version: Some(PhilosophyVersion::new(1)),
-            pinned_spec_version: Some(SpecVersion::new(1)),
-            lease: None,
-            artifacts: vec![
-                Artifact::simple("art-041-1", "spec/ui-guard.md", ArtifactKind::Spec),
-                Artifact::simple("art-041-2", "pr/#142", ArtifactKind::PullRequest),
-                Artifact::simple("art-041-3", "ci-green.ok", ArtifactKind::CiReport),
-            ],
-            gate_verifications: vec![],
-            feedback_ids: vec![],
-            created_at: SEED_TS,
-            updated_at: SEED_TS,
-        },
-        Job {
-            id: JobId::from("JOB-042"),
-            owner_id: owner_id.clone(),
-            revision: 3,
-            title: "SQLite WAL 同時claim時のロック待ちベンチマーク".into(),
-            raw_input: "複数Runnerが同時にclaimした時のロック待ちを測りたい".into(),
-            spec_summary: "BEGIN IMMEDIATE と楽観的 CAS を16並列Runnerで比較計測する。".into(),
-            location: JobLocation::InDistrict {
-                district_id: DistrictId::from("DIST-001"),
-                stage_id: StageId::from("pr_pipeline"),
-                sub_stage_id: Some(SubStageId::from("watch_ci")),
-            },
-            target_district_hint: Some(DistrictId::from("DIST-001")),
-            pinned_philosophy_version: Some(PhilosophyVersion::new(1)),
-            pinned_spec_version: Some(SpecVersion::new(1)),
-            lease: Some(seed_lease(2, "ci-poller", "CI Poller")),
-            artifacts: vec![
-                Artifact::simple("art-042-1", "src/claim.rs", ArtifactKind::SourceCode),
-                Artifact::simple("art-042-2", "pr/#145", ArtifactKind::PullRequest),
-            ],
-            gate_verifications: vec![],
-            feedback_ids: vec![],
-            created_at: SEED_TS,
-            updated_at: SEED_TS,
-        },
-        Job {
-            id: JobId::from("JOB-043"),
-            owner_id: owner_id.clone(),
-            revision: 2,
-            title: "Grok Bot webhook adapter for PR review lane".into(),
-            raw_input: "PRが開いたらGrok Botに差分投げてコメント返させる".into(),
-            spec_summary: "Subscribe to pr_open transition; dispatch diff payload and await verdict.".into(),
-            location: JobLocation::InDistrict {
-                district_id: DistrictId::from("DIST-001"),
-                stage_id: StageId::from("implement"),
-                sub_stage_id: Some(SubStageId::from("z3_prove")),
-            },
-            target_district_hint: Some(DistrictId::from("DIST-001")),
-            pinned_philosophy_version: Some(PhilosophyVersion::new(1)),
-            pinned_spec_version: Some(SpecVersion::new(1)),
-            lease: Some(seed_lease(3, "z3-verifier", "Z3 Verifier")),
-            artifacts: vec![Artifact::simple(
-                "art-043-1",
-                "design/grok-adapter.md",
-                ArtifactKind::Spec,
-            )],
-            gate_verifications: vec![],
-            feedback_ids: vec![],
-            created_at: SEED_TS,
-            updated_at: SEED_TS,
-        },
-        Job {
-            id: JobId::from("JOB-044"),
-            owner_id: owner_id.clone(),
-            revision: 2,
-            title: "ローカルRunner間IPC（UDS vs Mach Port）の比較調査".into(),
-            raw_input: "Macローカルで最速のIPC方式を調査したい".into(),
-            spec_summary: "Unix Domain Socket と XPC/Mach Port のレイテンシおよび再接続挙動を比較。".into(),
-            location: JobLocation::InDistrict {
-                district_id: DistrictId::from("DIST-002"),
-                stage_id: StageId::from("brief_gate"),
-                sub_stage_id: None,
-            },
-            target_district_hint: Some(DistrictId::from("DIST-002")),
-            pinned_philosophy_version: Some(PhilosophyVersion::new(1)),
-            pinned_spec_version: Some(SpecVersion::new(1)),
-            lease: Some(seed_lease(4, "human-operator", "You")),
-            artifacts: vec![Artifact::simple(
-                "art-044-1",
-                "briefs/ipc-bench.md",
-                ArtifactKind::Spec,
-            )],
-            gate_verifications: vec![],
-            feedback_ids: vec![],
-            created_at: SEED_TS,
-            updated_at: SEED_TS,
-        },
-        Job {
-            id: JobId::from("JOB-045"),
-            owner_id: owner_id.clone(),
-            revision: 1,
-            title: "差し戻し時の成果物スナップショット自動保存に対応".into(),
-            raw_input: "差し戻しした時に前の成果物スナップショット残るようにして".into(),
-            spec_summary: "Jobsで待機中。RunnerによるClaim待ち。".into(),
-            location: JobLocation::Queue,
-            target_district_hint: Some(DistrictId::from("DIST-001")),
-            pinned_philosophy_version: None,
-            pinned_spec_version: None,
-            lease: None,
-            artifacts: vec![Artifact::simple(
-                "art-045-1",
-                "raw-note.txt",
-                ArtifactKind::RawNote,
-            )],
-            gate_verifications: vec![],
-            feedback_ids: vec![],
-            created_at: SEED_TS,
-            updated_at: SEED_TS,
-        },
-        Job {
-            id: JobId::from("JOB-046"),
-            owner_id: owner_id.clone(),
-            revision: 1,
-            title: "Auto-route CI failure logs to Dots".into(),
-            raw_input: "CI落ちたらログ抜粋してDotsに直させる".into(),
-            spec_summary: "Waiting in Jobs for Runner claim.".into(),
-            location: JobLocation::Queue,
-            target_district_hint: Some(DistrictId::from("DIST-001")),
-            pinned_philosophy_version: None,
-            pinned_spec_version: None,
-            lease: None,
-            artifacts: vec![Artifact::simple(
-                "art-046-1",
-                "raw-note.txt",
-                ArtifactKind::RawNote,
-            )],
-            gate_verifications: vec![],
-            feedback_ids: vec![],
-            created_at: SEED_TS,
-            updated_at: SEED_TS,
-        },
-        Job {
-            id: JobId::from("JOB-047"),
-            owner_id: owner_id.clone(),
-            revision: 1,
-            title: "Hiragino Sans と SF Mono 混植時のベースライン検証".into(),
-            raw_input: "Hiragino SansとSF Monoの混植時のベースラインズレ検証".into(),
-            spec_summary: "日本語・英数字混在ラベルのCap-Height中央揃えと折り返し視認性を確認。".into(),
-            location: JobLocation::Queue,
-            target_district_hint: Some(DistrictId::from("DIST-002")),
-            pinned_philosophy_version: None,
-            pinned_spec_version: None,
-            lease: None,
-            artifacts: vec![Artifact::simple(
-                "art-047-1",
-                "raw-note.txt",
-                ArtifactKind::RawNote,
-            )],
-            gate_verifications: vec![],
-            feedback_ids: vec![],
-            created_at: SEED_TS,
-            updated_at: SEED_TS,
-        },
-    ];
-
-    (templates, template_order, districts, jobs, 48, 5)
+    WorkspaceSeed {
+        templates,
+        template_order,
+        districts,
+        jobs: Vec::new(),
+        next_job_seq: 1,
+        next_fencing_token: 1,
+    }
 }

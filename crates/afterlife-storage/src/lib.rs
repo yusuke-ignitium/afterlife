@@ -14,7 +14,7 @@ mod tests {
     use std::thread;
 
     use afterlife_core::{
-        Actor, CommandId, EngineCommand, JobId, OwnerId, RunnerId, TransitionError,
+        Actor, CommandId, EngineCommand, OwnerId, RunnerId, TransitionError,
     };
     use afterlife_protocol::{
         ArtifactBlobStore, CommandEnvelope, PortError, TelemetrySink, WorkspaceStore,
@@ -37,7 +37,22 @@ mod tests {
         let owner = OwnerId::from("alice@company.com");
 
         let init_store = SqliteWorkspaceStore::open(&db_path).unwrap();
-        let _ = init_store.load_workspace(&owner).unwrap();
+        let queued = init_store
+            .execute_command(CommandEnvelope {
+                command_id: CommandId::from("cmd-seed-concurrent"),
+                actor: Actor::local_human(owner.clone()),
+                command: EngineCommand::QueueJob {
+                    title: "Concurrent claim target".into(),
+                    raw_input: "raw".into(),
+                    target_district_hint: None,
+                    at: 1_999_999_000_000,
+                },
+            })
+            .unwrap();
+        let target_job_id = match &queued.events[0] {
+            afterlife_core::JobEvent::JobQueued { job_id, .. } => job_id.clone(),
+            _ => unreachable!(),
+        };
         drop(init_store);
 
         let barrier = Arc::new(Barrier::new(16));
@@ -46,6 +61,7 @@ mod tests {
             let db = db_path.clone();
             let b = barrier.clone();
             let owner = owner.clone();
+            let target_job_id = target_job_id.clone();
             handles.push(thread::spawn(move || {
                 let store = SqliteWorkspaceStore::open(&db).unwrap();
                 let actor = Actor::Agent {
@@ -59,7 +75,7 @@ mod tests {
                     command_id: CommandId::new(format!("cmd-claim-{idx}")),
                     actor,
                     command: EngineCommand::ClaimJob {
-                        job_id: JobId::from("JOB-045"),
+                        job_id: target_job_id,
                         runner_id: RunnerId::new(format!("runner-{idx}")),
                         runner_label: format!("Runner-{idx}"),
                         ttl_ms: 60_000,

@@ -551,7 +551,7 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
         .await;
     assert_eq!(ctx["district_id"], "DIST-001");
     assert_eq!(ctx["philosophy"]["version"], 1);
-    assert_eq!(ctx["stage"]["id"], "design");
+    assert_eq!(ctx["stage"]["id"], "discover");
 
     loop {
         let ctx = agent
@@ -636,7 +636,7 @@ async fn e2e_full_lifecycle_human_and_agent_collaboration_with_live_sse() {
     agent
         .call_err(
             "jobs_assign",
-            json!({ "job_id": job_id, "district_id": "DIST-002" }),
+            json!({ "job_id": job_id, "district_id": "DIST-001" }),
             403,
             "human_approval_required",
         )
@@ -856,7 +856,7 @@ async fn e2e_adversarial_chaos_invariants_f1_to_f9() {
     agent
         .call_err(
             "jobs_assign",
-            json!({ "job_id": job_id, "district_id": "DIST-002" }),
+            json!({ "job_id": job_id, "district_id": "DIST-001" }),
             409,
             "job_already_in_district",
         )
@@ -1008,6 +1008,12 @@ async fn e2e_adversarial_chaos_invariants_f1_to_f9() {
             "invalid_input",
         )
         .await;
+
+    for idx in 1..=3 {
+        agent
+            .call_ok("jobs_create", json!({ "title": format!("Pagination Job {idx}") }))
+            .await;
+    }
 
     agent
         .call_err("jobs_list", json!({ "limit": 999 }), 422, "invalid_input")
@@ -1226,6 +1232,64 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
     assert_eq!(health.status, StatusCode::OK);
     assert_eq!(health.json()["human_http_policy"], "desktop_only");
 
+    let mcp = McpClient::new(server.addr, None);
+    mcp.handshake().await;
+    let created = mcp
+        .call_ok("jobs_create", json!({ "title": "Legit Agent Job" }))
+        .await;
+    let gate_job_id = created["events"][0]["job_id"].as_str().unwrap().to_string();
+    mcp.call_ok(
+        "jobs_assign",
+        json!({ "job_id": gate_job_id, "district_id": "DIST-001" }),
+    )
+    .await;
+    loop {
+        let ctx = mcp
+            .call_ok("job_get_context", json!({ "job_id": gate_job_id }))
+            .await;
+        let is_human_gate = ctx["stage"]["kind"] == "approval_gate"
+            || ctx["stage"]["gate_rubric"]["requires_human_approval"] == true;
+        if is_human_gate {
+            break;
+        }
+        let claim = mcp
+            .call_ok(
+                "jobs_claim",
+                json!({ "job_id": gate_job_id, "runner_label": "Desktop Test Agent", "ttl_ms": 60_000 }),
+            )
+            .await;
+        let token = claim["events"][0]["fencing_token"].as_u64().unwrap();
+        let (is_err, _) = mcp
+            .call_tool(
+                "jobs_advance",
+                json!({ "job_id": gate_job_id, "fencing_token": token }),
+            )
+            .await;
+        if is_err {
+            let checks_arr = ctx["stage"]["gate_rubric"]["checks"].as_array().unwrap();
+            let checklist: Vec<Value> = checks_arr
+                .iter()
+                .map(|c| json!([c.as_str().unwrap(), true]))
+                .collect();
+            mcp.call_ok(
+                "gate_verify_record",
+                json!({
+                    "job_id": gate_job_id,
+                    "verdict": "pass",
+                    "summary": "Stage exit verified",
+                    "checklist_results": checklist,
+                    "fencing_token": token
+                }),
+            )
+            .await;
+            mcp.call_ok(
+                "jobs_advance",
+                json!({ "job_id": gate_job_id, "fencing_token": token }),
+            )
+            .await;
+        }
+    }
+
     let spoof_approve = send_http(
         server.addr,
         Method::POST,
@@ -1235,7 +1299,7 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
         json!({
             "command": {
                 "cmd": "advance_job",
-                "job_id": "JOB-041",
+                "job_id": gate_job_id,
                 "expected_revision": null,
                 "fencing_token": null,
                 "at": 2_000_000_000_000u64
@@ -1299,7 +1363,7 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
         json!({
             "command": {
                 "cmd": "advance_job",
-                "job_id": "JOB-041",
+                "job_id": gate_job_id,
                 "expected_revision": null,
                 "fencing_token": null,
                 "at": 2_000_000_000_000u64
@@ -1323,15 +1387,9 @@ async fn e2e_desktop_embedded_fail_closed_blocks_http_human_impersonation() {
     .await;
     assert_eq!(ws.status, StatusCode::OK);
 
-    let mcp = McpClient::new(server.addr, None);
-    mcp.handshake().await;
-    let created = mcp
-        .call_ok("jobs_create", json!({ "title": "Legit Agent Job" }))
-        .await;
-    assert!(created["events"][0]["job_id"].as_str().is_some());
     mcp.call_err(
         "jobs_advance",
-        json!({ "job_id": "JOB-041" }),
+        json!({ "job_id": gate_job_id }),
         403,
         "human_approval_required",
     )
