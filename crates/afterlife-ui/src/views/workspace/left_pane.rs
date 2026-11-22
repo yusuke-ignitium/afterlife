@@ -1,6 +1,6 @@
 use afterlife_core::{
     AfterlifeEngine, Artifact, DistrictId, EngineCommand, Job, JobLocation, StageId, StepFieldDef,
-    StepRecord, StepRecordOutcome, TimestampMs, parse_blob_uri,
+    StepRecord, StepRecordOutcome, TimestampMs, builtin_step_field_label, parse_blob_uri,
 };
 use afterlife_design::{
     EdgeAccent, FadePx, FontPx, GlassSurface, RadiusPx, RowHeightPx, ScrollFadeExt, SpacePx,
@@ -103,13 +103,9 @@ fn ordered_step_fields(
     }
     for (k, v) in &rec.fields {
         if !seen.contains(k.as_str()) {
-            let label = match k.as_str() {
-                "decision" => "判断と根拠".to_string(),
-                "execution" => "実行内容と結果".to_string(),
-                "note" => "承認メモ".to_string(),
-                "reason" => "差し戻し理由".to_string(),
-                other => other.to_string(),
-            };
+            let label = builtin_step_field_label(k.as_str())
+                .unwrap_or(k.as_str())
+                .to_string();
             out.push((label, v.clone()));
         }
     }
@@ -1229,9 +1225,9 @@ mod tests {
 
         let ordered = ordered_step_fields(&engine, &job, &records[0]);
         assert_eq!(ordered.len(), 2);
-        assert_eq!(ordered[0].0, "参照した一次ソース");
+        assert_eq!(ordered[0].0, "Primary Sources Reviewed");
         assert_eq!(ordered[0].1, "s1");
-        assert_eq!(ordered[1].0, "確認した事実と制約");
+        assert_eq!(ordered[1].0, "Confirmed Facts & Constraints");
         assert_eq!(ordered[1].1, "f1");
     }
 
@@ -1276,7 +1272,7 @@ mod tests {
         let ordered = ordered_step_fields(&engine, &job, &records[1]);
         assert_eq!(
             ordered,
-            vec![("差し戻し理由".to_string(), "境界値テスト不足".to_string())]
+            vec![("Rework Reason".to_string(), "境界値テスト不足".to_string())]
         );
     }
 
@@ -1347,9 +1343,57 @@ mod tests {
         );
 
         let v1_fields = ordered_step_fields(&engine, &v1_job, &rec);
-        assert_eq!(v1_fields[0].0, "採用設計と全体整合の根拠");
+        assert_eq!(v1_fields[0].0, "Chosen Design & System Fit");
         let v2_fields = ordered_step_fields(&engine, &v2_job, &rec);
         assert_eq!(v2_fields[0].0, "V2設計判断ラベル");
+    }
+
+    #[test]
+    fn builtin_fallback_step_labels_are_english_while_user_japanese_passes_through() {
+        let mut engine = AfterlifeEngine::new();
+        let dist_id = DistrictId::from("DIST-001");
+        let job_id = engine.queue_preset_job("Fallback label test", Some(&dist_id));
+        engine.assign_job_to_district(&job_id, &dist_id).unwrap();
+        let job = engine.find_job(&job_id).unwrap().clone();
+
+        let rec = mk_record(
+            "approve",
+            None,
+            StepRecordOutcome::Approved,
+            &[
+                ("decision", "採用判断"),
+                ("execution", "実行結果"),
+                ("note", "承認メモ本文"),
+                ("reason", "差し戻し理由本文"),
+                ("カスタム項目", "日本語の記録内容"),
+            ],
+            6_000,
+        );
+
+        let ordered = ordered_step_fields(&engine, &job, &rec);
+        assert_eq!(
+            ordered,
+            vec![
+                ("Decision & Rationale".to_string(), "採用判断".to_string()),
+                ("Execution & Outcome".to_string(), "実行結果".to_string()),
+                ("Approval Note".to_string(), "承認メモ本文".to_string()),
+                ("Rework Reason".to_string(), "差し戻し理由本文".to_string()),
+                ("カスタム項目".to_string(), "日本語の記録内容".to_string()),
+            ]
+        );
+        for (label, _) in &ordered[..4] {
+            assert!(
+                !label.chars().any(|c| matches!(
+                    c,
+                    '\u{3000}'..='\u{303F}'
+                        | '\u{3040}'..='\u{30FF}'
+                        | '\u{3400}'..='\u{4DBF}'
+                        | '\u{4E00}'..='\u{9FFF}'
+                        | '\u{FF00}'..='\u{FFEF}'
+                )),
+                "built-in fallback label `{label}` must be English-only"
+            );
+        }
     }
 
     #[test]

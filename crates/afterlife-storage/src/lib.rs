@@ -368,4 +368,102 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn persisted_japanese_workspace_loads_losslessly_across_reopen() {
+        let dir = temp_path("japanese_workspace_compat");
+        let db_path = dir.join("afterlife.db");
+        let owner = OwnerId::from("jp-owner");
+        let human = Actor::local_human(owner.clone());
+
+        let store = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let queued = store
+            .execute_command(CommandEnvelope {
+                command_id: CommandId::from("cmd-jp-queue"),
+                actor: human.clone(),
+                command: EngineCommand::QueueJob {
+                    title: "日本語ジョブの永続化互換テスト".into(),
+                    raw_input: "既存DBの日本語DistrictとStepRecordが壊れないことを検証する".into(),
+                    target_district_hint: Some(afterlife_core::DistrictId::from("DIST-001")),
+                    at: 1_763_600_000_000,
+                },
+            })
+            .unwrap();
+        let job_id = match &queued.events[0] {
+            afterlife_core::JobEvent::JobQueued { job_id, .. } => job_id.clone(),
+            _ => unreachable!(),
+        };
+        store
+            .execute_command(CommandEnvelope {
+                command_id: CommandId::from("cmd-jp-assign"),
+                actor: human,
+                command: EngineCommand::AssignJobToDistrict {
+                    job_id: job_id.clone(),
+                    district_id: afterlife_core::DistrictId::from("DIST-001"),
+                    expected_revision: None,
+                    at: 1_763_600_001_000,
+                },
+            })
+            .unwrap();
+        drop(store);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let state_json: String = conn
+            .query_row(
+                "SELECT state_json FROM workspaces WHERE owner_id = ?1",
+                rusqlite::params![owner.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut parsed: serde_json::Value = serde_json::from_str(&state_json).unwrap();
+        parsed["districts"][0]["name"] = serde_json::json!("DISTRICT 01 - 日本語カスタム");
+        parsed["districts"][0]["philosophy_history"][0]["summary"] =
+            serde_json::json!("既存DBに保存された日本語フィロソフィー");
+        parsed["districts"][0]["spec_history"][0]["stages"][1]["record_fields"][0]["label"] =
+            serde_json::json!("カスタム設計判断ラベル");
+        parsed["jobs"][0]["step_records"] = serde_json::json!([{
+            "district_id": "DIST-001",
+            "stage_id": "design",
+            "sub_stage_id": null,
+            "revision": 2,
+            "actor": serde_json::to_value(Actor::local_human(owner.clone())).unwrap(),
+            "outcome": "reworked",
+            "fields": {
+                "reason": "境界値テストが不足しています"
+            },
+            "artifact_ids": [],
+            "recorded_at": 1_763_600_002_000_u64
+        }]);
+        conn.execute(
+            "UPDATE workspaces SET state_json = ?1 WHERE owner_id = ?2",
+            rusqlite::params![serde_json::to_string(&parsed).unwrap(), owner.as_str()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let reopened = SqliteWorkspaceStore::open(&db_path).unwrap();
+        let snap = reopened.load_workspace(&owner).unwrap();
+        let dist = snap
+            .engine
+            .find_district(&afterlife_core::DistrictId::from("DIST-001"))
+            .unwrap();
+        assert_eq!(dist.name, "DISTRICT 01 - 日本語カスタム");
+        assert_eq!(
+            dist.active_philosophy().summary,
+            "既存DBに保存された日本語フィロソフィー"
+        );
+        assert_eq!(
+            dist.active_spec().stages[1].record_fields[0].label,
+            "カスタム設計判断ラベル"
+        );
+        let job = snap.engine.find_job(&job_id).unwrap();
+        assert_eq!(job.title, "日本語ジョブの永続化互換テスト");
+        assert_eq!(job.step_records.len(), 1);
+        assert_eq!(
+            job.step_records[0].fields.get("reason").map(String::as_str),
+            Some("境界値テストが不足しています")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

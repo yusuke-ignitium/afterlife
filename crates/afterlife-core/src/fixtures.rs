@@ -31,10 +31,12 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let tmpl_evidence = SubMachineTemplate {
         id: SubMachineTemplateId::from("tmpl-evidence"),
         name: "Evidence & Probe".into(),
-        description: "一次仕様・既存実装トレースから隔離環境での実機検証、判断基準と前提の確定まで"
-            .into(),
+        description:
+            "Trace primary specs and existing implementation, validate uncertainties in isolation, and lock criteria and assumptions."
+                .into(),
         philosophy_notes:
-            "推測で設計しない。一次ソースと隔離再現で事実を確定させてから着手する。".into(),
+            "Never design on guesswork. Establish facts from primary sources and isolated probes before committing to work."
+                .into(),
         stages: vec![
             SubStageDef {
                 id: SubStageId::from("trace_sources"),
@@ -42,22 +44,23 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "既存実装・関連シンボル・公式ドキュメント・制約条件を一次情報から網羅的に確認する。"
+                    "Review existing implementation, related symbols, official documentation, and constraints exhaustively from primary sources."
                         .into(),
                 gate_checks: vec![
-                    "関連シンボルと影響範囲の一次確認が完了している".into(),
-                    "外部仕様や依存制約に一次ソースの裏付けがある".into(),
+                    "Related symbols and impact scope are confirmed from primary sources".into(),
+                    "External specs and dependency constraints are backed by primary references"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "sources_read",
-                        "参照した一次ソース",
-                        "確認した実装箇所・仕様・契約の所在と範囲を記録する。",
+                        "Primary Sources Reviewed",
+                        "Record the exact implementation locations, specifications, and contracts inspected.",
                     ),
                     StepFieldDef::required(
                         "findings",
-                        "確認した事実と制約",
-                        "一次確認で確定した構造・依存関係・不変条件を記録する。",
+                        "Confirmed Facts & Constraints",
+                        "Record the structures, dependencies, and invariants confirmed from primary sources.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -68,21 +71,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "未確定の挙動・互換性・性能仮説は一時環境や最小再現で実機検証し、推測を排除する。"
+                    "Verify uncertain behavior, compatibility, or performance hypotheses in a temporary environment or minimal reproduction to eliminate assumptions."
                         .into(),
                 gate_checks: vec![
-                    "未確定事項が実機検証または実測で確認済みである".into(),
+                    "Uncertain points are confirmed through live probing or empirical measurement"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "probe_method",
-                        "検証手順と条件",
-                        "実施した隔離検証・最小再現の手順と実行条件を記録する。",
+                        "Probe Method & Conditions",
+                        "Record the isolated verification or minimal reproduction procedure and execution conditions.",
                     ),
                     StepFieldDef::required(
                         "observed_behavior",
-                        "観測結果",
-                        "推測ではなく実測・実機で観測された挙動と結論を記録する。",
+                        "Observed Behavior",
+                        "Record empirically observed behavior and conclusions rather than speculation.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -93,21 +97,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "対象範囲・非対象・前提条件・評価基準・守るべき不変条件を簡潔に確定する。"
+                    "Concisely lock in-scope items, non-goals, assumptions, acceptance criteria, and non-negotiable invariants."
                         .into(),
                 gate_checks: vec![
-                    "対象範囲・前提条件・評価基準・守るべき不変条件が明記されている".into(),
+                    "Scope, assumptions, acceptance criteria, and invariants are explicitly stated"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "decision",
-                        "確定したスコープと前提",
-                        "対象範囲・非対象・前提条件と判断理由を記録する。",
+                        "Locked Scope & Assumptions",
+                        "Record in-scope items, non-goals, assumptions, and rationale.",
                     ),
                     StepFieldDef::required(
                         "acceptance_criteria",
-                        "評価基準と不変条件",
-                        "完了判定の基準と絶対に壊してはならない不変条件を記録する。",
+                        "Acceptance Criteria & Invariants",
+                        "Record completion criteria and invariants that must never be broken.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -118,10 +123,12 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let tmpl_observe = SubMachineTemplate {
         id: SubMachineTemplateId::from("tmpl-observe"),
         name: "Observe & Instrument".into(),
-        description: "対象経路の棚卸しから未観測区間の計測計装、再現可能な評価指標仕様の確定まで"
-            .into(),
+        description:
+            "Map target execution paths, instrument unobservable segments, and lock a reproducible evaluation metric specification."
+                .into(),
         philosophy_notes:
-            "測れない区間は推測せず自律的に計測可能にしてからベースライン採取へ進む。".into(),
+            "Never guess about unmeasured segments. Make them reproducibly measurable before capturing baselines."
+                .into(),
         stages: vec![
             SubStageDef {
                 id: SubStageId::from("map_pipeline"),
@@ -129,21 +136,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "対象ワークロードの実行経路・状態遷移・リソース消費ポイント（アクティブ時およびアイドル時）を一次実装から洗い出す。"
+                    "Inventory the target workload's execution paths, state transitions, and resource consumption points (both active and idle) from the primary implementation."
                         .into(),
                 gate_checks: vec![
-                    "対象経路と未観測区間が一次実装から特定されている".into(),
+                    "Target paths and unobservable segments are identified from primary code"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "pipeline_map",
-                        "実行経路と状態遷移",
-                        "対象ワークロードの処理経路とアクティブ時・アイドル時の挙動を記録する。",
+                        "Execution Paths & Transitions",
+                        "Record the processing paths and active/idle behavior of the target workload.",
                     ),
                     StepFieldDef::required(
                         "hot_paths",
-                        "主要消費点と未観測区間",
-                        "リソース消費ポイントと現状計測できていない区間を特定する。",
+                        "Cost Points & Blind Spots",
+                        "Identify major resource consumption points and segments that cannot yet be measured.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -154,21 +162,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "未観測のボトルネック区間があれば、本番挙動や品質を劣化させない再現可能な計測計装・計測ハーネスを整備する。"
+                    "For any unobservable bottleneck segment, add reproducible instrumentation or a measurement harness without degrading production behavior or quality."
                         .into(),
                 gate_checks: vec![
-                    "未観測区間が同一条件で繰り返し計測できる状態になっている".into(),
+                    "Previously unobservable segments can be measured repeatedly under identical conditions"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "execution",
-                        "計装・ハーネス整備内容",
-                        "追加・確認した計測手段と本番品質への非干渉性を記録する。",
+                        "Instrumentation & Harness Work",
+                        "Record the measurement setup added or verified and confirm zero interference with production quality.",
                     ),
                     StepFieldDef::required(
                         "metric_hooks",
-                        "取得可能になった指標",
-                        "どの区間でどの定量指標を再現可能に採取できるかを記録する。",
+                        "Exposed Metrics",
+                        "Record which quantitative metrics can now be captured reproducibly at each segment.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -179,21 +188,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Verifier".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "評価指標・計測ワークロード・環境条件・退行を許さない品質ラインを明文化して確定する。"
+                    "Define and lock the evaluation metrics, benchmark workload, environmental conditions, and zero-regression quality floor."
                         .into(),
                 gate_checks: vec![
-                    "評価指標・計測条件・品質退行禁止ラインが明記されている".into(),
+                    "Evaluation metrics, measurement conditions, and non-regression quality floors are documented"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "decision",
-                        "評価指標と退行禁止ライン",
-                        "最適化目標の指標と絶対に劣化させない品質・正確性ラインを記録する。",
+                        "Target Metrics & Quality Floor",
+                        "Record the optimization target metrics and the quality/accuracy floor that must never degrade.",
                     ),
                     StepFieldDef::required(
                         "measurement_protocol",
-                        "再現計測プロトコル",
-                        "前後比較で固定するワークロード・入力・実行条件を記録する。",
+                        "Reproducible Measurement Protocol",
+                        "Record the fixed workload, inputs, and execution conditions used for Before/After comparison.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -204,10 +214,11 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let tmpl_baseline_guard = SubMachineTemplate {
         id: SubMachineTemplateId::from("tmpl-baseline-guard"),
         name: "Baseline & Guard".into(),
-        description: "メイン変更に着手する前のBeforeベースライン採取とデグレガード先行固定"
-            .into(),
+        description:
+            "Capture Before baselines and lock deterministic regression guards prior to starting primary changes."
+                .into(),
         philosophy_notes:
-            "メイン変更より先にBeforeベースラインとデグレ検知ガードを固定し、後付けの甘い検証を構造的に防ぐ。"
+            "Lock Before baselines and regression guards ahead of the primary change to structurally prevent weak after-the-fact validation."
                 .into(),
         stages: vec![
             SubStageDef {
@@ -216,21 +227,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Verifier".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "変更前の現行状態について、再現手順・品質指標・性能や出力のBeforeベースラインを同一条件で再測定可能な形で記録する。"
+                    "Record reproducible steps, quality indicators, and performance or output Before baselines on the pre-change state so After results can be compared under identical conditions."
                         .into(),
                 gate_checks: vec![
-                    "変更前（Before）の比較基準と再現条件が記録されている".into(),
+                    "Pre-change (Before) comparison baselines and reproduction conditions are recorded"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "baseline_metrics",
-                        "Beforeベースライン実測値",
-                        "変更前の現行状態で採取した定量値・出力・挙動の基準値を記録する。",
+                        "Before Baseline Measurements",
+                        "Record the quantitative measurements, outputs, and observed behavior captured before changes.",
                     ),
                     StepFieldDef::required(
                         "conditions",
-                        "再現条件と手順",
-                        "Afterで同一条件比較を行うための実行コマンド・入力・前提環境を記録する。",
+                        "Reproduction Conditions & Steps",
+                        "Record exact commands, inputs, and environment assumptions required for an identical After comparison.",
                     ),
                 ],
                 required_artifact_kinds: vec![
@@ -244,22 +256,23 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "メインスコープ変更前に、守るべき既存品質・不変条件・境界条件の決定論的デグレガード（自動テスト／検証器）を先行実装し、現行状態で通過することを確認する。"
+                    "Before modifying the primary scope, implement deterministic regression guards (automated tests or verifiers) covering existing quality, invariants, and boundaries, and confirm they pass on the current state."
                         .into(),
                 gate_checks: vec![
-                    "メイン変更より先にデグレガードが実装され現行状態で通過している".into(),
-                    "意図的な退行や境界違反を検知できる検証内容になっている".into(),
+                    "Regression guards are implemented ahead of primary changes and pass on the current state"
+                        .into(),
+                    "Guards detect intentional regressions and boundary violations".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "guard_scope",
-                        "固定したデグレガードの対象",
-                        "先行実装・確認した不変条件・境界条件・既存品質の検証項目を記録する。",
+                        "Locked Regression Guard Scope",
+                        "Record the invariants, boundary conditions, and existing behaviors protected ahead of change.",
                     ),
                     StepFieldDef::required(
                         "execution",
-                        "ガード実装と現行通過結果",
-                        "追加・実行した自動検証と現行状態での通過結果を記録する。",
+                        "Guard Implementation & Pre-Change Pass",
+                        "Record the automated checks added or verified and their passing results on the current state.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -270,9 +283,11 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let tmpl_red_repro = SubMachineTemplate {
         id: SubMachineTemplateId::from("tmpl-red-repro"),
         name: "Red Repro & Guard".into(),
-        description: "修正前に障害を確実に再現するRedテスト固定と周辺退行ガード確認".into(),
+        description:
+            "Lock a deterministic failing reproduction test (Red) and verify adjacent regression guards before applying any fix."
+                .into(),
         philosophy_notes:
-            "再現できないバグは直せない。修正コードに触れる前に失敗する決定論的テストと周辺ガードを固定する。"
+            "A bug that cannot be reproduced cannot be reliably fixed. Lock a failing deterministic test and surrounding guards before touching production code."
                 .into(),
         stages: vec![
             SubStageDef {
@@ -281,21 +296,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "障害の発生条件・入力・環境前提・観測される異常挙動（Before）を最小条件で再現し記録する。"
+                    "Reproduce and record the minimal trigger conditions, inputs, environment preconditions, and observed failure behavior (Before)."
                         .into(),
                 gate_checks: vec![
-                    "障害の最小再現条件と現行の失敗挙動が記録されている".into(),
+                    "Minimal reproduction conditions and current failure behavior are recorded"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "repro_steps",
-                        "最小再現手順と条件",
-                        "障害を確定的に再現する最小入力・状態・手順を記録する。",
+                        "Minimal Reproduction Steps",
+                        "Record the minimal inputs, state, and steps that deterministically reproduce the defect.",
                     ),
                     StepFieldDef::required(
                         "observed_failure",
-                        "観測された異常挙動",
-                        "期待挙動との差分、エラー内容、異常出力を事実ベースで記録する。",
+                        "Observed Failure Behavior",
+                        "Record factual differences from expected behavior, exact errors, and anomalous outputs.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -306,21 +322,21 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Verifier".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "修正前に必ず失敗（Red）する決定論的な自動再現テストを先行実装し、期待通りの理由で失敗することを確認する。"
+                    "Implement a deterministic automated reproduction test that reliably fails (Red) prior to the fix, and verify it fails for the expected reason."
                         .into(),
                 gate_checks: vec![
-                    "修正前の現行コードで再現テストが意図通り失敗（Red）している".into(),
+                    "Reproduction test fails (Red) for the expected reason on pre-fix code".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "execution",
-                        "追加したRed再現テスト",
-                        "追加したテストの所在・検証内容・実行方法を記録する。",
+                        "Added Red Reproduction Test",
+                        "Record the test location, assertions, and command to execute it.",
                     ),
                     StepFieldDef::required(
                         "red_test_result",
-                        "現行コードでのRed失敗結果",
-                        "修正前に期待通りの理由で失敗した出力要約を記録する。",
+                        "Pre-Fix Red Failure Output",
+                        "Record a concise summary of the expected failure observed on current code.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -331,21 +347,21 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "修正によって壊れやすい周辺の正常系・互換性境界のガードを確認し、不足があれば先行追加して現行通過を固定する。"
+                    "Inspect adjacent happy-path and compatibility boundary guards at risk from the fix; reinforce any gaps and confirm they pass on current code."
                         .into(),
                 gate_checks: vec![
-                    "周辺正常系・互換性の既存ガードが現行状態で通過している".into(),
+                    "Adjacent happy-path and compatibility guards pass on the current state".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "guard_scope",
-                        "周辺正常系・互換性ガード範囲",
-                        "修正の影響を受けやすい周辺挙動と保護対象を記録する。",
+                        "Adjacent Guard Scope",
+                        "Record nearby behaviors and compatibility boundaries sensitive to the planned fix.",
                     ),
                     StepFieldDef::required(
                         "execution",
-                        "ガード確認・補強と通過結果",
-                        "確認または先行追加したガードと現行通過結果を記録する。",
+                        "Guard Check & Pre-Fix Pass",
+                        "Record existing or newly added guards and their passing pre-fix results.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -356,10 +372,11 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let tmpl_build_loop = SubMachineTemplate {
         id: SubMachineTemplateId::from("tmpl-build-loop"),
         name: "Build & Hygiene".into(),
-        description: "先行ガード下での土台整合変更、境界・異常系テスト補強、警告ゼロ検証ループ"
-            .into(),
+        description:
+            "Apply cohesive foundational changes under pre-locked guards, strengthen edge/error tests, and iterate until all checks pass with zero warnings."
+                .into(),
         philosophy_notes:
-            "先行固定したガードを破らずに土台から整え、警告ゼロ・全緑になるまで妥協しない。"
+            "Refine the foundation without breaking pre-locked guards, and never settle until every check passes with zero warnings."
                 .into(),
         stages: vec![
             SubStageDef {
@@ -368,22 +385,23 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "設計・診断・削減計画に従い、既存アーキテクチャ・トークン・永続化互換と整合する形でメインスコープを本質的に変更する。"
+                    "Implement the primary change cohesively according to the design, diagnosis, or pruning plan while preserving architecture, tokens, and persistence compatibility."
                         .into(),
                 gate_checks: vec![
-                    "パッチワークや場当たり上書きがなく全体と整合している".into(),
-                    "ローカル固有パスや機密情報が混入していない".into(),
+                    "Changes integrate cleanly with the whole system without patchwork or ad-hoc overrides"
+                        .into(),
+                    "No machine-specific paths or secrets are introduced".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "decision",
-                        "実装・変更方針と判断理由",
-                        "場当たり修正を避けて選んだ構成と不変条件への整合理由を記録する。",
+                        "Implementation Approach & Rationale",
+                        "Record the cohesive structure chosen over ad-hoc patches and how it preserves invariants.",
                     ),
                     StepFieldDef::required(
                         "execution",
-                        "実施した変更内容",
-                        "変更対象・構造変更の要点・互換性配慮を記録する。",
+                        "Changes Applied",
+                        "Record modified targets, key structural changes, and compatibility considerations.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -394,22 +412,24 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "変更範囲の正常系・異常系・境界条件を検証するテストを補強し、先行固定した再現テストや退行ガードが改変なしで成立することを確認する。"
+                    "Add tests covering happy paths, error paths, and boundary conditions for the changed scope, and verify pre-locked reproduction tests and regression guards pass unmodified."
                         .into(),
                 gate_checks: vec![
-                    "変更範囲の正常系・異常系・境界条件を検証する自動テストが揃っている".into(),
-                    "先行固定した再現テスト・退行ガードが改変なしで通過している".into(),
+                    "Automated tests cover happy paths, error paths, and boundary cases for the change"
+                        .into(),
+                    "Pre-locked reproduction tests and regression guards pass without modification"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "cases_added",
-                        "補強した境界・異常系テスト",
-                        "追加・確認した正常系・異常系・境界ケースと先行ガードの扱い記録する。",
+                        "Edge & Error Tests Added",
+                        "Record added or verified happy-path, error, and boundary cases alongside pre-locked guard status.",
                     ),
                     StepFieldDef::required(
                         "test_results",
-                        "テスト実行結果",
-                        "先行ガードおよび追加テストの実行結果を記録する。",
+                        "Test Execution Results",
+                        "Record execution results for both pre-locked guards and newly added tests.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -420,21 +440,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Build & Test".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "先行ガードを含む全テスト・ビルド・lint・規約チェックを実行し、警告ゼロ・全緑になるまで修正ループを回す。"
+                    "Run all tests (including pre-locked guards), builds, linters, and policy checks, iterating until every check is green with zero warnings."
                         .into(),
                 gate_checks: vec![
-                    "先行ガードを含む全テスト・ビルド・lint が警告ゼロで通過している".into(),
+                    "All tests, builds, and lint checks (including pre-locked guards) pass with zero warnings"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "checks_run",
-                        "実行した検証スイート",
-                        "実行した全テスト・ビルド・静的解析・規約チェック一覧を記録する。",
+                        "Verification Suite Executed",
+                        "Record the full list of tests, builds, static analyses, and policy guards executed.",
                     ),
                     StepFieldDef::required(
                         "results",
-                        "警告ゼロ・全緑の確認結果",
-                        "失敗ゼロ・警告ゼロの確認結果と修正反復の結論を記録する。",
+                        "Zero-Warning Green Confirmation",
+                        "Record zero-failure, zero-warning results and the outcome of any fix iterations.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -445,10 +466,11 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let tmpl_perf_loop = SubMachineTemplate {
         id: SubMachineTemplateId::from("tmpl-perf-loop"),
         name: "Measure & Optimize".into(),
-        description: "実測プロファイル駆動のボトルネック特定、原則的改善、同一条件再計測ループ"
-            .into(),
+        description:
+            "Identify dominant bottlenecks from profiles, apply principled structural improvements, and remeasure under identical conditions."
+                .into(),
         philosophy_notes:
-            "推測チューニングや品質を削る近道を禁じ、支配的ボトルネックへの構造改善と同一条件再計測を反復する。"
+            "Forbid blind tuning and quality-cutting shortcuts; iterate on principled structural improvements targeting dominant bottlenecks with same-condition remeasurement."
                 .into(),
         stages: vec![
             SubStageDef {
@@ -457,21 +479,21 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Verifier".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "実測プロファイルと計装データから支配的ボトルネックを特定し、改善対象と期待効果の仮説を明文化する。"
+                    "Pinpoint dominant bottlenecks from empirical profiles and instrumentation data, and document the target and expected gain hypothesis."
                         .into(),
                 gate_checks: vec![
-                    "支配的ボトルネックが実測データで特定されている".into(),
+                    "Dominant bottlenecks are identified from empirical profile data".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "bottleneck",
-                        "特定した支配的ボトルネック",
-                        "プロファイル・計装データから特定した主要コスト箇所と比率を記録する。",
+                        "Dominant Bottleneck Identified",
+                        "Record the primary cost centers and their shares from profile and instrumentation data.",
                     ),
                     StepFieldDef::required(
                         "hypothesis",
-                        "改善仮説と対象判断",
-                        "なぜそこを改善すれば効くのか、品質劣化なしに改善できる根拠を記録する。",
+                        "Optimization Hypothesis & Rationale",
+                        "Record why improving this hotspot moves the metric and how quality remains uncompromised.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -482,22 +504,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "精度・品質・UX・安全性を一切劣化させない構造的・アルゴリズム的改善を実装する。"
+                    "Implement structural or algorithmic improvements with zero degradation to accuracy, visual quality, UX, or safety."
                         .into(),
                 gate_checks: vec![
-                    "品質・機能・正確性を削るアドホックな近道がない".into(),
-                    "ローカル固有パスや計測用ゴミコードが混入していない".into(),
+                    "No ad-hoc shortcuts that sacrifice quality, functionality, or accuracy".into(),
+                    "No machine-specific paths or leftover profiling scaffolding".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "decision",
-                        "採用した構造改善と品質保護判断",
-                        "品質を落とさず性能を引き出すために選んだ方針と見送った近道を記録する。",
+                        "Structural Optimization & Quality Guard",
+                        "Record the chosen approach for gaining performance without losing quality, plus shortcuts rejected.",
                     ),
                     StepFieldDef::required(
                         "execution",
-                        "実装した最適化内容",
-                        "変更箇所・アルゴリズムやデータ構造の改善内容を記録する。",
+                        "Optimization Implemented",
+                        "Record modified components and algorithmic or data-structure improvements.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -508,22 +530,23 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Build & Test".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "先行固定した品質ガード・全テスト・lint を警告ゼロで通過させたうえで、Before と同一条件で再計測し改善幅を確認する。"
+                    "Verify all pre-locked quality guards, tests, and linters pass with zero warnings, then remeasure under the exact Before conditions to quantify the gain."
                         .into(),
                 gate_checks: vec![
-                    "先行品質ガード・全テスト・ビルド・lint が警告ゼロで通過している".into(),
-                    "Before と同一条件での再計測結果が記録されている".into(),
+                    "Pre-locked quality guards, full tests, builds, and lints pass with zero warnings"
+                        .into(),
+                    "Same-condition After remeasurement results are recorded".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "before_after_metrics",
-                        "同一条件での再計測結果",
-                        "Beforeベースラインと同一条件で計測したAfter値および改善幅を記録する。",
+                        "Same-Condition Remeasurement",
+                        "Record After values measured under identical Before conditions and the resulting delta.",
                     ),
                     StepFieldDef::required(
                         "guard_results",
-                        "品質ガード・全検証の通過結果",
-                        "先行品質ガード・全テスト・静的解析が警告ゼロで通過した結果を記録する。",
+                        "Quality Guard & Suite Results",
+                        "Record passing zero-warning results for quality guards, full tests, and static checks.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -534,9 +557,11 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let tmpl_verify_ship = SubMachineTemplate {
         id: SubMachineTemplateId::from("tmpl-verify-ship"),
         name: "Verify & Diff".into(),
-        description: "実機・本番相当環境検証、Before/After前後比較、証跡とWhyの整理".into(),
+        description:
+            "Run live production-equivalent verification, compare Before/After baselines, and package evidence and Why for human review."
+                .into(),
         philosophy_notes:
-            "動いたつもりで出荷しない。Beforeベースラインとの同一条件比較と実機確認で退行ゼロを実証し、人間レビューに必要な証跡だけを渡す。"
+            "Never ship on 'it should work.' Prove zero regression with live checks and same-condition Before/After diffs, then hand humans only the evidence needed to decide."
                 .into(),
         stages: vec![
             SubStageDef {
@@ -545,21 +570,21 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "実機・本番相当ビルド・E2E パスで実際のユーザー操作と永続化／再起動挙動を検証する。"
+                    "Verify real user flows, persistence, and restart behavior on a live or production-equivalent build and E2E path."
                         .into(),
                 gate_checks: vec![
-                    "実機または本番相当環境での動作確認が完了している".into(),
+                    "Live or production-equivalent verification is complete".into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "execution",
-                        "実機・本番相当検証の手順",
-                        "実施したビルド・起動・操作・永続化検証の手順を記録する。",
+                        "Live Verification Procedure",
+                        "Record the build, launch, user flow, and persistence verification steps executed.",
                     ),
                     StepFieldDef::required(
                         "observed_behavior",
-                        "実機での観測結果",
-                        "実機・本番相当環境で確認した挙動と異常ゼロの事実を記録する。",
+                        "Observed Live Behavior",
+                        "Record verified runtime behavior and factual confirmation of zero anomalies.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -570,22 +595,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "Verifier".into(),
                 runner_kind: RunnerKind::Deterministic,
                 procedure:
-                    "先行ステージで記録したBefore基準と変更後（After）を同一条件で比較し、品質・性能・互換性の退行ゼロを実証する。"
+                    "Compare After measurements against the recorded Before baseline under identical conditions to prove zero regression in quality, performance, and compatibility."
                         .into(),
                 gate_checks: vec![
-                    "Before/After の同一条件比較で品質・性能・互換性の退行ゼロが確認済みである"
+                    "Same-condition Before/After comparison confirms zero quality, performance, or compatibility regressions"
                         .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "before_after_diff",
-                        "Before/After同一条件比較",
-                        "先行記録のBefore基準値とAfter実測値の対比・差分を記録する。",
+                        "Same-Condition Before/After Diff",
+                        "Record side-by-side comparison and deltas between recorded Before baselines and After measurements.",
                     ),
                     StepFieldDef::required(
                         "regression_check",
-                        "退行ゼロの判定根拠",
-                        "品質・性能・互換性のいずれも退行していないと判断した根拠を記録する。",
+                        "Zero-Regression Justification",
+                        "Record the concrete basis confirming no regressions across quality, performance, or compatibility.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -596,21 +621,22 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner: "AI Agent".into(),
                 runner_kind: RunnerKind::Ai,
                 procedure:
-                    "前後比較結果・証跡 Artifact・変更の Why（設計判断・互換性・不変条件）を整理し人間ゲートへ引き渡す。"
+                    "Package the Before/After comparison, evidence artifacts, and Why summary (design decisions, compatibility, invariants) for handoff to the human approval gate."
                         .into(),
                 gate_checks: vec![
-                    "人間承認に必要な前後比較証跡と Why 要約が揃っている".into(),
+                    "Before/After evidence artifacts and Why summary are ready for human approval"
+                        .into(),
                 ],
                 record_fields: vec![
                     StepFieldDef::required(
                         "summary",
-                        "人間レビュー向けWhy要約",
-                        "変更の意図・設計判断・互換性影響・不変条件の要約を記録する。",
+                        "Why Summary for Human Review",
+                        "Summarize intent, key design decisions, compatibility impact, and preserved invariants.",
                     ),
                     StepFieldDef::required(
                         "evidence_refs",
-                        "添付証跡と確認ポイント",
-                        "添付した証跡Artifactと人間オーナーが確認すべき要点を記録する。",
+                        "Attached Evidence & Review Points",
+                        "List attached evidence artifacts and the key points for the human owner to review.",
                     ),
                 ],
                 required_artifact_kinds: vec![ArtifactKind::VerificationReport],
@@ -638,76 +664,80 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let delivery_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
         summary:
-            "一次情報と実機検証を起点に、実装前ベースラインとデグレガード先行固定でパッチワークを排し、人間承認境界で常に商用完成度を保つ汎用プロダクト開発ディストリクト。"
+            "General-purpose product delivery district anchored in primary evidence, isolated probes, pre-change baselines and regression guards, zero patchwork, and commercial-grade completeness at every human approval boundary."
                 .into(),
         principles: vec![
             Principle {
                 id: "P-DEV-1".into(),
                 title: "Ship Every State as a Whole".into(),
                 statement:
-                    "応急処置や場当たりハックを積まず、要件変更時は土台から整合させて常に商用完成品として保つ。"
+                    "Never stack quick fixes or ad-hoc hacks; align the foundation when requirements evolve so the product stays commercially complete at every state."
                         .into(),
                 rationale:
-                    "局所パッチの積み上げは設計破綻と保守不能な分岐を生み、品質と開発速度を同時に落とすため。"
+                    "Accumulated local patches erode architecture into unmaintainable branches, degrading quality and velocity together."
                         .into(),
             },
             Principle {
                 id: "P-DEV-2".into(),
                 title: "Primary Evidence & Live Probe First".into(),
                 statement:
-                    "推測で進めない。公式仕様・既存実装の一次確認と、隔離環境での実機検証・定量計測を先行させる。"
+                    "Never proceed on guesswork. Verify official specs and primary code first, then validate uncertainties via isolated probes and quantitative measurement."
                         .into(),
                 rationale:
-                    "誤った前提に基づく設計や勘による最適化を防ぎ、手戻りと隠れた退行を根絶するため。"
+                    "Designing on flawed assumptions or tuning by intuition causes costly rework and hidden regressions."
                         .into(),
             },
             Principle {
                 id: "P-DEV-3".into(),
                 title: "Baseline & Regression Guards Before Implementation".into(),
                 statement:
-                    "メインスコープの実装に着手する前に、Beforeベースラインの記録と決定論的デグレガードの固定を完了させる。"
+                    "Record Before baselines and lock deterministic regression guards before touching the primary implementation scope."
                         .into(),
                 rationale:
-                    "実装後の後付けテストは現行挙動への追従になりやすく、前後比較と退行検知の客観性を損なうため。"
+                    "After-the-fact tests tend to rubber-stamp new behavior, undermining objective Before/After comparison and regression detection."
                         .into(),
             },
             Principle {
                 id: "P-DEV-4".into(),
                 title: "Minimal Invariants, Single Source of Truth".into(),
                 statement:
-                    "冗長な手順書や二重管理を排し、単一ソースに最小の不変原則だけを残して仕様・実装・契約のドリフトを防ぐ。"
+                    "Eliminate redundant manuals and duplicated definitions; keep minimal invariants in a single source of truth to prevent drift across specs, code, and contracts."
                         .into(),
                 rationale:
-                    "肥大化したドキュメントや重複設定は即座に陳腐化し、エージェントと人間の判断を狂わせるため。"
+                    "Bloated prose and duplicated configuration rot quickly and mislead both agents and human operators."
                         .into(),
             },
             Principle {
                 id: "P-DEV-5".into(),
                 title: "Fail-Closed Governance & Resilient State".into(),
                 statement:
-                    "実行は AI に積極委譲しつつ最終承認・破壊的判断は人間ゲートで止め、永続化はアトミック書き込み・サニタイズ・後方互換を徹底する。"
+                    "Delegate execution aggressively to AI while stopping final approvals and destructive decisions at human gates; enforce atomic writes, input sanitization, and backward compatibility in persistence."
                         .into(),
                 rationale:
-                    "自律実行の速度を最大化しながら、データ破損・権限逸脱・ローカル固有情報や機密の混入を構造的に防ぐため。"
+                    "Maximizes autonomous execution speed while structurally preventing data corruption, authority bypass, and leakage of local paths or secrets."
                         .into(),
             },
         ],
         anti_patterns: vec![
-            "症状だけを隠すパッチワークやアドホックな上書きを残す".into(),
-            "一次ソースや実機・実測の裏付けなしに設計や最適化を決める".into(),
-            "Beforeベースラインやデグレガードを固定しないままメイン実装へ着手する".into(),
-            "ビルド・テスト・lint・前後比較を通さず次ステージや承認へ回す".into(),
-            "人間承認ゲートをエージェント自身の判断で迂回する".into(),
-            "試行錯誤のログ・ローカル固有パス・秘密情報を成果物やコミットに残す".into(),
+            "Leaving patchwork or ad-hoc overrides that only mask symptoms".into(),
+            "Deciding architecture or optimizations without primary sources or empirical backing"
+                .into(),
+            "Starting primary implementation before locking Before baselines and regression guards"
+                .into(),
+            "Advancing or requesting approval without passing builds, tests, lints, and Before/After checks"
+                .into(),
+            "Bypassing a human approval gate on an agent's own authority".into(),
+            "Leaving trial-and-error logs, machine-specific paths, or secrets in artifacts or commits"
+                .into(),
         ],
         decision_heuristics: vec![
-            "仕様や挙動が曖昧なら推測で進めず、隔離検証（一時ディレクトリ・最小再現）で事実を確定させてから進む"
+            "When specs or behavior are ambiguous, confirm facts in an isolated probe (temporary directory or minimal reproduction) before proceeding"
                 .into(),
-            "メイン実装より先にBeforeベースラインと決定論的デグレガードを固定し、完了後に同一条件で前後比較して退行ゼロを実証する"
+            "Lock Before baselines and deterministic regression guards prior to primary edits, then prove zero regression via same-condition comparison"
                 .into(),
-            "要件が揺れたら表面を繕わず、共通の土台・トークン・抽象境界を一段整理してから実装する"
+            "When requirements shift, refine the shared foundation, tokens, or abstraction boundary rather than patching the surface"
                 .into(),
-            "変更は論理単位で刻み、コミットには diff から読めない Why（設計判断・互換性・不変条件）を残す"
+            "Keep changes in cohesive logical units and capture the non-obvious Why (design tradeoffs, compatibility, invariants) in commits"
                 .into(),
         ],
         source_feedback_ids: vec![],
@@ -729,12 +759,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "既存実装・一次仕様・影響範囲をトレースし、未確定事項は隔離環境で実機検証してからスコープと守るべき不変条件を確定する。"
+                    "Trace existing code, primary specifications, and impact scope; validate open questions in isolation, then lock scope and invariants."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "関連シンボル・影響範囲と一次仕様が確認済みである".into(),
-                        "変更対象・非対象・守るべき不変条件が明確である".into(),
+                        "Related symbols, impact scope, and primary specifications are confirmed"
+                            .into(),
+                        "In-scope targets, non-goals, and non-negotiable invariants are clearly stated"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -752,13 +784,15 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "場当たりハックを避け、プロダクト全体の設計・型・境界条件・後方互換・UX 整合にフィットするアプローチと、前後比較・デグレガード計画を定める。"
+                    "Define a cohesive approach aligned with product architecture, types, boundaries, backward compatibility, and UX—avoiding hacks—along with a Before/After and regression-guard plan."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "パッチワークではなく全体整合した設計になっている".into(),
-                        "永続化・後方互換・異常系・境界条件の方針がある".into(),
-                        "Beforeベースライン計測と先行デグレガードの計画が具体化されている"
+                        "Design fits the whole system cohesively rather than layering patchwork"
+                            .into(),
+                        "Persistence, backward compatibility, error paths, and boundaries are addressed"
+                            .into(),
+                        "Concrete plan exists for Before baselines and pre-change regression guards"
                             .into(),
                     ],
                     auto_verify_by_llm: true,
@@ -768,18 +802,18 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 record_fields: vec![
                     StepFieldDef::required(
                         "decision",
-                        "採用設計と全体整合の根拠",
-                        "プロダクト全体の設計・型・UX・互換性に適合させた方針と理由を記録する。",
+                        "Chosen Design & System Fit",
+                        "Record the chosen architecture and why it fits overall types, UX, and compatibility.",
                     ),
                     StepFieldDef::required(
                         "alternatives_rejected",
-                        "見送った代替案と理由",
-                        "検討して棄却したアプローチやパッチワーク案と、その棄却理由を記録する。",
+                        "Rejected Alternatives & Rationale",
+                        "Record considered alternatives or patchwork options and why they were rejected.",
                     ),
                     StepFieldDef::required(
                         "invariants",
-                        "不変条件・互換性・ガード計画",
-                        "守るべき不変条件・後方互換・Beforeベースラインとデグレガード計画を記録する。",
+                        "Invariants, Compatibility & Guard Plan",
+                        "Record invariants to preserve, backward compatibility rules, and the baseline/guard plan.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -793,12 +827,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "メインスコープ実装前に、変更前（Before）の比較ベースラインを記録し、既存品質・不変条件を守る決定論的デグレガードを先行実装・固定する。"
+                    "Before primary implementation, capture pre-change (Before) baselines and implement deterministic regression guards protecting existing quality and invariants."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "変更前（Before）の比較ベースラインと再現条件が記録されている".into(),
-                        "メイン実装に先立つデグレガードが実装され現行状態で通過している".into(),
+                        "Pre-change (Before) comparison baselines and reproduction conditions are recorded"
+                            .into(),
+                        "Pre-change regression guards are implemented and pass on the current state"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -816,13 +852,13 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "先行固定したデグレガードを破らずにメインスコープを土台整合で実装し、新仕様テストを追加。ビルド・全テスト・lint 警告ゼロと移植性を満たす。"
+                    "Implement the primary scope cohesively without breaking pre-locked guards, add tests for new behavior, and pass builds, full tests, lints with zero warnings, and portability checks."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "先行デグレガードと新仕様テストがすべて通過している".into(),
-                        "ビルド・全テスト・lint が警告ゼロで通過している".into(),
-                        "ローカル固有情報・機密・不要な差分が混入していない".into(),
+                        "Pre-locked regression guards and new specification tests all pass".into(),
+                        "Builds, full tests, and lints pass with zero warnings".into(),
+                        "No local-only paths, secrets, or unrelated diffs are present".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -840,14 +876,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "実機・本番相当ビルド・E2E で動作確認し、Baseline & Guard で記録した Before 基準と同一条件で前後比較して退行ゼロを実証する。証跡 Artifact と Why 要約を揃える。"
+                    "Verify on a live or production-equivalent build and E2E path, prove zero regression against the Before baseline under identical conditions, and attach evidence artifacts and a Why summary."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "実機または本番相当環境での動作確認証跡がある".into(),
-                        "Before/After の同一条件比較で品質・性能・互換性の退行ゼロが確認済みである"
+                        "Evidence exists for live or production-equivalent verification".into(),
+                        "Same-condition Before/After comparison confirms zero quality, performance, or compatibility regressions"
                             .into(),
-                        "証跡 Artifact と Why 要約が揃っている".into(),
+                        "Evidence artifacts and Why summary are complete".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -865,12 +901,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Human,
                 kind: StageKind::ApprovalGate,
                 procedure:
-                    "前後比較結果・証跡 Artifact・変更の妥当性を人間オーナーが最終確認し、Approve または理由付き Rework を行う。"
+                    "Human owner reviews Before/After results, evidence artifacts, and change soundness, then either Approves or triggers Rework with a concrete reason."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "District Philosophy の原則と商用完成度を満たしている".into(),
-                        "リリース・公開・破壊的変更のリスクが許容範囲内である".into(),
+                        "Satisfies District Philosophy principles and commercial-grade quality"
+                            .into(),
+                        "Release, exposure, and breaking-change risks are within acceptable bounds"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: true,
@@ -888,7 +926,7 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Deterministic,
                 kind: StageKind::Terminal,
                 procedure:
-                    "人間承認・Why を記したクリーンなコミット・出荷完了。学びは Feedback として次版へ還元可能な状態。"
+                    "Human-approved, cleanly committed with Why rationale, and shipped. Lessons remain available as Feedback for future versions."
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
@@ -903,61 +941,64 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let spike_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
         summary:
-            "一次情報と隔離環境での実機検証のみを根拠に、技術選定・互換性検証・PoC の意思決定コストを最小化する調査ディストリクト。"
+            "Research and decision district that minimizes decision cost for technology selection, compatibility checks, and PoCs using only primary sources and isolated empirical probes."
                 .into(),
         principles: vec![
             Principle {
                 id: "P-SPK-1".into(),
                 title: "Primary Sources Only".into(),
                 statement:
-                    "推測や一般論で比較表を埋めず、公式仕様・一次実装・実測値のみを根拠にする。取得不能な情報はその場で明示する。"
+                    "Ground every comparison strictly in official specs, primary code, and measured results; explicitly flag any information that could not be verified."
                         .into(),
                 rationale:
-                    "誤った前提や伝聞に基づく技術選定は実装フェーズでの大規模な手戻りを招くため。"
+                    "Selecting technology from hearsay or unchecked assumptions triggers large-scale rework during implementation."
                         .into(),
             },
             Principle {
                 id: "P-SPK-2".into(),
                 title: "Empirical Isolation Before Opinion".into(),
                 statement:
-                    "挙動・互換性・制約が未確定な論点は、本番環境を汚さない隔離環境で実機検証して事実を確定させてから結論を出す。"
+                    "Resolve uncertain behavior, compatibility, or constraints via live probes in an isolated environment without polluting production state."
                         .into(),
                 rationale:
-                    "ドキュメントの行間や未保証仕様は机上議論では解決できず、最小再現の実行結果だけが確かな判断材料になるため。"
+                    "Unwritten nuances and unguaranteed contracts cannot be settled on paper; minimal empirical execution provides decisive evidence."
                         .into(),
             },
             Principle {
                 id: "P-SPK-3".into(),
                 title: "Decision-Ready Tradeoffs".into(),
                 statement:
-                    "選択肢を 2〜3 案に絞り、評価軸・推奨案・棄却理由・撤退条件を明示して次の実装へ即着手できるブリーフにする。"
+                    "Distill options down to 2-3 candidates with explicit evaluation criteria, a clear recommendation, rejection reasons, and exit conditions so implementation can start immediately."
                         .into(),
                 rationale:
-                    "事実の羅列だけでは意思決定が止まり、判断責任の所在とリスク境界が曖昧になるため。"
+                    "Raw fact dumps stall decision-making and obscure accountability and risk boundaries."
                         .into(),
             },
             Principle {
                 id: "P-SPK-4".into(),
                 title: "Clean Teardown & Zero Residue".into(),
                 statement:
-                    "調査用の一時ディレクトリ・実験設定・検証スクリプトは検証完了後に確実に撤去し、本番構成に実験の残骸を残さない。"
+                    "Remove all temporary directories, experimental configs, and probe scripts after verification, leaving zero investigative residue in the production setup."
                         .into(),
                 rationale:
-                    "調査の副産物が残ると後続開発の前提を汚染し、再現性や移植性を損なうため。"
+                    "Leftover experiment artifacts contaminate future development assumptions and break reproducibility and portability."
                         .into(),
             },
         ],
         anti_patterns: vec![
-            "一次ソースや実測の裏付けなしに「動くはず」と推測で結論づける".into(),
-            "本番ワークスペースやユーザー環境を汚しながら検証する".into(),
-            "推奨案も撤退条件もない長文レポートを提出する".into(),
-            "未検証の前提や検証失敗の事実を伏せて都合のよい案だけ並べる".into(),
+            "Concluding 'it should work' without primary sources or empirical verification".into(),
+            "Running experiments that dirty the production workspace or user environment".into(),
+            "Delivering long reports without a concrete recommendation or exit conditions".into(),
+            "Hiding unverified assumptions or failed probe results to make one option look cleaner"
+                .into(),
         ],
         decision_heuristics: vec![
-            "公式仕様と実機挙動が食い違う可能性がある論点は必ず隔離環境でカナリア検証を回して白黒をつける"
+            "Whenever official documentation and runtime behavior might diverge, run an isolated canary probe to settle the question empirically"
                 .into(),
-            "将来の保守コストとドリフトリスクを初期実装の手軽さより重く評価する".into(),
-            "未解決のリスクや外部依存の未保証領域は隠さず前提条件として切り出す".into(),
+            "Weight long-term maintenance cost and drift risk more heavily than initial setup convenience"
+                .into(),
+            "Surface unresolved risks and unguaranteed external dependencies explicitly as preconditions"
+                .into(),
         ],
         source_feedback_ids: vec![],
         updated_by: seed_actor.clone(),
@@ -978,12 +1019,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "公式ドキュメント・一次実装を調査し、未確定の挙動や互換性は隔離環境で実機検証して一次事実を収集する。検証後は一時環境を撤去する。"
+                    "Inspect official documentation and primary implementations, empirically probe uncertain behavior or compatibility in isolation, and cleanly tear down temporary environments afterward."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "すべての主張に一次ソースまたは隔離実機検証の根拠がある".into(),
-                        "検証用の一時ファイルや実験環境が撤去され本番環境が汚れていない".into(),
+                        "Every claim is backed by a primary source or isolated empirical probe"
+                            .into(),
+                        "Temporary probe files and experimental environments are cleaned up with zero production residue"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1001,12 +1044,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "収集した一次事実と実測結果を 2〜3 案に構造化し、トレードオフ・推奨案・棄却理由・撤退条件をまとめた意思決定ブリーフを Artifact として添付する。"
+                    "Structure primary facts and measurements into 2-3 options with tradeoffs, a recommendation, rejection rationales, and exit conditions, and attach the decision brief as an artifact."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "候補が 2〜3 案に整理され推奨案と棄却理由が明記されている".into(),
-                        "リスク・制約・撤退条件および次フェーズの着手条件が明確である".into(),
+                        "Options are distilled to 2-3 candidates with explicit recommendation and rejection reasons"
+                            .into(),
+                        "Risks, constraints, exit conditions, and next-phase entry criteria are clear"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1015,18 +1060,18 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 record_fields: vec![
                     StepFieldDef::required(
                         "options_compared",
-                        "比較した選択肢と一次根拠",
-                        "評価対象の各案と一次ソース・実機検証に基づく比較事実を記録する。",
+                        "Options Compared & Primary Evidence",
+                        "Record each evaluated option along with comparison facts grounded in primary sources and live probes.",
                     ),
                     StepFieldDef::required(
                         "recommendation",
-                        "推奨案と判断理由",
-                        "推奨する意思決定と採用根拠・前提条件を記録する。",
+                        "Recommendation & Rationale",
+                        "Record the recommended direction, supporting rationale, and required preconditions.",
                     ),
                     StepFieldDef::required(
                         "risks",
-                        "残存リスクと次アクション",
-                        "見落としてはならない制約・リスク・採択後の具体的な次の一手を記録する。",
+                        "Residual Risks & Next Actions",
+                        "Record constraints, residual risks, and concrete next steps once approved.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -1040,12 +1085,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Human,
                 kind: StageKind::ApprovalGate,
                 procedure:
-                    "一次根拠の十分性と推奨案の妥当性を人間オーナーが最終確認し、方針を確定または追加検証へ差し戻す。"
+                    "Human owner validates evidence sufficiency and recommendation soundness, then locks the decision or sends it back for further investigation."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "一次情報と実機検証に基づく納得感ある根拠が揃っている".into(),
-                        "選定方針で次フェーズへ進める明確さがある".into(),
+                        "Evidence from primary sources and live probes is convincing and complete"
+                            .into(),
+                        "Selected direction is clear enough to initiate the next execution phase"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: true,
@@ -1063,7 +1110,7 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Deterministic,
                 kind: StageKind::Terminal,
                 procedure:
-                    "意思決定確定済み。根拠ブリーフと制約条件を後続の実装ディストリクトへ引き渡し可能な状態。"
+                    "Decision locked. Evidence brief and constraints are ready for handoff to a downstream implementation district."
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
@@ -1078,62 +1125,63 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let root_cause_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
         summary:
-            "修正前に失敗する再現テスト（Red）を先行固定し、対症療法を排して根本原因の解決と再発防止を実証する障害修正ディストリクト。"
+            "Defect-resolution district that locks a failing reproduction test (Red) prior to fixing, eliminates symptom-masking workarounds, and proves root-cause resolution and recurrence prevention."
                 .into(),
         principles: vec![
             Principle {
                 id: "P-FIX-1".into(),
                 title: "Failing Reproduction First (Red Before Green)".into(),
                 statement:
-                    "修正コードに触れる前に、障害を再現して必ず失敗する決定論的テストと発生条件（Before）を先行固定する。"
+                    "Before editing production code, lock a deterministic test that reproduces and fails on the defect along with its Before trigger conditions."
                         .into(),
                 rationale:
-                    "再現テストなしの修正は原因を取り違えても気づけず、再発防止の保証にもならないため。"
+                    "Fixing without a failing reproduction hides misdiagnosis and leaves no durable guarantee against recurrence."
                         .into(),
             },
             Principle {
                 id: "P-FIX-2".into(),
                 title: "Fix the Root Cause, Never Mask Symptoms".into(),
                 statement:
-                    "局所的な条件分岐や場当たりガードで表面の症状だけ隠さず、破綻した不変条件・状態遷移・データ境界の根本から直す。"
+                    "Do not paper over surface symptoms with local conditionals or ad-hoc guards; repair the broken invariant, state transition, or data boundary at its source."
                         .into(),
                 rationale:
-                    "対症療法は別の入力経路で同じ障害を再発させ、コードベースに説明不能な例外分岐を蓄積させるため。"
+                    "Symptom-masking lets the same defect recur through alternate input paths while accumulating inexplicable special cases."
                         .into(),
             },
             Principle {
                 id: "P-FIX-3".into(),
                 title: "Zero Collateral Regression".into(),
                 statement:
-                    "修正に伴う副作用を許さない。新規再現テストの Green 化と同時に、周辺の既存挙動ガードと全テスト・lint が警告ゼロで通過することを必須にする。"
+                    "Allow no unintended side effects. Turning the reproduction test Green must coincide with all adjacent behavior guards, full tests, and lints passing with zero warnings."
                         .into(),
                 rationale:
-                    "一つの障害修正が別の境界や互換性を破壊すれば、システム全体の信頼性が低下するため。"
+                    "A fix that breaks an adjacent boundary or compatibility contract reduces overall system reliability."
                         .into(),
             },
             Principle {
                 id: "P-FIX-4".into(),
                 title: "Minimal Blast Radius & Durable Why".into(),
                 statement:
-                    "変更範囲を根本解決に必要な最小限に保ち、障害の発生メカニズム・再発防止策・修正理由（Why）を証跡とコミットに残す。"
+                    "Keep edits scoped to the minimal root-cause repair and capture the failure mechanism, recurrence guard, and Why in evidence and commits."
                         .into(),
                 rationale:
-                    "関係のない変更の混入を防ぎ、将来の変更者が同じ落とし穴を踏まないようにするため。"
+                    "Prevents unrelated churn and ensures future contributors do not reintroduce the same failure mode."
                         .into(),
             },
         ],
         anti_patterns: vec![
-            "失敗再現テスト（Red）を固定しないまま勘で修正を始める".into(),
-            "例外の握りつぶしや局所的な if 分岐で症状だけ隠す".into(),
-            "再現テストを修正後の挙動に合わせて緩める".into(),
-            "周辺退行やビルド・lint 警告を確認せず承認へ回す".into(),
+            "Guessing at fixes before locking a failing reproduction test (Red)".into(),
+            "Swallowing errors or hiding symptoms behind localized if-branches".into(),
+            "Weakening a reproduction test to fit post-fix behavior".into(),
+            "Requesting approval without checking adjacent regressions, builds, and lint warnings"
+                .into(),
         ],
         decision_heuristics: vec![
-            "再現テストが修正前に意図通りの失敗理由で落ちることを確認するまで実装フェーズへ進まない"
+            "Do not enter implementation until the reproduction test fails on current code for the exact expected reason"
                 .into(),
-            "同じ原因が他の呼び出し経路や永続化層にも潜んでいないか必ず横展開で点検する"
+            "Audit sibling call sites and persistence layers to check whether the same root cause exists elsewhere"
                 .into(),
-            "修正後は Before（Red）と After（Green）の対比を明確な証跡として提示する".into(),
+            "Present a clear Before (Red) vs After (Green) contrast as verification evidence".into(),
         ],
         source_feedback_ids: vec![],
         updated_by: seed_actor.clone(),
@@ -1154,13 +1202,15 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "修正コードに触れる前に、障害の最小再現条件を記録し、現行状態で必ず失敗（Red）する決定論的再現テストと周辺境界ガードを先行固定する。"
+                    "Before editing production code, record minimal failure conditions and lock both a deterministic failing reproduction test (Red) and passing adjacent boundary guards."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "障害の最小再現条件と現行の失敗挙動（Before）が記録されている".into(),
-                        "修正前の現行コードで再現テストが意図通り失敗（Red）している".into(),
-                        "周辺の既存挙動ガードが現行状態で通過している".into(),
+                        "Minimal reproduction conditions and pre-fix failure behavior (Before) are recorded"
+                            .into(),
+                        "Reproduction test fails (Red) for the expected reason on pre-fix code"
+                            .into(),
+                        "Adjacent existing behavior guards pass on the current state".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1178,12 +1228,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "症状ではなく破綻した不変条件・状態遷移・境界条件の根本原因を特定し、類似箇所への横展開影響と対症療法を避けた修正設計を確定する。"
+                    "Identify the broken invariant, state transition, or boundary condition rather than surface symptoms; audit sibling paths and lock a root-cause fix plan."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "症状ではなく根本原因と発生メカニズムが一次実装から特定されている".into(),
-                        "対症療法を避けた修正方針と類似箇所への影響範囲が明確である".into(),
+                        "Root cause and failure mechanism are identified from primary code, not just symptoms"
+                            .into(),
+                        "Root-cause fix plan avoids symptom masking and accounts for sibling impact"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1192,18 +1244,18 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 record_fields: vec![
                     StepFieldDef::required(
                         "root_cause",
-                        "特定した根本原因",
-                        "表層症状ではなく破綻の根本原因となっている箇所とメカニズムを記録する。",
+                        "Identified Root Cause",
+                        "Record the exact underlying defect location and failure mechanism rather than surface symptoms.",
                     ),
                     StepFieldDef::required(
                         "evidence",
-                        "原因特定の根拠",
-                        "再現テストやトレースから根本原因を裏付けた観測事実を記録する。",
+                        "Diagnostic Evidence",
+                        "Record the trace and reproduction facts that prove the root cause.",
                     ),
                     StepFieldDef::required(
                         "fix_plan",
-                        "根本修正計画と影響範囲",
-                        "対症療法を避けた最小かつ本質的な修正方針と類似箇所への影響範囲を記録する。",
+                        "Root-Cause Fix Plan & Impact",
+                        "Record the minimal, principled fix plan and any sibling paths affected.",
                     ),
                 ],
                 required_artifact_kinds: vec![],
@@ -1217,13 +1269,13 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "根本原因を最小かつ本質的な変更で修正し、先行固定した再現テストを Green に転じさせる。境界ケーステスト追加と全テスト・ビルド・lint 警告ゼロを通過させる。"
+                    "Fix the root cause with a minimal principled change so the pre-locked reproduction test turns Green unmodified; add boundary tests and pass all builds, tests, and lints with zero warnings."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "先行固定した再現テストが改変なしで通過（Green）している".into(),
-                        "全テスト・ビルド・lint が警告ゼロで通過している".into(),
-                        "ローカル固有情報・機密・関係ない変更が混入していない".into(),
+                        "Pre-locked reproduction test passes (Green) without modification".into(),
+                        "All tests, builds, and lints pass with zero warnings".into(),
+                        "No local-only paths, secrets, or unrelated edits are included".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1241,13 +1293,15 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "実機・本番相当環境で障害解消を確認し、Before（Red）と After（Green）および周辺挙動の退行ゼロを前後比較して証跡 Artifact と Why 要約を揃える。"
+                    "Verify defect resolution on a live or production-equivalent build, compare Before (Red) vs After (Green) with zero adjacent regressions, and attach evidence artifacts and a Why summary."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "実機または本番相当環境で障害解消が確認済みである".into(),
-                        "Before/After 比較で障害解消と周辺退行ゼロが実証されている".into(),
-                        "証跡 Artifact と原因・修正 Why 要約が揃っている".into(),
+                        "Defect resolution is confirmed in a live or production-equivalent environment"
+                            .into(),
+                        "Before/After comparison demonstrates defect resolution and zero adjacent regressions"
+                            .into(),
+                        "Evidence artifacts and root-cause Why summary are complete".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1265,12 +1319,12 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Human,
                 kind: StageKind::ApprovalGate,
                 procedure:
-                    "根本原因分析・再現テスト・前後比較証跡の妥当性を人間オーナーが確認し、Approve または理由付き Rework を行う。"
+                    "Human owner reviews root-cause analysis, reproduction tests, and Before/After evidence, then Approves or triggers Rework with a concrete reason."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "対症療法ではなく根本原因が解消されている".into(),
-                        "影響範囲とリリースリスクが許容範囲内である".into(),
+                        "Root cause is resolved rather than masked".into(),
+                        "Blast radius and release risk are within acceptable bounds".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: true,
@@ -1288,7 +1342,7 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Deterministic,
                 kind: StageKind::Terminal,
                 procedure:
-                    "障害修正・再発防止テスト固定・Why 記録済みコミット完了。再発防止の知見は Feedback として還元可能な状態。"
+                    "Root cause fixed, recurrence test locked, and Why-documented commit completed. Prevention lessons remain ready as Feedback."
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
@@ -1303,62 +1357,65 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let perf_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
         summary:
-            "未観測区間の計装と Before ベースライン・品質退行ゼロガードの先行固定を起点に、原則的改善と同一条件の前後比較で勝つ汎用性能最適化ディストリクト。"
+            "General-purpose performance and efficiency district built on instrumenting blind spots, locking Before baselines and zero-quality-loss guards first, and winning through principled structural optimization with same-condition proofs."
                 .into(),
         principles: vec![
             Principle {
                 id: "P-PRF-1".into(),
                 title: "Make Unobservable Stages Observable First".into(),
                 statement:
-                    "測れない領域を勘でチューニングしない。未観測のボトルネックは自律的に計測計装を整備して可視化してから着手する。"
+                    "Never tune unmeasured paths by intuition. Autonomously instrument unobservable bottlenecks and expose clear metrics before optimizing."
                         .into(),
                 rationale:
-                    "可視化なしの最適化は支配的でない箇所に複雑さを増やすだけで、実効性能の改善に繋がらないため。"
+                    "Optimizing blind adds complexity to non-dominant paths without improving real-world performance."
                         .into(),
             },
             Principle {
                 id: "P-PRF-2".into(),
                 title: "Baseline & Quality Guard Before Tuning".into(),
                 statement:
-                    "最適化に着手する前に、同一条件で再現可能な Before 定量ベースラインと、正確性・視認性・UX の退行を検知する決定論的ガードを先行固定する。"
+                    "Before optimizing, lock reproducible same-condition Before metrics and deterministic guards that catch accuracy, visual, or UX degradation."
                         .into(),
                 rationale:
-                    "品質を壊したことに気づかない最適化や比較不能なベンチマークは、製品価値を毀損するため。"
+                    "Optimizations that silently degrade quality or rely on incomparable benchmarks erode product value."
                         .into(),
             },
             Principle {
                 id: "P-PRF-3".into(),
                 title: "Zero Quality Degradation".into(),
                 statement:
-                    "精度・応答性・視認性・機能・安全性を削って数値を稼ぐ近道を禁止し、データ構造・計算量・I/O・キャッシュ・アイドル停止など構造的改善で勝つ。"
+                    "Forbid shortcuts that trade accuracy, responsiveness, visual clarity, features, or safety for faster numbers; win through data structures, algorithmic complexity, I/O, caching, and idle elimination."
                         .into(),
                 rationale:
-                    "体験や正確性を犠牲にした高速化は劣化であり、商用製品としての基準を満たさないため。"
+                    "Speed bought at the expense of user experience or correctness is regression, not commercial quality."
                         .into(),
             },
             Principle {
                 id: "P-PRF-4".into(),
                 title: "Same-Condition Before/After Proof".into(),
                 statement:
-                    "すべての改善効果は同一入力・同一環境・同一設定下での Before/After 統計比較で実証し、再現手順と実測値を証跡として残す。"
+                    "Prove every gain through Before/After comparisons under identical inputs, environment, and settings, preserving reproducible steps and measurements as evidence."
                         .into(),
                 rationale:
-                    "条件の異なる計測値や単発の好結果では真の改善とノイズを区別できないため。"
+                    "Mismatched conditions or cherry-picked runs cannot separate real gains from measurement noise."
                         .into(),
             },
         ],
         anti_patterns: vec![
-            "計測やプロファイルなしに勘で最適化を入れる".into(),
-            "Before ベースラインや品質ガードを固定せずにチューニングを始める".into(),
-            "品質・精度・機能・アイドル時の省電力性を犠牲にして見かけの数値を稼ぐ".into(),
-            "環境や負荷条件が違う Before/After を並べて改善と主張する".into(),
-            "改善効果が立証できない複雑化コードを残したままにする".into(),
+            "Adding optimizations by intuition without profiles or measurements".into(),
+            "Starting tuning before locking Before baselines and quality guards".into(),
+            "Sacrificing quality, accuracy, functionality, or idle power efficiency for headline numbers"
+                .into(),
+            "Comparing Before and After runs collected under different loads or environments"
+                .into(),
+            "Keeping complex code whose performance gain cannot be empirically proven".into(),
         ],
         decision_heuristics: vec![
-            "アイドル時の無駄な処理・再計算・ポーリングの根絶をマイクロ最適化より優先する"
+            "Prioritize eliminating idle work, redundant recomputation, and polling ahead of micro-optimizations"
                 .into(),
-            "改善幅がノイズ範囲に留まる変更は潔く捨て、支配的ボトルネックへ集中する".into(),
-            "計測ハーネスと品質回帰ガードは一度きりの使い捨てにせず、再実行可能な形で残す"
+            "Discard changes whose gains remain within measurement noise and focus on dominant bottlenecks"
+                .into(),
+            "Keep measurement harnesses and quality guards reusable rather than one-off throwaway scripts"
                 .into(),
         ],
         source_feedback_ids: vec![],
@@ -1380,12 +1437,13 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "対象ワークロード・評価指標（レイテンシ・スループット・メモリ・CPU/電力等）を定義し、未観測区間があれば再現可能な計測計装を整備する。"
+                    "Define target workloads and metrics (latency, throughput, memory, CPU/power) and add reproducible instrumentation for any unobservable segments."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "対象ワークロード・評価指標・退行禁止ラインが明文化されている".into(),
-                        "未観測区間が再現可能な形で計測できる状態になっている".into(),
+                        "Target workloads, evaluation metrics, and non-regression quality floors are documented"
+                            .into(),
+                        "Previously unobservable segments can be measured reproducibly".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1403,12 +1461,13 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "最適化実装前に、現行状態の Before 定量ベースラインを記録し、正確性・出力品質・UX の退行を自動検知する決定論的ガードを先行実装・固定する。"
+                    "Before tuning, capture quantitative Before baselines and lock deterministic guards that automatically detect regressions in correctness, output quality, and UX."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "再現可能な同一条件の Before 定量ベースラインが記録されている".into(),
-                        "品質・正確性の退行を検知する決定論的ガードが先行固定され現行通過している"
+                        "Reproducible same-condition Before quantitative baselines are recorded"
+                            .into(),
+                        "Deterministic quality and correctness guards are locked and passing on current code"
                             .into(),
                     ],
                     auto_verify_by_llm: true,
@@ -1427,13 +1486,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "プロファイルに基づく支配的ボトルネックに対し、品質・機能を一切劣化させない原則的改善と同一条件再計測・品質ガード検証を反復する。"
+                    "Iterate on principled structural improvements targeting profile-proven bottlenecks with zero quality loss, remeasuring under identical conditions and validating quality guards."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "品質・正確性を損なわない構造的改善になっている".into(),
-                        "先行品質ガード・全テスト・ビルド・lint が警告ゼロで通過している".into(),
-                        "改善効果のない複雑化コードやローカル固有パスが残っていない".into(),
+                        "Improvements are structural and preserve full quality and accuracy".into(),
+                        "Pre-locked quality guards, full tests, builds, and lints pass with zero warnings"
+                            .into(),
+                        "No unproven complexity or machine-specific paths remain".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1451,14 +1511,15 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "実機・本番相当ビルドで動作とアイドル時挙動を確認し、Before ベースラインとの同一条件定量比較テーブル・証跡 Artifact・Why 要約を揃える。"
+                    "Verify active and idle behavior on a live or production-equivalent build, and assemble a same-condition Before/After quantitative comparison table, evidence artifacts, and Why summary."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "実機・本番相当ビルドでの動作確認（アイドル時含む）が完了している".into(),
-                        "同一条件の Before/After 定量比較で改善と品質退行ゼロが実証されている"
+                        "Live or production-equivalent verification (including idle behavior) is complete"
                             .into(),
-                        "計測証跡 Artifact と Why 要約が揃っている".into(),
+                        "Same-condition Before/After quantitative comparison proves gains with zero quality regression"
+                            .into(),
+                        "Measurement evidence artifacts and Why summary are complete".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1476,13 +1537,13 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Human,
                 kind: StageKind::ApprovalGate,
                 procedure:
-                    "Before/After 計測値・品質ガード結果・コード複雑度とのバランスを人間オーナーが最終確認し、Approve または理由付き Rework を行う。"
+                    "Human owner reviews Before/After measurements, quality guard results, and complexity tradeoffs, then Approves or triggers Rework with a concrete reason."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "品質・可読性・保守性を損なわずに意味のある性能改善が得られている"
+                        "Meaningful performance gains achieved without harming quality, readability, or maintainability"
                             .into(),
-                        "退行リスクと複雑度コストが許容範囲内である".into(),
+                        "Regression risk and complexity cost are within acceptable bounds".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: true,
@@ -1500,7 +1561,7 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Deterministic,
                 kind: StageKind::Terminal,
                 procedure:
-                    "最適化承認・Before/After 証跡付きコミット完了。ガードと計測基盤が維持された状態。"
+                    "Optimization approved and committed with Before/After proof. Quality guards and measurement harnesses remain intact."
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,
@@ -1515,61 +1576,63 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
     let prune_philosophy = Philosophy {
         version: PhilosophyVersion::new(1),
         summary:
-            "既存挙動ガードの先行固定のもとで重複・肥大・契約ドリフト・環境依存を削ぎ落とし、単一ソースと完全な移植性へ磨き上げる簡素化・堅牢化ディストリクト。"
+            "Simplification and hardening district that strips duplication, bloat, contract drift, and environment coupling under pre-locked behavior guards toward a single source of truth and clean portability."
                 .into(),
         principles: vec![
             Principle {
                 id: "P-PRN-1".into(),
                 title: "Subtract Before Adding".into(),
                 statement:
-                    "複雑さの解消は新しい層や手順書を足すのではなく、不要な分岐・重複・死んだコード・冗長設定を削ることから始める。"
+                    "Reduce complexity by deleting unnecessary branches, duplication, dead code, and redundant config rather than adding new wrapper layers or manuals."
                         .into(),
                 rationale:
-                    "足し算の整理は保守面積を増やすだけで、本質的な見通しの良さと堅牢性は削減によって得られるため。"
+                    "Additive cleanup expands maintenance surface; genuine clarity and resilience come from subtraction."
                         .into(),
             },
             Principle {
                 id: "P-PRN-2".into(),
                 title: "Lock Behavior Guards Before Deletion".into(),
                 statement:
-                    "削除・統合・リファクタリングに着手する前に、維持すべき外部挙動・永続化互換・契約のベースラインと自動ガードを先行固定する。"
+                    "Before deleting, consolidating, or refactoring, lock baselines and automated guards covering preserved external behavior, persistence compatibility, and contracts."
                         .into(),
                 rationale:
-                    "ガードなしの削除は隠れた依存や後方互換の破壊を見逃すため。"
+                    "Deleting without guards risks silently breaking hidden dependencies and backward compatibility."
                         .into(),
             },
             Principle {
                 id: "P-PRN-3".into(),
                 title: "Single Source of Truth, Zero Drift".into(),
                 statement:
-                    "仕様・スキーマ・設計トークン・ルール・実装の二重管理を解消し、単一ソースと決定論的な同期検証でドリフトを構造的に防ぐ。"
+                    "Eliminate dual maintenance across specs, schemas, design tokens, rules, and code; prevent drift structurally with a single source of truth and deterministic sync tests."
                         .into(),
                 rationale:
-                    "並存する設定や重複定義は必ず時間とともに乖離し、バグと運用コストの温床になるため。"
+                    "Parallel configs and duplicated definitions inevitably diverge, breeding defects and operational friction."
                         .into(),
             },
             Principle {
                 id: "P-PRN-4".into(),
                 title: "Clean Portability & Strict Hygiene".into(),
                 statement:
-                    "ローカル固有パス・ホスト依存・秘密情報・環境依存テストを排除し、どのマシンやディレクトリでも同一にビルド・検証・動作する状態へ整える。"
+                    "Remove machine-specific paths, host assumptions, secrets, and environment-dependent tests so the project builds, tests, and runs identically from any machine or directory."
                         .into(),
                 rationale:
-                    "環境依存の混入はチーム展開・CI・クリーン再構築の再現性を壊すため。"
+                    "Environment coupling breaks team onboarding, CI reliability, and clean reproducible builds."
                         .into(),
             },
         ],
         anti_patterns: vec![
-            "挙動ガードを固定しないまま大規模な削除や統合を行う".into(),
-            "整理のつもりで新しいラッパー・冗長なドキュメント・二重設定を増やす".into(),
-            "後方互換を黙って壊しながらリファクタリングする".into(),
-            "機能追加と大規模な削減・整形を 1 つの曖昧な変更に混ぜる".into(),
+            "Running large deletions or consolidations without pre-locked behavior guards".into(),
+            "Adding new wrappers, redundant prose manuals, or duplicate configs in the name of cleanup"
+                .into(),
+            "Silently breaking backward compatibility during refactoring".into(),
+            "Mixing new feature additions with large-scale pruning in one ambiguous change".into(),
         ],
         decision_heuristics: vec![
-            "外部挙動ゼロ変化（ガード全緑）× 複雑さ・重複・依存の純減を成功基準にする".into(),
-            "人間やエージェントが毎回気をつける必要がある約束事は、単一ソース化と自動同期テストへ置き換える"
+            "Measure success by zero external regression (all guards green) combined with a net reduction in complexity, duplication, and coupling"
                 .into(),
-            "使われていない設定・分岐・互換コードは影響範囲を一次確認したうえで迷わず撤去する"
+            "Replace conventions that humans or agents must manually remember with a single source of truth and automated sync checks"
+                .into(),
+            "Once primary references are traced, remove unused configs, dead branches, and obsolete compatibility code decisively"
                 .into(),
         ],
         source_feedback_ids: vec![],
@@ -1591,12 +1654,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "重複定義・契約ドリフト・不要分岐・環境依存・冗長設定を全量棚卸しし、削減対象と維持すべき外部互換契約を確定する。"
+                    "Inventory duplicated definitions, contract drift, dead branches, environment coupling, and redundant config; lock pruning targets and external compatibility contracts to preserve."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "削減・統合対象と参照箇所が全量トレースされている".into(),
-                        "維持すべき外部挙動・後方互換・単一ソース方針が明確である".into(),
+                        "All pruning/consolidation targets and references are exhaustively traced"
+                            .into(),
+                        "Preserved external behavior, backward compatibility, and single-source strategy are clearly defined"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1614,13 +1679,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "削除・統合に着手する前に、維持すべき外部挙動・互換フォーマット・契約同期の Before ベースラインと決定論的ガードを先行実装・固定する。"
+                    "Before deleting or consolidating, record Before baselines and lock deterministic guards covering preserved external behavior, compatible formats, and contract synchronization."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "変更前（Before）の外部挙動・契約・複雑度メトリクスが記録されている"
+                        "Pre-change (Before) external behavior, contract, and complexity metrics are recorded"
                             .into(),
-                        "外部挙動と契約同期を守る自動ガードが先行固定され現行通過している".into(),
+                        "Automated guards protecting external behavior and contract sync are locked and passing on current code"
+                            .into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1638,13 +1704,15 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "先行ガードを破らずに重複・不要分岐・環境依存を削除し単一ソースへ統合する。全テスト・ビルド・lint 警告ゼロを通過させる。"
+                    "Remove duplication, dead branches, and environment coupling and unify onto a single source of truth without breaking pre-locked guards; pass all builds, tests, and lints with zero warnings."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "新たな重複やラッパーを増やさず複雑さ・重複が純減している".into(),
-                        "先行ガードを含む全テスト・ビルド・lint が警告ゼロで通過している".into(),
-                        "ローカル固有パス・環境依存・秘密情報がゼロである".into(),
+                        "Complexity and duplication show a net reduction with no new redundant wrappers"
+                            .into(),
+                        "All tests (including pre-locked guards), builds, and lints pass with zero warnings"
+                            .into(),
+                        "Zero local-only paths, environment assumptions, or secrets remain".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1662,14 +1730,14 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Ai,
                 kind: StageKind::Work,
                 procedure:
-                    "クリーン環境・実機で動作確認し、Before 基準と比較して外部挙動ゼロ変化・契約ドリフトゼロ・純減結果を証跡 Artifact と Why 要約にまとめる。"
+                    "Verify on a clean environment and live build, compare against Before baselines to confirm zero external behavior change, zero contract drift, and net reduction, and package evidence artifacts with a Why summary."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "実機またはクリーン環境での動作確認が完了している".into(),
-                        "Before/After 比較で外部挙動ゼロ変化と複雑さ・重複の削減が確認済みである"
+                        "Live or clean-environment verification is complete".into(),
+                        "Before/After comparison confirms zero external regression and net reduction in complexity or duplication"
                             .into(),
-                        "証跡 Artifact と Why 要約が揃っている".into(),
+                        "Evidence artifacts and Why summary are complete".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: false,
@@ -1687,12 +1755,13 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Human,
                 kind: StageKind::ApprovalGate,
                 procedure:
-                    "削減内容・互換性維持・単一ソース化の妥当性を人間オーナーが最終確認し、Approve または理由付き Rework を行う。"
+                    "Human owner reviews pruning scope, preserved compatibility, and single-source consolidation, then Approves or triggers Rework with a concrete reason."
                         .into(),
                 gate_rubric: Some(GateRubric {
                     checks: vec![
-                        "必要な挙動・後方互換を一切損なわず簡素化されている".into(),
-                        "単一ソースと移植性の原則に合致している".into(),
+                        "Simplified cleanly without compromising required behavior or backward compatibility"
+                            .into(),
+                        "Aligns with single-source-of-truth and portability principles".into(),
                     ],
                     auto_verify_by_llm: true,
                     requires_human_approval: true,
@@ -1710,7 +1779,7 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
                 runner_kind: RunnerKind::Deterministic,
                 kind: StageKind::Terminal,
                 procedure:
-                    "削減・単一ソース化・ガード固定・Why 記録済みコミット完了。ドリフトのないクリーンな状態。"
+                    "Pruned, consolidated to a single source of truth, guarded, and committed with Why rationale. Clean and drift-free."
                         .into(),
                 gate_rubric: None,
                 sub_template_id: None,

@@ -48,17 +48,32 @@ impl StepFieldDef {
     }
 }
 
+pub const STEP_FIELD_DECISION_LABEL: &str = "Decision & Rationale";
+pub const STEP_FIELD_EXECUTION_LABEL: &str = "Execution & Outcome";
+pub const STEP_FIELD_NOTE_LABEL: &str = "Approval Note";
+pub const STEP_FIELD_REASON_LABEL: &str = "Rework Reason";
+
+pub fn builtin_step_field_label(key: &str) -> Option<&'static str> {
+    match key {
+        "decision" => Some(STEP_FIELD_DECISION_LABEL),
+        "execution" => Some(STEP_FIELD_EXECUTION_LABEL),
+        "note" => Some(STEP_FIELD_NOTE_LABEL),
+        "reason" => Some(STEP_FIELD_REASON_LABEL),
+        _ => None,
+    }
+}
+
 pub fn default_step_fields() -> Vec<StepFieldDef> {
     vec![
         StepFieldDef::required(
             "decision",
-            "判断と根拠",
-            "このステップで何を根拠にどう判断したか（採用理由・前提・見送った選択肢）を記録する。",
+            STEP_FIELD_DECISION_LABEL,
+            "Record what was decided in this step and why (rationale, assumptions, and rejected alternatives).",
         ),
         StepFieldDef::required(
             "execution",
-            "実行内容と結果",
-            "実際に何を実行・変更・確認したか（対象・手順・観測結果）を記録する。",
+            STEP_FIELD_EXECUTION_LABEL,
+            "Record what was executed, changed, and verified (targets, steps, and observed outcomes).",
         ),
     ]
 }

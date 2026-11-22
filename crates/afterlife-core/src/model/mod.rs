@@ -23,5 +23,9 @@ pub use inline_link::{InlineLink, ParsedInlineText, is_openable_url, parse_inlin
 pub use job::{Artifact, ArtifactKind, ExecutionContext, Job, JobLease, JobLocation};
 pub use philosophy::{Philosophy, PhilosophyProposal, Principle, ProposalStatus};
 pub use runner::RunnerKind;
-pub use step::{StepFieldDef, StepRecord, StepRecordOutcome, default_step_fields};
+pub use step::{
+    STEP_FIELD_DECISION_LABEL, STEP_FIELD_EXECUTION_LABEL, STEP_FIELD_NOTE_LABEL,
+    STEP_FIELD_REASON_LABEL, StepFieldDef, StepRecord, StepRecordOutcome,
+    builtin_step_field_label, default_step_fields,
+};
 pub use sub_machine::{SubMachineTemplate, SubStageDef};
