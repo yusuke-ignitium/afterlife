@@ -39,7 +39,7 @@ fn default_data_dir() -> String {
 fn apply_backdrop_config(
     glass: &mut GlassSettings,
     pause_animation_when_inactive: &mut bool,
-    fade_ui_when_inactive: &mut bool,
+    fade_ui_after_secs: &mut f32,
     cfg: &BackdropConfig,
 ) {
     let tuning = cfg.tuning.clamped();
@@ -64,7 +64,7 @@ fn apply_backdrop_config(
         glass.radius = saved.radius;
         glass.tint_rgb = saved.tint_rgb;
         *pause_animation_when_inactive = saved.pause_animation_when_inactive;
-        *fade_ui_when_inactive = saved.fade_ui_when_inactive;
+        *fade_ui_after_secs = saved.fade_ui_after_secs;
     }
 }
 
@@ -86,7 +86,7 @@ fn snapshot_tuning(glass: &GlassSettings) -> BackdropTuning {
 fn snapshot_glass_appearance(
     glass: &GlassSettings,
     pause_animation_when_inactive: bool,
-    fade_ui_when_inactive: bool,
+    fade_ui_after_secs: f32,
 ) -> BackdropGlassAppearance {
     BackdropGlassAppearance {
         disp_scale: glass.disp_scale,
@@ -100,7 +100,7 @@ fn snapshot_glass_appearance(
         radius: glass.radius,
         tint_rgb: glass.tint_rgb,
         pause_animation_when_inactive,
-        fade_ui_when_inactive,
+        fade_ui_after_secs,
     }
 }
 
@@ -111,6 +111,13 @@ pub enum TabId {
     Workspace,
     Templates,
     Guard,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GlassParamSection {
+    Backdrop,
+    Surface,
+    Inactive,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -130,10 +137,11 @@ pub enum GlassParamKey {
     BlurStdDev,
     BgAlpha,
     Radius,
+    InactiveFadeSecs,
 }
 
 impl GlassParamKey {
-    pub const ALL: [GlassParamKey; 15] = [
+    pub const ALL: [GlassParamKey; 16] = [
         Self::BgBrightness,
         Self::BgTileSizePx,
         Self::BgImageHoldSecs,
@@ -149,18 +157,20 @@ impl GlassParamKey {
         Self::BlurStdDev,
         Self::BgAlpha,
         Self::Radius,
+        Self::InactiveFadeSecs,
     ];
 
-    pub fn is_backdrop_param(self) -> bool {
-        matches!(
-            self,
+    pub fn section(self) -> GlassParamSection {
+        match self {
             Self::BgBrightness
-                | Self::BgTileSizePx
-                | Self::BgImageHoldSecs
-                | Self::BgImageBrightness
-                | Self::BgPeakLuminance
-                | Self::BgImageSaturation
-        )
+            | Self::BgTileSizePx
+            | Self::BgImageHoldSecs
+            | Self::BgImageBrightness
+            | Self::BgPeakLuminance
+            | Self::BgImageSaturation => GlassParamSection::Backdrop,
+            Self::InactiveFadeSecs => GlassParamSection::Inactive,
+            _ => GlassParamSection::Surface,
+        }
     }
 
     pub fn is_dimmed(self, glass: &GlassSettings) -> bool {
@@ -192,10 +202,12 @@ impl GlassParamKey {
             Self::BlurStdDev => ("Frost Blur", 0.0, 20.0, 1),
             Self::BgAlpha => ("Glass Opacity", 0.0, 0.85, 2),
             Self::Radius => ("Corner Radius", 0.0, 20.0, 1),
+            Self::InactiveFadeSecs => ("Fade UI After", 0.0, 60.0, 0),
         }
     }
 
-    pub fn get(self, g: &GlassSettings) -> f32 {
+    pub fn get(self, st: &AppState) -> f32 {
+        let g = &st.glass;
         match self {
             Self::BgBrightness => g.bg_brightness,
             Self::BgTileSizePx => g.bg_tile_size_px,
@@ -212,6 +224,24 @@ impl GlassParamKey {
             Self::BlurStdDev => g.blur_std_dev,
             Self::BgAlpha => g.bg_alpha,
             Self::Radius => g.radius,
+            Self::InactiveFadeSecs => st.fade_ui_after_secs,
+        }
+    }
+
+    pub fn format_value(self, val: f32) -> String {
+        if self == Self::InactiveFadeSecs {
+            let secs = val.round().clamp(0.0, 60.0) as u32;
+            return if secs == 0 {
+                "Off".to_string()
+            } else {
+                format!("{secs}s")
+            };
+        }
+        let (_, _, _, dp) = self.spec();
+        match dp {
+            0 => format!("{:.0}", val),
+            1 => format!("{:.1}", val),
+            _ => format!("{:.2}", val),
         }
     }
 
@@ -234,6 +264,7 @@ impl GlassParamKey {
             Self::BlurStdDev => g.blur_std_dev = v,
             Self::BgAlpha => g.bg_alpha = v,
             Self::Radius => g.radius = v,
+            Self::InactiveFadeSecs => {}
         }
     }
 }
@@ -250,6 +281,7 @@ pub struct AppState {
     pub detail_open: bool,
     pub detail_height: f32,
     pub active_tab: TabId,
+    pub previous_tab: TabId,
     pub show_centerline: bool,
     pub style: UiStyle,
     pub glass: GlassSettings,
@@ -259,8 +291,9 @@ pub struct AppState {
     pub active_display_scale: f32,
     pub palette: Palette,
     pub settings_open: bool,
+    pub inspector_open: bool,
     pub pause_animation_when_inactive: bool,
-    pub fade_ui_when_inactive: bool,
+    pub fade_ui_after_secs: f32,
 }
 
 impl AppState {
@@ -275,7 +308,7 @@ impl AppState {
         let mut base_tile_size_px = glass.bg_tile_size_px;
         let mut display_tile_sizes = BTreeMap::new();
         let mut pause_animation_when_inactive = false;
-        let mut fade_ui_when_inactive = false;
+        let mut fade_ui_after_secs = 0.0;
         let load_backdrop_store = backdrop_store
             .clone()
             .or_else(|| perf_use_live_data.then(BackdropStore::open_default));
@@ -285,7 +318,7 @@ impl AppState {
                     apply_backdrop_config(
                         &mut glass,
                         &mut pause_animation_when_inactive,
-                        &mut fade_ui_when_inactive,
+                        &mut fade_ui_after_secs,
                         &backdrop,
                     );
                     base_tile_size_px = backdrop.tuning.clamped().tile_size_px;
@@ -355,6 +388,7 @@ impl AppState {
             detail_open: false,
             detail_height: crate::app::window_state::DEFAULT_DETAIL_HEIGHT_PX,
             active_tab: TabId::Workspace,
+            previous_tab: TabId::Workspace,
             show_centerline: false,
             style,
             glass,
@@ -364,8 +398,9 @@ impl AppState {
             active_display_scale: 2.0,
             palette,
             settings_open: false,
+            inspector_open: false,
             pause_animation_when_inactive,
-            fade_ui_when_inactive,
+            fade_ui_after_secs,
         }
     }
 
@@ -492,6 +527,14 @@ impl AppState {
     }
 
     pub fn set_glass_param(&mut self, key: GlassParamKey, value: f32) {
+        if key == GlassParamKey::InactiveFadeSecs {
+            self.fade_ui_after_secs = if value.is_finite() {
+                value.clamp(0.0, 60.0).round()
+            } else {
+                0.0
+            };
+            return;
+        }
         if key == GlassParamKey::BgTileSizePx {
             let clamped = if value.is_finite() {
                 value.clamp(2.0, 24.0).round()
@@ -509,6 +552,11 @@ impl AppState {
             key.set(&mut self.glass, value);
         }
         self.refresh_palette();
+    }
+
+    pub fn inactive_fade_delay_secs(&self) -> Option<u64> {
+        let secs = self.fade_ui_after_secs.round().clamp(0.0, 60.0) as u64;
+        (secs > 0).then_some(secs)
     }
 
     pub fn reset_glass_settings(&mut self, preset: GlassSettings) {
@@ -546,14 +594,14 @@ impl AppState {
         let before = (
             self.glass,
             self.pause_animation_when_inactive,
-            self.fade_ui_when_inactive,
+            self.fade_ui_after_secs,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
         apply_backdrop_config(
             &mut self.glass,
             &mut self.pause_animation_when_inactive,
-            &mut self.fade_ui_when_inactive,
+            &mut self.fade_ui_after_secs,
             &cfg,
         );
         self.base_tile_size_px = cfg.tuning.clamped().tile_size_px;
@@ -567,7 +615,7 @@ impl AppState {
         let after = (
             self.glass,
             self.pause_animation_when_inactive,
-            self.fade_ui_when_inactive,
+            self.fade_ui_after_secs,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
@@ -590,7 +638,7 @@ impl AppState {
             snapshot_glass_appearance(
                 &self.glass,
                 self.pause_animation_when_inactive,
-                self.fade_ui_when_inactive,
+                self.fade_ui_after_secs,
             ),
             self.display_tile_sizes.clone(),
         ) {
@@ -604,6 +652,40 @@ impl AppState {
             UiStyle::Wireframe => UiStyle::LiquidGlass,
         };
         self.refresh_palette();
+    }
+
+    pub fn select_tab(&mut self, tab: TabId) {
+        if tab != TabId::Guard {
+            self.previous_tab = tab;
+        }
+        self.active_tab = tab;
+    }
+
+    pub fn toggle_guard_view(&mut self) {
+        if self.active_tab == TabId::Guard {
+            self.active_tab = if self.previous_tab == TabId::Guard {
+                TabId::Workspace
+            } else {
+                self.previous_tab
+            };
+        } else {
+            self.previous_tab = self.active_tab;
+            self.active_tab = TabId::Guard;
+        }
+    }
+
+    pub fn toggle_appearance_drawer(&mut self) {
+        self.settings_open = !self.settings_open;
+        if self.settings_open {
+            self.inspector_open = false;
+        }
+    }
+
+    pub fn toggle_inspector_popover(&mut self) {
+        self.inspector_open = !self.inspector_open;
+        if self.inspector_open {
+            self.settings_open = false;
+        }
     }
 
     pub fn glass_opt(&self) -> Option<&GlassSettings> {
@@ -641,7 +723,7 @@ mod tests {
 
         assert_eq!(snapshot_tuning(&glass_def), tuning_def);
         assert_eq!(
-            snapshot_glass_appearance(&glass_def, false, false),
+            snapshot_glass_appearance(&glass_def, false, 0.0),
             saved_glass_def
         );
         assert_eq!(glass_def.particle_wave_tuning(), wave_def);
@@ -674,18 +756,23 @@ mod tests {
         let cfg = BackdropConfig {
             images: Vec::new(),
             tuning: snapshot_tuning(&original),
-            glass: Some(snapshot_glass_appearance(&original, true, true)),
+            glass: Some(snapshot_glass_appearance(&original, true, 15.0)),
             display_tile_sizes: BTreeMap::new(),
         };
 
         let mut restored = GlassSettings::default();
         let mut pause_inactive = false;
-        let mut fade_inactive = false;
-        apply_backdrop_config(&mut restored, &mut pause_inactive, &mut fade_inactive, &cfg);
+        let mut fade_after_secs = 0.0;
+        apply_backdrop_config(
+            &mut restored,
+            &mut pause_inactive,
+            &mut fade_after_secs,
+            &cfg,
+        );
 
         assert_eq!(restored, original);
         assert!(pause_inactive);
-        assert!(fade_inactive);
+        assert_eq!(fade_after_secs, 15.0);
     }
 
     #[test]
@@ -712,5 +799,45 @@ mod tests {
 
         st.sync_active_display(Some("external-lg-4k".to_string()), 1.0);
         assert_eq!(st.glass.bg_tile_size_px, 4.0);
+    }
+
+    #[test]
+    fn inspector_toggles_guard_tab_and_exclusivity_with_appearance() {
+        let mut st = AppState::new();
+        assert!(!st.inspector_open);
+        assert!(!st.settings_open);
+        assert!(st.active_tab == TabId::Workspace);
+
+        st.toggle_appearance_drawer();
+        assert!(st.settings_open);
+        assert!(!st.inspector_open);
+
+        st.toggle_inspector_popover();
+        assert!(st.inspector_open);
+        assert!(!st.settings_open);
+
+        st.select_tab(TabId::Templates);
+        assert!(st.active_tab == TabId::Templates);
+
+        st.toggle_guard_view();
+        assert!(st.active_tab == TabId::Guard);
+
+        st.toggle_guard_view();
+        assert!(st.active_tab == TabId::Templates);
+
+        st.toggle_guard_view();
+        assert!(st.active_tab == TabId::Guard);
+        st.select_tab(TabId::Workspace);
+        assert!(st.active_tab == TabId::Workspace);
+
+        assert_eq!(st.inactive_fade_delay_secs(), None);
+        assert_eq!(GlassParamKey::InactiveFadeSecs.format_value(0.0), "Off");
+        st.set_glass_param(GlassParamKey::InactiveFadeSecs, 12.6);
+        assert_eq!(st.inactive_fade_delay_secs(), Some(13));
+        assert_eq!(GlassParamKey::InactiveFadeSecs.format_value(13.0), "13s");
+        st.set_glass_param(GlassParamKey::InactiveFadeSecs, 999.0);
+        assert_eq!(st.inactive_fade_delay_secs(), Some(60));
+        st.set_glass_param(GlassParamKey::InactiveFadeSecs, -5.0);
+        assert_eq!(st.inactive_fade_delay_secs(), None);
     }
 }

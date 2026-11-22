@@ -15,7 +15,7 @@ use gpui::{
 use crate::{
     app::{
         lifecycle::CloseWindow,
-        motion::{INACTIVE_FADE_DELAY, UiMotion},
+        motion::UiMotion,
         state::{AppState, GlassParamKey, TabId},
         window_state::{WindowStateStore, capture_window_state, clamp_detail_height},
     },
@@ -24,6 +24,7 @@ use crate::{
     views::{
         appearance_drawer::render_appearance_drawer,
         guard_view::render_guard_tab,
+        inspector_popover::render_inspector_popover,
         templates_view::render_templates_tab,
         workspace::{districts_pane::render_right_districts_pane, left_pane::render_left_pane},
     },
@@ -50,6 +51,7 @@ pub struct AfterlifeApp {
     window_save_task: Option<Task<()>>,
     window_active: bool,
     inactive_dim_active: bool,
+    inactive_dim_scheduled_secs: Option<u64>,
     inactive_dim_task: Option<Task<()>>,
 }
 
@@ -106,12 +108,12 @@ impl AfterlifeApp {
         let activation_subscription =
             cx.observe_window_activation(window, move |this, window, cx| {
                 this.window_active = window.is_window_active();
-                let fade_enabled = this.state.read(cx).fade_ui_when_inactive;
-                this.sync_inactive_fade_schedule(fade_enabled, cx);
+                let delay_secs = this.state.read(cx).inactive_fade_delay_secs();
+                this.sync_inactive_fade_schedule(delay_secs, cx);
                 cx.notify();
             });
         let initial_active = window.is_window_active();
-        let initial_fade_enabled = state.read(cx).fade_ui_when_inactive;
+        let initial_delay_secs = state.read(cx).inactive_fade_delay_secs();
         let mut app = Self {
             state,
             perf,
@@ -125,27 +127,42 @@ impl AfterlifeApp {
             window_save_task: None,
             window_active: initial_active,
             inactive_dim_active: false,
+            inactive_dim_scheduled_secs: None,
             inactive_dim_task: None,
         };
-        app.sync_inactive_fade_schedule(initial_fade_enabled, cx);
+        app.sync_inactive_fade_schedule(initial_delay_secs, cx);
         app
     }
 
-    fn sync_inactive_fade_schedule(&mut self, fade_enabled: bool, cx: &mut Context<Self>) {
-        if !fade_enabled || self.window_active {
+    fn sync_inactive_fade_schedule(&mut self, delay_secs: Option<u64>, cx: &mut Context<Self>) {
+        let Some(secs) = delay_secs else {
             self.inactive_dim_task = None;
+            self.inactive_dim_scheduled_secs = None;
+            self.inactive_dim_active = false;
+            return;
+        };
+        if self.window_active {
+            self.inactive_dim_task = None;
+            self.inactive_dim_scheduled_secs = None;
             self.inactive_dim_active = false;
             return;
         }
-        if self.inactive_dim_active || self.inactive_dim_task.is_some() {
+        if self.inactive_dim_active {
             return;
         }
+        if self.inactive_dim_scheduled_secs == Some(secs) && self.inactive_dim_task.is_some() {
+            return;
+        }
+        self.inactive_dim_scheduled_secs = Some(secs);
         self.inactive_dim_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(INACTIVE_FADE_DELAY).await;
+            cx.background_executor()
+                .timer(Duration::from_secs(secs))
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.inactive_dim_task = None;
-                let enabled = this.state.read(cx).fade_ui_when_inactive;
-                if enabled && !this.window_active {
+                this.inactive_dim_scheduled_secs = None;
+                let still_enabled = this.state.read(cx).inactive_fade_delay_secs().is_some();
+                if still_enabled && !this.window_active {
                     this.inactive_dim_active = true;
                     cx.notify();
                 }
@@ -206,7 +223,7 @@ impl Render for AfterlifeApp {
         let p = st.palette;
 
         self.window_active = window.is_window_active();
-        self.sync_inactive_fade_schedule(st.fade_ui_when_inactive, cx);
+        self.sync_inactive_fade_schedule(st.inactive_fade_delay_secs(), cx);
         let motion = self
             .motion
             .sync(&st, self.inactive_dim_active, Instant::now());
@@ -404,6 +421,45 @@ impl Render for AfterlifeApp {
                             window_height,
                             cx,
                         )),
+                )
+            })
+            .when(motion.inspector_progress > 0.005, |d| {
+                let inspector_t = motion.inspector_progress;
+                d.when(st.inspector_open, |d| {
+                    d.child(
+                        div()
+                            .id("inspector-popover-backdrop")
+                            .absolute()
+                            .inset_0()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.state.update(cx, |st, _| {
+                                        st.inspector_open = false;
+                                    });
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(|this, _, _, cx| {
+                                    this.state.update(cx, |st, _| {
+                                        st.inspector_open = false;
+                                    });
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                })
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(96.0 - (1.0 - inspector_t) * 8.0))
+                        .right(SpacePx::S16.px())
+                        .opacity(inspector_t * ui_opacity)
+                        .child(render_inspector_popover(&st, &motion, cx)),
                 )
             });
 

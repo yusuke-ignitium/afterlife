@@ -4,6 +4,7 @@ use std::{
 };
 
 use afterlife_core::{Job, JobId};
+use afterlife_design::UiStyle;
 use gpui::Rgba;
 
 use crate::app::state::{AppState, TabId};
@@ -17,7 +18,6 @@ pub const TAB_ENTER_MS: u64 = 260;
 pub const SELECTION_MS: u64 = 280;
 pub const TOGGLE_MS: u64 = 220;
 pub const PULSE_MS: u64 = 300;
-pub const INACTIVE_FADE_DELAY: Duration = Duration::from_secs(10);
 pub const INACTIVE_FADE_IN_MS: u64 = 1400;
 pub const INACTIVE_FADE_OUT_MS: u64 = 260;
 pub const INACTIVE_UI_MIN_OPACITY: f32 = 0.24;
@@ -116,6 +116,7 @@ impl ScalarTransition {
 
 pub struct MotionSnapshot {
     pub drawer_progress: f32,
+    pub inspector_progress: f32,
     pub detail_progress: f32,
     pub detail_swap_progress: f32,
     pub detail_job: Option<Job>,
@@ -124,7 +125,9 @@ pub struct MotionSnapshot {
     pub toggle_youtube_mirror_progress: f32,
     pub toggle_backdrop_progress: f32,
     pub toggle_pause_progress: f32,
-    pub toggle_fade_inactive_progress: f32,
+    pub toggle_liquid_glass_progress: f32,
+    pub toggle_centerline_progress: f32,
+    pub toggle_px_guard_progress: f32,
     pub inactive_ui_opacity: f32,
     pub selection_weights: HashMap<JobId, f32>,
     pub pulses: HashMap<String, f32>,
@@ -146,6 +149,7 @@ impl MotionSnapshot {
 
 pub struct UiMotion {
     drawer: ScalarTransition,
+    inspector: ScalarTransition,
     detail: ScalarTransition,
     last_detail_job: Option<Job>,
     last_detail_job_id: Option<JobId>,
@@ -156,7 +160,9 @@ pub struct UiMotion {
     toggle_youtube_mirror: ScalarTransition,
     toggle_backdrop: ScalarTransition,
     toggle_pause: ScalarTransition,
-    toggle_fade_inactive: ScalarTransition,
+    toggle_liquid_glass: ScalarTransition,
+    toggle_centerline: ScalarTransition,
+    toggle_px_guard: ScalarTransition,
     inactive_ui_opacity: ScalarTransition,
     selection_weights: HashMap<JobId, ScalarTransition>,
     pulses: HashMap<String, Instant>,
@@ -174,6 +180,7 @@ impl UiMotion {
         let now = Instant::now();
         Self {
             drawer: ScalarTransition::settled(0.0, now),
+            inspector: ScalarTransition::settled(0.0, now),
             detail: ScalarTransition::settled(0.0, now),
             last_detail_job: None,
             last_detail_job_id: None,
@@ -184,7 +191,9 @@ impl UiMotion {
             toggle_youtube_mirror: ScalarTransition::settled(1.0, now),
             toggle_backdrop: ScalarTransition::settled(0.0, now),
             toggle_pause: ScalarTransition::settled(1.0, now),
-            toggle_fade_inactive: ScalarTransition::settled(0.0, now),
+            toggle_liquid_glass: ScalarTransition::settled(1.0, now),
+            toggle_centerline: ScalarTransition::settled(0.0, now),
+            toggle_px_guard: ScalarTransition::settled(0.0, now),
             inactive_ui_opacity: ScalarTransition::settled(1.0, now),
             selection_weights: HashMap::new(),
             pulses: HashMap::new(),
@@ -204,10 +213,12 @@ impl UiMotion {
     ) -> MotionSnapshot {
         let selected_job = st.detail_open.then(|| st.selected_job().cloned()).flatten();
         let selected_id = selected_job.as_ref().map(|j| j.id.clone());
-        let should_dim_ui = st.fade_ui_when_inactive && inactive_dim_active;
+        let should_dim_ui = st.inactive_fade_delay_secs().is_some() && inactive_dim_active;
 
         if !self.initialized {
             self.drawer = ScalarTransition::settled(if st.settings_open { 1.0 } else { 0.0 }, now);
+            self.inspector =
+                ScalarTransition::settled(if st.inspector_open { 1.0 } else { 0.0 }, now);
             self.detail =
                 ScalarTransition::settled(if selected_job.is_some() { 1.0 } else { 0.0 }, now);
             self.last_detail_job = selected_job.clone();
@@ -239,8 +250,22 @@ impl UiMotion {
                 },
                 now,
             );
-            self.toggle_fade_inactive = ScalarTransition::settled(
-                if st.fade_ui_when_inactive { 1.0 } else { 0.0 },
+            self.toggle_liquid_glass = ScalarTransition::settled(
+                if st.style == UiStyle::LiquidGlass {
+                    1.0
+                } else {
+                    0.0
+                },
+                now,
+            );
+            self.toggle_centerline =
+                ScalarTransition::settled(if st.show_centerline { 1.0 } else { 0.0 }, now);
+            self.toggle_px_guard = ScalarTransition::settled(
+                if st.active_tab == TabId::Guard {
+                    1.0
+                } else {
+                    0.0
+                },
                 now,
             );
             self.inactive_ui_opacity = ScalarTransition::settled(
@@ -265,6 +290,15 @@ impl UiMotion {
             };
             self.drawer
                 .set_target(drawer_target, Duration::from_millis(drawer_ms), now);
+
+            let inspector_target = if st.inspector_open { 1.0 } else { 0.0 };
+            let inspector_ms = if st.inspector_open {
+                DRAWER_OPEN_MS
+            } else {
+                DRAWER_CLOSE_MS
+            };
+            self.inspector
+                .set_target(inspector_target, Duration::from_millis(inspector_ms), now);
 
             let detail_visible = selected_job.is_some();
             let detail_target = if detail_visible { 1.0 } else { 0.0 };
@@ -325,8 +359,26 @@ impl UiMotion {
                 Duration::from_millis(TOGGLE_MS),
                 now,
             );
-            self.toggle_fade_inactive.set_target(
-                if st.fade_ui_when_inactive { 1.0 } else { 0.0 },
+            self.toggle_liquid_glass.set_target(
+                if st.style == UiStyle::LiquidGlass {
+                    1.0
+                } else {
+                    0.0
+                },
+                Duration::from_millis(TOGGLE_MS),
+                now,
+            );
+            self.toggle_centerline.set_target(
+                if st.show_centerline { 1.0 } else { 0.0 },
+                Duration::from_millis(TOGGLE_MS),
+                now,
+            );
+            self.toggle_px_guard.set_target(
+                if st.active_tab == TabId::Guard {
+                    1.0
+                } else {
+                    0.0
+                },
                 Duration::from_millis(TOGGLE_MS),
                 now,
             );
@@ -408,6 +460,7 @@ impl UiMotion {
         }
 
         let animating = self.drawer.is_active(now)
+            || self.inspector.is_active(now)
             || self.detail.is_active(now)
             || self.detail_swap_started.is_some()
             || self.tab_enter_started.is_some()
@@ -415,13 +468,16 @@ impl UiMotion {
             || self.toggle_youtube_mirror.is_active(now)
             || self.toggle_backdrop.is_active(now)
             || self.toggle_pause.is_active(now)
-            || self.toggle_fade_inactive.is_active(now)
+            || self.toggle_liquid_glass.is_active(now)
+            || self.toggle_centerline.is_active(now)
+            || self.toggle_px_guard.is_active(now)
             || self.inactive_ui_opacity.is_active(now)
             || any_selection_active
             || !active_pulses.is_empty();
 
         MotionSnapshot {
             drawer_progress: self.drawer.value(now),
+            inspector_progress: self.inspector.value(now),
             detail_progress: self.detail.value(now),
             detail_swap_progress,
             detail_job: self.last_detail_job.clone(),
@@ -430,7 +486,9 @@ impl UiMotion {
             toggle_youtube_mirror_progress: self.toggle_youtube_mirror.value(now),
             toggle_backdrop_progress: self.toggle_backdrop.value(now),
             toggle_pause_progress: self.toggle_pause.value(now),
-            toggle_fade_inactive_progress: self.toggle_fade_inactive.value(now),
+            toggle_liquid_glass_progress: self.toggle_liquid_glass.value(now),
+            toggle_centerline_progress: self.toggle_centerline.value(now),
+            toggle_px_guard_progress: self.toggle_px_guard.value(now),
             inactive_ui_opacity: self.inactive_ui_opacity.value(now),
             selection_weights,
             pulses: active_pulses,
@@ -492,7 +550,7 @@ mod tests {
     #[test]
     fn inactive_fade_transitions_smoothly_and_preserves_visibility_floor() {
         let mut st = AppState::new();
-        st.fade_ui_when_inactive = false;
+        st.fade_ui_after_secs = 0.0;
         let t0 = Instant::now();
         let mut motion = UiMotion::new();
 
@@ -500,7 +558,7 @@ mod tests {
         assert_eq!(snap0.inactive_ui_opacity, 1.0);
         assert!(!snap0.animating);
 
-        st.fade_ui_when_inactive = true;
+        st.fade_ui_after_secs = 10.0;
         let t1 = t0 + Duration::from_millis(10);
         let snap1 = motion.sync(&st, true, t1);
         assert!(snap1.animating);

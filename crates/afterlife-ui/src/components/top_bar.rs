@@ -1,4 +1,4 @@
-use afterlife_design::{GlassSurface, RowHeightPx, SpacePx, UiStyle};
+use afterlife_design::{GlassSurface, RowHeightPx, SpacePx};
 use gpui::{
     AnyElement, ClickEvent, Context, ImageSource, InteractiveElement, IntoElement, ObjectFit,
     ParentElement, StatefulInteractiveElement, Styled, StyledImage, div, img, px,
@@ -63,7 +63,7 @@ pub fn render_top_bar(st: &AppState, cx: &mut Context<AfterlifeApp>) -> AnyEleme
                             "Workspace",
                             SpacePx::S12,
                             st.active_tab == TabId::Workspace,
-                            |st, _, _| st.active_tab = TabId::Workspace,
+                            |st, _, _| st.select_tab(TabId::Workspace),
                             cx,
                         ))
                         .child(nav_item(
@@ -72,58 +72,25 @@ pub fn render_top_bar(st: &AppState, cx: &mut Context<AfterlifeApp>) -> AnyEleme
                             "Sub-SM Templates",
                             SpacePx::S12,
                             st.active_tab == TabId::Templates,
-                            |st, _, _| st.active_tab = TabId::Templates,
-                            cx,
-                        ))
-                        .child(nav_item(
-                            st,
-                            "tab-guard",
-                            "Px & Align Guard",
-                            SpacePx::S12,
-                            st.active_tab == TabId::Guard,
-                            |st, _, _| st.active_tab = TabId::Guard,
-                            cx,
-                        ))
-                        .child(nav_item(
-                            st,
-                            "toggle-style",
-                            match st.style {
-                                UiStyle::LiquidGlass => "Liquid Glass",
-                                UiStyle::Wireframe => "Wire 0px",
-                            },
-                            SpacePx::S8,
-                            st.style == UiStyle::LiquidGlass,
-                            |st, _, _| st.toggle_style(),
+                            |st, _, _| st.select_tab(TabId::Templates),
                             cx,
                         ))
                         .child(nav_item(
                             st,
                             "toggle-glass-cfg",
-                            "Appearance Config",
+                            "Appearance",
                             SpacePx::S8,
                             st.settings_open,
-                            |st, _, _| st.settings_open = !st.settings_open,
+                            |st, _, _| st.toggle_appearance_drawer(),
                             cx,
                         ))
                         .child(nav_item(
                             st,
-                            "toggle-auto-fade",
-                            "Auto Fade",
+                            "toggle-inspector",
+                            "Inspector",
                             SpacePx::S8,
-                            st.fade_ui_when_inactive,
-                            |st, _, _| {
-                                st.fade_ui_when_inactive = !st.fade_ui_when_inactive;
-                                st.persist_appearance();
-                            },
-                            cx,
-                        ))
-                        .child(nav_item(
-                            st,
-                            "toggle-centerline",
-                            "Centerline",
-                            SpacePx::S8,
-                            st.show_centerline,
-                            |st, _, _| st.show_centerline = !st.show_centerline,
+                            st.inspector_open,
+                            |st, _, _| st.toggle_inspector_popover(),
                             cx,
                         )),
                 ),

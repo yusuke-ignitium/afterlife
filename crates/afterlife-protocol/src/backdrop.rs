@@ -121,7 +121,7 @@ pub struct BackdropGlassAppearance {
     pub radius: f32,
     pub tint_rgb: [u8; 3],
     pub pause_animation_when_inactive: bool,
-    pub fade_ui_when_inactive: bool,
+    pub fade_ui_after_secs: f32,
 }
 
 impl Default for BackdropGlassAppearance {
@@ -138,7 +138,7 @@ impl Default for BackdropGlassAppearance {
             radius: 6.6,
             tint_rgb: [7, 9, 14],
             pause_animation_when_inactive: false,
-            fade_ui_when_inactive: false,
+            fade_ui_after_secs: 0.0,
         }
     }
 }
@@ -158,7 +158,13 @@ impl BackdropGlassAppearance {
             radius: finite_clamp(self.radius, 0.0, 20.0, def.radius),
             tint_rgb: self.tint_rgb,
             pause_animation_when_inactive: self.pause_animation_when_inactive,
-            fade_ui_when_inactive: self.fade_ui_when_inactive,
+            fade_ui_after_secs: finite_clamp(
+                self.fade_ui_after_secs,
+                0.0,
+                60.0,
+                def.fade_ui_after_secs,
+            )
+            .round(),
         }
     }
 }
@@ -658,7 +664,7 @@ mod tests {
             radius: -3.0,
             tint_rgb: [12, 34, 56],
             pause_animation_when_inactive: true,
-            fade_ui_when_inactive: true,
+            fade_ui_after_secs: 999.0,
         }
         .clamped();
         let def = BackdropGlassAppearance::default();
@@ -673,7 +679,7 @@ mod tests {
         assert_eq!(glass.radius, 0.0);
         assert_eq!(glass.tint_rgb, [12, 34, 56]);
         assert!(glass.pause_animation_when_inactive);
-        assert!(glass.fade_ui_when_inactive);
+        assert_eq!(glass.fade_ui_after_secs, 60.0);
     }
 
     #[test]
@@ -696,7 +702,7 @@ mod tests {
         assert_eq!(g.blur_std_dev, 20.0);
         assert_eq!(g.tint_rgb, [1, 2, 3]);
         assert_eq!(g.disp_scale, BackdropGlassAppearance::default().disp_scale);
-        assert!(!g.fade_ui_when_inactive);
+        assert_eq!(g.fade_ui_after_secs, 0.0);
 
         let _ = fs::remove_dir_all(&dir);
     }

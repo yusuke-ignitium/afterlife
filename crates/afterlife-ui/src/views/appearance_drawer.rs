@@ -13,7 +13,7 @@ use gpui::{
 use crate::{
     app::{
         motion::{MotionSnapshot, lerp_rgba},
-        state::{AppState, GlassParamKey},
+        state::{AppState, GlassParamKey, GlassParamSection},
     },
     views::root::AfterlifeApp,
 };
@@ -31,7 +31,7 @@ const TINT_PRESETS: [(&str, [u8; 3]); 5] = [
     ("#D8E2F4", [216, 226, 244]),
 ];
 
-fn render_text_action(
+pub(crate) fn render_text_action(
     st: &AppState,
     motion: &MotionSnapshot,
     id: &'static str,
@@ -163,7 +163,7 @@ fn render_section_label(st: &AppState, title: &'static str, top_pad: SpacePx) ->
         .into_any_element()
 }
 
-fn render_toggle_row(
+pub(crate) fn render_toggle_row(
     st: &AppState,
     id: &'static str,
     label: &'static str,
@@ -196,7 +196,6 @@ fn render_toggle_row(
         .on_click(cx.listener(move |this, _, _, cx| {
             this.state.update(cx, |st, _| {
                 on_toggle(st);
-                st.persist_appearance();
             });
             cx.stop_propagation();
             cx.notify();
@@ -255,14 +254,10 @@ fn render_slider_row(
     let p = st.palette;
     let cell_for_canvas = cell.clone();
     let cell_for_down = cell.clone();
-    let (label, min, max, dp) = key.spec();
-    let val = key.get(&st.glass);
+    let (label, min, max, _) = key.spec();
+    let val = key.get(st);
     let frac = ((val - min) / (max - min)).clamp(0.0, 1.0);
-    let val_text = match dp {
-        0 => format!("{:.0}", val),
-        1 => format!("{:.1}", val),
-        _ => format!("{:.2}", val),
-    };
+    let val_text = key.format_value(val);
     let dimmed = key.is_dimmed(&st.glass);
     let grp = SharedString::from(format!("slider-grp-{}", idx));
     let thumb_size = if is_dragging { 10.0 } else { 8.0 };
@@ -495,6 +490,7 @@ pub fn render_appearance_drawer(
                         st.glass.bg_apple_music_artwork_enabled =
                             !st.glass.bg_apple_music_artwork_enabled;
                         st.refresh_palette();
+                        st.persist_appearance();
                     },
                     cx,
                 ))
@@ -507,6 +503,7 @@ pub fn render_appearance_drawer(
                     |st| {
                         st.glass.bg_youtube_mirror_enabled = !st.glass.bg_youtube_mirror_enabled;
                         st.refresh_palette();
+                        st.persist_appearance();
                     },
                     cx,
                 ))
@@ -519,6 +516,7 @@ pub fn render_appearance_drawer(
                     |st| {
                         st.glass.bg_image_enabled = !st.glass.bg_image_enabled;
                         st.refresh_palette();
+                        st.persist_appearance();
                     },
                     cx,
                 ))
@@ -526,7 +524,7 @@ pub fn render_appearance_drawer(
                     app.slider_bounds
                         .iter()
                         .enumerate()
-                        .filter(|(_, (key, _))| key.is_backdrop_param())
+                        .filter(|(_, (key, _))| key.section() == GlassParamSection::Backdrop)
                         .map(|(idx, (key, cell))| {
                             render_slider_row(st, idx, *key, cell, dragging_key == Some(*key), cx)
                         }),
@@ -536,24 +534,22 @@ pub fn render_appearance_drawer(
                     app.slider_bounds
                         .iter()
                         .enumerate()
-                        .filter(|(_, (key, _))| !key.is_backdrop_param())
+                        .filter(|(_, (key, _))| key.section() == GlassParamSection::Surface)
                         .map(|(idx, (key, cell))| {
                             render_slider_row(st, idx, *key, cell, dragging_key == Some(*key), cx)
                         }),
                 )
                 .child(render_tint_section(st, cx))
                 .child(render_section_label(st, "Inactive", SpacePx::S8))
-                .child(render_toggle_row(
-                    st,
-                    "toggle-fade-inactive",
-                    "Fade UI After 10s",
-                    st.fade_ui_when_inactive,
-                    motion.toggle_fade_inactive_progress,
-                    |st| {
-                        st.fade_ui_when_inactive = !st.fade_ui_when_inactive;
-                    },
-                    cx,
-                ))
+                .children(
+                    app.slider_bounds
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (key, _))| key.section() == GlassParamSection::Inactive)
+                        .map(|(idx, (key, cell))| {
+                            render_slider_row(st, idx, *key, cell, dragging_key == Some(*key), cx)
+                        }),
+                )
                 .child(render_toggle_row(
                     st,
                     "toggle-pause-inactive",
@@ -562,6 +558,7 @@ pub fn render_appearance_drawer(
                     motion.toggle_pause_progress,
                     |st| {
                         st.pause_animation_when_inactive = !st.pause_animation_when_inactive;
+                        st.persist_appearance();
                     },
                     cx,
                 )),
