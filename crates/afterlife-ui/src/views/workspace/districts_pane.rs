@@ -154,8 +154,6 @@ pub fn render_right_districts_pane(
                                 .as_ref()
                                 .and_then(|tid| st.engine.templates.get(tid));
 
-                            let district_id_cycle = district.id.clone();
-                            let stage_id_cycle = stage.id.clone();
                             let is_gate = stage.is_gate();
                             let is_terminal = stage.is_terminal();
 
@@ -245,65 +243,33 @@ pub fn render_right_districts_pane(
                                                 Some(t) => format!("Sub-SM: {}", t.name),
                                                 None => "Sub-SM: None".into(),
                                             };
-                                            let sub_pulse_key =
-                                                format!("sub-cycle-{}-{}", district.id, stage.id);
-                                            let sub_pulse = motion.pulse_strength(&sub_pulse_key);
-                                            let base_sub_fg = if sub_tmpl.is_some() {
+                                            let sub_fg = if sub_tmpl.is_some() {
                                                 p.purple
                                             } else {
                                                 p.text_tertiary
                                             };
-                                            let sub_fg =
-                                                lerp_rgba(base_sub_fg, p.text_primary, sub_pulse);
-                                            d.child(
-                                                single_line(
-                                                    RowHeightPx::H22,
-                                                    SpacePx::S0,
-                                                    SpacePx::S4,
-                                                    FontPx::F11,
-                                                    RadiusPx::R0,
-                                                    None,
-                                                    None,
-                                                    sub_fg,
-                                                    st.show_centerline,
-                                                    p.centerline,
-                                                    [
-                                                        div()
-                                                            .w(px(6.0))
-                                                            .h(px(6.0))
-                                                            .rounded(px(3.0))
-                                                            .bg(sub_fg)
-                                                            .into_any_element(),
-                                                        SharedString::from(tmpl_label)
-                                                            .into_any_element(),
-                                                    ],
-                                                )
-                                                .id(SharedString::from(sub_pulse_key.clone()))
-                                                .cursor_pointer()
-                                                .hover(move |s| s.text_color(p.text_primary))
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.state.update(cx, |st, _| {
-                                                        if let Some(next_tmpl) =
-                                                            st.next_sub_template_for_stage(
-                                                                &district_id_cycle,
-                                                                &stage_id_cycle,
-                                                            )
-                                                        {
-                                                            let _ = st.dispatch(
-                                                                EngineCommand::SetStageSubTemplate {
-                                                                    district_id: district_id_cycle.clone(),
-                                                                    stage_id: stage_id_cycle.clone(),
-                                                                    template_id: next_tmpl,
-                                                                    at: now_ms(),
-                                                                },
-                                                            );
-                                                        }
-                                                    });
-                                                    this.motion.trigger_pulse(sub_pulse_key.clone());
-                                                    cx.stop_propagation();
-                                                    cx.notify();
-                                                })),
-                                            )
+                                            d.child(single_line(
+                                                RowHeightPx::H22,
+                                                SpacePx::S0,
+                                                SpacePx::S4,
+                                                FontPx::F11,
+                                                RadiusPx::R0,
+                                                None,
+                                                None,
+                                                sub_fg,
+                                                st.show_centerline,
+                                                p.centerline,
+                                                [
+                                                    div()
+                                                        .w(px(6.0))
+                                                        .h(px(6.0))
+                                                        .rounded(px(3.0))
+                                                        .bg(sub_fg)
+                                                        .into_any_element(),
+                                                    SharedString::from(tmpl_label)
+                                                        .into_any_element(),
+                                                ],
+                                            ))
                                         }),
                                 )
                                 .when_some(sub_tmpl, |d, tmpl| {

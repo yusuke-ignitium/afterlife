@@ -1373,35 +1373,4 @@ impl AfterlifeEngine {
         )
         .map(|_| ())
     }
-
-    pub fn cycle_stage_sub_template(&mut self, district_id: &DistrictId, stage_id: &StageId) {
-        let Some(stage) = self.find_stage(district_id, stage_id) else {
-            return;
-        };
-        if !stage.supports_sub_machine() {
-            return;
-        }
-        let next_tmpl = match &stage.sub_template_id {
-            None => self.template_order.first().cloned(),
-            Some(cur) => {
-                let pos = self.template_order.iter().position(|id| id == cur);
-                match pos {
-                    Some(i) if i + 1 < self.template_order.len() => {
-                        Some(self.template_order[i + 1].clone())
-                    }
-                    _ => None,
-                }
-            }
-        };
-        let actor = self.local_actor();
-        let _ = self.apply(
-            &actor,
-            EngineCommand::SetStageSubTemplate {
-                district_id: district_id.clone(),
-                stage_id: stage_id.clone(),
-                template_id: next_tmpl,
-                at: now_ms(),
-            },
-        );
-    }
 }

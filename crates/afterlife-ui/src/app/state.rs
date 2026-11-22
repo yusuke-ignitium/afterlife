@@ -8,8 +8,7 @@ use std::{
 };
 
 use afterlife_core::{
-    Actor, AfterlifeEngine, CommandId, DistrictId, EngineCommand, Job, JobEvent, JobId, OwnerId,
-    StageId, SubMachineTemplateId, TimestampMs,
+    Actor, AfterlifeEngine, CommandId, EngineCommand, Job, JobEvent, JobId, OwnerId, TimestampMs,
 };
 use afterlife_daemon::AppDaemonState;
 use afterlife_design::{GlassSettings, Palette, UiStyle};
@@ -476,32 +475,6 @@ impl AppState {
             .apply(&actor, command)
             .map_err(|e| e.to_string())?;
         Ok(extract_job(&events))
-    }
-
-    pub fn next_sub_template_for_stage(
-        &self,
-        district_id: &DistrictId,
-        stage_id: &StageId,
-    ) -> Option<Option<SubMachineTemplateId>> {
-        let district = self.engine.find_district(district_id)?;
-        let stage = district
-            .active_spec()
-            .stages
-            .iter()
-            .find(|s| &s.id == stage_id)?;
-        let current = stage.sub_template_id.as_ref();
-        let ids: Vec<SubMachineTemplateId> = self.engine.templates.keys().cloned().collect();
-        let next = match current {
-            None => ids.first().cloned(),
-            Some(cur) => {
-                let pos = ids.iter().position(|id| id == cur);
-                match pos {
-                    Some(i) if i + 1 < ids.len() => Some(ids[i + 1].clone()),
-                    _ => None,
-                }
-            }
-        };
-        Some(next)
     }
 
     pub fn sync_active_display(
