@@ -1,22 +1,22 @@
 use afterlife_core::{PhilosophyProposal, Principle, ProposalId, SpecProposal, StageDef};
-use afterlife_design::{
-    FadePx, FontPx, GlassSurface, RadiusPx, RowHeightPx, ScrollFadeExt, SpacePx, single_line,
-    with_alpha,
-};
+use afterlife_design::{FontPx, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha};
 use gpui::{
-    AnyElement, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder,
-    px,
+    AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, div,
+    prelude::FluentBuilder, px,
 };
 
 use crate::{
-    app::{motion::MotionSnapshot, state::AppState, window_state::DEFAULT_DETAIL_HEIGHT_PX},
-    components::controls::chip_btn,
+    app::{motion::MotionSnapshot, state::AppState},
     views::{
-        root::{AfterlifeApp, DetailResizeDrag},
+        root::AfterlifeApp,
         templates_view::render_template_proposal_body,
-        workspace::proposals_list::{
-            DiffMark, classify_principle_diff, classify_stage_diff, removed_stage_ids,
+        workspace::{
+            detail_sheet::{
+                DetailSheetChrome, borderless_action_chip, render_detail_sheet_frame,
+            },
+            proposals_list::{
+                DiffMark, classify_principle_diff, classify_stage_diff, removed_stage_ids,
+            },
         },
     },
 };
@@ -293,10 +293,6 @@ pub(super) fn render_proposal_detail_sheet(
     cx: &mut Context<AfterlifeApp>,
 ) -> Option<AnyElement> {
     let p = st.palette;
-    let detail_t = motion.detail_progress;
-    let swap_t = motion.detail_swap_progress;
-    let inner_pt = (1.0 - detail_t) * 6.0 + (1.0 - swap_t) * 2.0;
-
     let phil_prop = st
         .engine
         .philosophy_proposals
@@ -361,237 +357,108 @@ pub(super) fn render_proposal_detail_sheet(
         .find_district(&afterlife_core::DistrictId::from(scope_val.as_str()))
         .map(|d| d.name.clone())
         .unwrap_or_else(|| scope_val.clone());
-    let card_border = if is_resizing_detail {
-        with_alpha(p.accent, 0.58)
-    } else {
-        p.border_rim
-    };
-    let grip_color = if is_resizing_detail {
-        with_alpha(p.accent, 0.85)
-    } else {
-        with_alpha(p.text_primary, 0.16)
-    };
-    let grip_hover = with_alpha(p.text_primary, 0.44);
     let pid_approve = proposal_id.clone();
 
-    Some(
-        GlassSurface::sheet(&p, &st.glass)
-            .border(Some(card_border))
-            .build()
-            .id("left-proposal-detail-sheet")
-            .absolute()
-            .left(SpacePx::S4.px())
-            .right(SpacePx::S4.px())
-            .bottom(SpacePx::S4.px())
-            .h(px(detail_target_h * detail_t))
-            .overflow_hidden()
-            .opacity(detail_t)
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+    let mut body_nodes: Vec<AnyElement> = vec![
+        div()
+            .flex()
+            .flex_col()
+            .gap(SpacePx::S4.px())
+            .child(meta_row(st, scope_label, scope_val))
+            .child(meta_row(st, "Kind", kind_label.to_string()))
+            .child(meta_row(st, "Version", version_str))
+            .when(!fb_ids.is_empty(), |d| {
+                let joined = fb_ids
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                d.child(meta_row(st, "Feedback", joined))
+            })
+            .into_any_element(),
+    ];
+
+    if let Some(new_name) = rename {
+        body_nodes.push(
+            div()
+                .px(SpacePx::S8.px())
+                .py(SpacePx::S4.px())
+                .rounded(p.radius_f32(&st.glass, 0.55))
+                .bg(with_alpha(p.amber, 0.12))
+                .text_size(FontPx::F11.px())
+                .text_color(p.amber)
+                .child(SharedString::from(format!(
+                    "District Rename: {current_district_name} → {new_name}"
+                )))
+                .into_any_element(),
+        );
+    }
+
+    body_nodes.push(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
             .child(
                 div()
-                    .id("proposal-resize-handle")
-                    .group("proposal-resize-grp")
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(12.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor(CursorStyle::ResizeUpDown)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                            if ev.click_count == 2 {
-                                this.detail_resize = None;
-                                this.state.update(cx, |st, _| {
-                                    st.detail_height = DEFAULT_DETAIL_HEIGHT_PX;
-                                });
-                                this.persist_window_state(window, cx);
-                            } else {
-                                this.detail_resize = Some(DetailResizeDrag {
-                                    start_mouse_y: f32::from(ev.position.y),
-                                    start_height: detail_target_h,
-                                });
-                            }
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    )
-                    .child(
-                        div()
-                            .w(px(if is_resizing_detail { 48.0 } else { 32.0 }))
-                            .h(px(2.0))
-                            .rounded(px(1.0))
-                            .bg(grip_color)
-                            .group_hover("proposal-resize-grp", move |s| {
-                                s.w(px(44.0)).bg(grip_hover)
-                            }),
-                    ),
+                    .text_size(FontPx::F11.px())
+                    .text_color(p.text_tertiary)
+                    .child("Rationale"),
             )
             .child(
                 div()
-                    .id("left-proposal-scroll")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .overflow_fade_bottom(FadePx::F16)
-                    .pt(px(inner_pt))
-                    .pb(SpacePx::S12.px())
-                    .opacity(0.72 + 0.28 * swap_t)
-                    .gap(SpacePx::S12.px())
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .child(single_line(
-                                RowHeightPx::H28,
-                                SpacePx::S0,
-                                SpacePx::S4,
-                                FontPx::F14,
-                                p.radius(RadiusPx::R4),
-                                None,
-                                None,
-                                p.text_primary,
-                                st.show_centerline,
-                                p.centerline,
-                                [SharedString::from("Proposal").into_any_element()],
-                            ))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(SpacePx::S12.px())
-                                    .child(single_line(
-                                        RowHeightPx::H22,
-                                        SpacePx::S0,
-                                        SpacePx::S4,
-                                        FontPx::F11,
-                                        RadiusPx::R0,
-                                        None,
-                                        None,
-                                        p.accent,
-                                        st.show_centerline,
-                                        p.centerline,
-                                        [SharedString::from(proposal_id.to_string())
-                                            .into_any_element()],
-                                    ))
-                                    .child(
-                                        single_line(
-                                            RowHeightPx::H22,
-                                            SpacePx::S4,
-                                            SpacePx::S0,
-                                            FontPx::F11,
-                                            RadiusPx::R0,
-                                            None,
-                                            None,
-                                            p.text_tertiary,
-                                            st.show_centerline,
-                                            p.centerline,
-                                            [SharedString::from("Close").into_any_element()],
-                                        )
-                                        .id("proposal-detail-close")
-                                        .cursor_pointer()
-                                        .hover(move |s| s.text_color(p.text_primary))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.state.update(cx, |st, _| st.close_detail());
-                                            cx.notify();
-                                        })),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(SpacePx::S4.px())
-                            .child(meta_row(st, scope_label, scope_val))
-                            .child(meta_row(st, "Kind", kind_label.to_string()))
-                            .child(meta_row(st, "Version", version_str))
-                            .when(!fb_ids.is_empty(), |d| {
-                                let joined = fb_ids
-                                    .iter()
-                                    .map(ToString::to_string)
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                d.child(meta_row(st, "Feedback", joined))
-                            }),
-                    )
-                    .when_some(rename, |d, new_name| {
-                        d.child(
-                            div()
-                                .px(SpacePx::S8.px())
-                                .py(SpacePx::S4.px())
-                                .rounded(p.radius_f32(&st.glass, 0.55))
-                                .bg(with_alpha(p.amber, 0.12))
-                                .text_size(FontPx::F11.px())
-                                .text_color(p.amber)
-                                .child(SharedString::from(format!(
-                                    "District Rename: {current_district_name} → {new_name}"
-                                ))),
-                        )
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .child(
-                                div()
-                                    .text_size(FontPx::F11.px())
-                                    .text_color(p.text_tertiary)
-                                    .child("Rationale"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(FontPx::F12.px())
-                                    .text_color(p.text_secondary)
-                                    .child(SharedString::from(rationale)),
-                            ),
-                    )
-                    .child(body_el)
-                    .when_some(st.proposal_error.clone(), |d, err| {
-                        d.child(
-                            div()
-                                .px(SpacePx::S8.px())
-                                .py(SpacePx::S4.px())
-                                .rounded(p.radius_f32(&st.glass, 0.55))
-                                .bg(with_alpha(p.coral, 0.14))
-                                .text_size(FontPx::F11.px())
-                                .text_color(p.coral)
-                                .child(SharedString::from(err)),
-                        )
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap(SpacePx::S8.px())
-                            .pt(SpacePx::S4.px())
-                            .child(chip_btn(
-                                st,
-                                "proposal-approve-btn",
-                                "Approve",
-                                RowHeightPx::H28,
-                                SpacePx::S12,
-                                FontPx::F12,
-                                true,
-                                move |st, _, _| {
-                                    let _ = st.approve_proposal(pid_approve.clone());
-                                },
-                                cx,
-                            )),
-                    ),
+                    .text_size(FontPx::F12.px())
+                    .text_color(p.text_secondary)
+                    .child(SharedString::from(rationale)),
             )
             .into_any_element(),
-    )
+    );
+    body_nodes.push(body_el);
+
+    let footer_actions = Some(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .gap(SpacePx::S8.px())
+            .child(borderless_action_chip(
+                st,
+                "proposal-approve-btn",
+                "Approve",
+                p.active_bg,
+                p.accent,
+                None,
+                move |st| {
+                    let _ = st.approve_proposal(pid_approve.clone());
+                },
+                cx,
+            ))
+            .into_any_element(),
+    );
+
+    let chrome = DetailSheetChrome {
+        sheet_id: "left-proposal-detail-sheet",
+        resize_handle_id: "proposal-resize-handle",
+        resize_group_id: "proposal-resize-grp",
+        scroll_id: "left-proposal-scroll",
+        close_id: "proposal-detail-close",
+        title: "Proposal Detail",
+        item_id: proposal_id.to_string(),
+        item_id_color: p.accent,
+        detail_target_h,
+        is_resizing_detail,
+    };
+
+    Some(render_detail_sheet_frame(
+        st,
+        motion,
+        chrome,
+        body_nodes,
+        st.proposal_error.clone(),
+        footer_actions,
+        cx,
+    ))
 }
 
