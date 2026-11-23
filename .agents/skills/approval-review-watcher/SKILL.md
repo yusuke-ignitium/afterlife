@@ -93,3 +93,12 @@ Present a concise review summary containing:
 2. **PR & CI Status**: PR link, merge/draft state, head SHA match, and check results (or explicit note that no PR exists).
 3. **Observed Facts (only if issues exist)**: A copy-paste-ready Rework note listing **strictly observed anomalies and facts** without prescribing implementation approaches.
 4. **Verified Points**: Brief confirmation of invariants checked, plus confirmation that the watcher has been re-armed from `<latest_seq>`.
+
+### 7. Post-Merge Sync, Build, and Relaunch (Only When Operator Requests Merge)
+
+Never merge on your own. Whenever the human operator explicitly asks to merge an approved PR or branch into `main`, always complete the full local delivery loop through app relaunch:
+
+1. Merge the PR (`gh pr merge <pr_number> --merge`) or fast-forward/merge the branch into `main` and sync local `main` (`git pull --ff-only origin main`).
+2. Verify the merged `main` passes the full suite (`./scripts/test-fast.sh`).
+3. Release-build, package, and verify the desktop app signature (`./scripts/bundle-macos.sh --no-launch` followed by `codesign --verify --deep --strict dist/Afterlife.app`).
+4. Stop any running `Afterlife` process and relaunch `dist/Afterlife.app` (or run `./scripts/bundle-macos.sh` directly) so the operator immediately sees the merged build live.
