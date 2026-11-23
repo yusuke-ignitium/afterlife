@@ -36,6 +36,10 @@ path = "src/bin/job_stopper_demo.rs"
 name = "detail-footer-demo"
 path = "src/bin/detail_footer_demo.rs"
 
+[[bin]]
+name = "district-compact-demo"
+path = "src/bin/district_compact_demo.rs"
+
 [dependencies]
 afterlife-design = { path = "../../crates/afterlife-design" }
 gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }
