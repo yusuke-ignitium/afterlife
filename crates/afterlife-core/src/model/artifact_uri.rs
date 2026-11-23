@@ -16,6 +16,103 @@ pub enum ParsedArtifactUri {
     Blob(ParsedBlobUri),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PullRequestRef {
+    pub repo: String,
+    pub number: u64,
+}
+
+impl PullRequestRef {
+    pub fn display_label(&self) -> String {
+        format!("{} #{}", self.repo, self.number)
+    }
+}
+
+fn split_http_url_host_and_segments(uri: &str) -> Option<(String, String, Vec<&str>)> {
+    let trimmed = uri.trim();
+    if !is_openable_url(trimmed) {
+        return None;
+    }
+    let (scheme, rest) = trimmed.split_once("://")?;
+    let scheme_lower = scheme.to_ascii_lowercase();
+    if scheme_lower != "http" && scheme_lower != "https" {
+        return None;
+    }
+    let no_frag = rest.split('#').next().unwrap_or(rest);
+    let no_query = no_frag.split('?').next().unwrap_or(no_frag);
+    let (host, path) = no_query.split_once('/')?;
+    let host_lower = host.trim().to_ascii_lowercase();
+    if host_lower.is_empty() {
+        return None;
+    }
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    Some((scheme_lower, host_lower, segments))
+}
+
+fn parse_positive_pr_number(raw: &str) -> Option<u64> {
+    let num = raw.parse::<u64>().ok()?;
+    (num > 0).then_some(num)
+}
+
+fn extract_pr_repo_and_number<'a>(segments: &'a [&'a str]) -> Option<(&'a str, u64, usize)> {
+    for (idx, seg) in segments.iter().enumerate() {
+        if (*seg == "pull" || *seg == "pulls" || *seg == "pull-requests")
+            && idx >= 2
+            && let Some(num) = segments.get(idx + 1).and_then(|s| parse_positive_pr_number(s))
+        {
+            let repo = segments[idx - 1];
+            if !repo.is_empty() {
+                return Some((repo, num, idx + 2));
+            }
+        }
+        if *seg == "merge_requests"
+            && idx >= 2
+            && let Some(num) = segments.get(idx + 1).and_then(|s| parse_positive_pr_number(s))
+        {
+            let repo_idx = if segments[idx - 1] == "-" {
+                idx.checked_sub(2)?
+            } else {
+                idx - 1
+            };
+            let repo = segments[repo_idx];
+            if !repo.is_empty() {
+                return Some((repo, num, idx + 2));
+            }
+        }
+        if *seg == "pullrequest"
+            && idx >= 2
+            && segments[idx - 2] == "_git"
+            && let Some(num) = segments.get(idx + 1).and_then(|s| parse_positive_pr_number(s))
+        {
+            let repo = segments[idx - 1];
+            if !repo.is_empty() {
+                return Some((repo, num, idx + 2));
+            }
+        }
+    }
+    None
+}
+
+pub fn parse_pull_request_ref(uri: &str) -> Option<PullRequestRef> {
+    let (_, _, segments) = split_http_url_host_and_segments(uri)?;
+    let (repo, number, _) = extract_pr_repo_and_number(&segments)?;
+    Some(PullRequestRef {
+        repo: repo.to_string(),
+        number,
+    })
+}
+
+pub fn canonical_pull_request_key(uri: &str) -> String {
+    if let Some((scheme, host, segments)) = split_http_url_host_and_segments(uri) {
+        let kept = match extract_pr_repo_and_number(&segments) {
+            Some((_, _, base_len)) => &segments[..base_len],
+            None => &segments[..],
+        };
+        return format!("{scheme}://{host}/{}", kept.join("/"));
+    }
+    uri.trim().trim_end_matches('/').to_string()
+}
+
 pub fn sanitize_owner_segment(raw: &str) -> String {
     let cleaned: String = raw
         .chars()
@@ -193,5 +290,56 @@ mod tests {
         assert_eq!(sanitize_blob_filename("../../etc/passwd"), "passwd");
         assert_eq!(sanitize_blob_filename("..."), "artifact.bin");
         assert_eq!(sanitize_blob_filename("a b/report (1).json"), "report__1_.json");
+    }
+
+    #[test]
+    fn parses_pull_request_refs_and_canonicalizes_duplicates_across_forges() {
+        let gh = parse_pull_request_ref("https://github.com/org/afterlife/pull/14").unwrap();
+        assert_eq!(gh.display_label(), "afterlife #14");
+
+        let gh_files =
+            parse_pull_request_ref("https://GITHUB.COM/org/afterlife/pull/14/files?w=1#diff-0")
+                .unwrap();
+        assert_eq!(gh_files, gh);
+        assert_eq!(
+            canonical_pull_request_key("https://github.com/org/afterlife/pull/14"),
+            canonical_pull_request_key("https://GITHUB.COM/org/afterlife/pull/14/files?w=1#diff-0")
+        );
+
+        let gitea = parse_pull_request_ref("https://code.example.com/team/sdk/pulls/7/").unwrap();
+        assert_eq!(gitea.display_label(), "sdk #7");
+
+        let gitlab = parse_pull_request_ref(
+            "https://gitlab.com/org/sub/afterlife-cloud/-/merge_requests/42",
+        )
+        .unwrap();
+        assert_eq!(gitlab.display_label(), "afterlife-cloud #42");
+
+        let bitbucket = parse_pull_request_ref(
+            "https://bitbucket.org/workspace/design-tokens/pull-requests/18/diff",
+        )
+        .unwrap();
+        assert_eq!(bitbucket.display_label(), "design-tokens #18");
+
+        let ado = parse_pull_request_ref(
+            "https://dev.azure.com/org/proj/_git/control-plane/pullrequest/309",
+        )
+        .unwrap();
+        assert_eq!(ado.display_label(), "control-plane #309");
+
+        for invalid in [
+            "https://github.com/org/afterlife/pull/0",
+            "https://github.com/org/afterlife/issues/14",
+            "https://github.com/org/afterlife/pull/not-a-number",
+            "javascript:alert(1)",
+            "file:///org/afterlife/pull/1",
+            "blob://local-owner/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/pr.md",
+            "linear://org/issue/ENG-1",
+        ] {
+            assert!(
+                parse_pull_request_ref(invalid).is_none(),
+                "expected PR URI `{invalid}` not to parse"
+            );
+        }
     }
 }
