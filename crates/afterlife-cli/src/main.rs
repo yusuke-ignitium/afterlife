@@ -149,4 +149,38 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn districts_propose_create_uses_same_repeatable_anti_pattern_and_heuristic_flags_as_philosophy() {
+        let args: Vec<String> = [
+            "districts",
+            "propose-create",
+            "--name",
+            "DISTRICT 06",
+            "--summary",
+            "Summary",
+            "--principles-json",
+            r#"[{"id":"P1","title":"T","statement":"S","rationale":"R"}]"#,
+            "--anti-pattern",
+            "No shortcuts",
+            "--anti-pattern",
+            "No guesses",
+            "--heuristic",
+            "Measure first",
+            "--stages-json",
+            "[]",
+            "--rationale",
+            "Consistency check",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (spec, consumed) = find_spec(&args).unwrap();
+        let (payload, _) = parse_spec_args(spec, &args[consumed..]).unwrap();
+        assert_eq!(
+            payload["anti_patterns"],
+            json!(["No shortcuts", "No guesses"])
+        );
+        assert_eq!(payload["decision_heuristics"], json!(["Measure first"]));
+    }
 }

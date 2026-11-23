@@ -516,6 +516,18 @@ mod tests {
         };
         let items = collect_pending_proposals(&st.engine);
         assert!(items.iter().any(|i| i.id == create_pid && i.kind == ProposalKindTag::District && i.version_label == "Create"));
+        let create_header =
+            crate::views::workspace::proposal_detail::build_proposal_header(&st.engine, &create_pid)
+                .expect("create proposal header");
+        assert_eq!(
+            create_header.meta_rows,
+            vec![
+                ("Name", "DISTRICT 06 - UI Test".to_string()),
+                ("District ID", "Auto-assigned".to_string()),
+                ("Kind", "District Lifecycle".to_string()),
+                ("Action", "Create District".to_string()),
+            ]
+        );
 
         st.open_proposal_detail(create_pid.clone());
         st.approve_proposal(create_pid).unwrap();

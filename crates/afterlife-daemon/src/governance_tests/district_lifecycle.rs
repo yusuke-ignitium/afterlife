@@ -125,6 +125,11 @@ impl TestServer {
     }
 
     async fn issue_agent_token(&self) -> String {
+        self.issue_scoped_agent_token("jobs:read%20jobs:work%20jobs:create")
+            .await
+    }
+
+    async fn issue_scoped_agent_token(&self, encoded_scope: &str) -> String {
         let (st, reg) = self
             .http_json(
                 Method::POST,
@@ -142,7 +147,7 @@ impl TestServer {
         let verifier = "district-pkce-verifier-9999999999999999999999999999999";
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
         let auth_path = format!(
-            "/oauth/authorize?client_id={client_id}&redirect_uri=http://127.0.0.1:8787/cb&response_type=code&code_challenge={challenge}&code_challenge_method=S256&scope=jobs:read%20jobs:work%20jobs:create&state=e2e&auto_approve=1"
+            "/oauth/authorize?client_id={client_id}&redirect_uri=http://127.0.0.1:8787/cb&response_type=code&code_challenge={challenge}&code_challenge_method=S256&scope={encoded_scope}&state=e2e&auto_approve=1"
         );
         let (st, headers, _) = self
             .send_raw(Method::GET, &auth_path, None, None, Vec::new())
@@ -364,6 +369,58 @@ async fn mcp_agent_can_propose_district_lifecycle_but_only_human_can_approve_and
     let (ok, list_restored) = srv.mcp_call(&agent_tok, "districts_list", json!({})).await;
     assert!(ok);
     assert!(list_restored["districts"].as_array().unwrap().iter().any(|d| d["id"] == "DIST-006" && d["archived"] == false));
+
+    let scoped_tok = srv
+        .issue_scoped_agent_token("jobs:read%20jobs:work%20jobs:create%20district:DIST-001")
+        .await;
+    let create_payload = json!({
+        "district_id": "DIST-009",
+        "name": "Forbidden Scoped Lane",
+        "summary": "Should be denied",
+        "principles": [{"id": "P-S", "title": "T", "statement": "S", "rationale": "R"}],
+        "stages": [
+            {"id": "work", "label": "Work", "runner": "AI", "runner_kind": "Ai", "kind": "Work", "procedure": "P", "gate_rubric": null, "sub_template_id": null, "next": ["approve"], "rework_to": null},
+            {"id": "approve", "label": "Approve", "runner": "Human", "runner_kind": "Human", "kind": "ApprovalGate", "procedure": "P", "gate_rubric": {"checks": ["OK"], "auto_verify_by_llm": false, "requires_human_approval": true}, "sub_template_id": null, "next": ["done"], "rework_to": "work"},
+            {"id": "done", "label": "Done", "runner": "System", "runner_kind": "Human", "kind": "Terminal", "procedure": "P", "gate_rubric": null, "sub_template_id": null, "next": [], "rework_to": null}
+        ],
+        "rationale": "Attempt create from scoped token"
+    });
+    let (ok_sc_create, err_sc_create) = srv
+        .mcp_call(&scoped_tok, "districts_propose_create", create_payload.clone())
+        .await;
+    assert!(!ok_sc_create, "district-scoped token must not propose create: {err_sc_create}");
+    assert_eq!(err_sc_create["code"], "district_scope_denied");
+
+    let mut auto_create_payload = create_payload.clone();
+    auto_create_payload.as_object_mut().unwrap().remove("district_id");
+    let (ok_sc_auto, err_sc_auto) = srv
+        .mcp_call(&scoped_tok, "districts_propose_create", auto_create_payload)
+        .await;
+    assert!(!ok_sc_auto, "district-scoped token must not propose auto-id create: {err_sc_auto}");
+    assert_eq!(err_sc_auto["code"], "district_scope_denied");
+
+    let (ok_unscoped_create, _) = srv
+        .mcp_call(&agent_tok, "districts_propose_create", create_payload)
+        .await;
+    assert!(ok_unscoped_create);
+    let (ok_unscoped_arch6, _) = srv
+        .mcp_call(&agent_tok, "districts_propose_archive", json!({ "district_id": "DIST-006", "rationale": "Archive D6" }))
+        .await;
+    assert!(ok_unscoped_arch6);
+    let (ok_scoped_arch1, _) = srv
+        .mcp_call(&scoped_tok, "districts_propose_archive", json!({ "district_id": "DIST-001", "rationale": "Archive D1" }))
+        .await;
+    assert!(ok_scoped_arch1);
+
+    let (ok_sc_list, sc_list) = srv.mcp_call(&scoped_tok, "districts_list", json!({})).await;
+    assert!(ok_sc_list);
+    let visible_districts = sc_list["districts"].as_array().unwrap();
+    assert_eq!(visible_districts.len(), 1);
+    assert_eq!(visible_districts[0]["id"], "DIST-001");
+    let visible_props = sc_list["pending_district_proposals"].as_array().unwrap();
+    assert_eq!(visible_props.len(), 1, "scoped token leaked out-of-scope proposals: {visible_props:?}");
+    assert_eq!(visible_props[0]["action"]["action"], "archive");
+    assert_eq!(visible_props[0]["action"]["district_id"], "DIST-001");
 
     srv.stop().await;
 }

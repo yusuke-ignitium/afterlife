@@ -1,8 +1,8 @@
 use crate::{
     engine::{AfterlifeEngine, command::EngineCommand, policy::validate_lease_ttl},
     error::TransitionError,
-    ids::FeedbackId,
-    model::{ParsedArtifactUri, parse_artifact_uri},
+    ids::{DistrictId, FeedbackId},
+    model::{ParsedArtifactUri, Principle, parse_artifact_uri},
 };
 
 fn require_non_empty(field: &str, value: &str) -> Result<(), TransitionError> {
@@ -34,6 +34,34 @@ fn validate_sha256(sha: &str) -> Result<(), TransitionError> {
     Ok(())
 }
 
+fn require_active_district(
+    engine: &AfterlifeEngine,
+    district_id: &DistrictId,
+) -> Result<(), TransitionError> {
+    let district = engine
+        .find_district(district_id)
+        .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
+    if district.archived {
+        return Err(TransitionError::DistrictArchived(district_id.clone()));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_principles(principles: &[Principle]) -> Result<(), TransitionError> {
+    if principles.is_empty() {
+        return Err(TransitionError::InvalidInput {
+            field: "principles".into(),
+            reason: "must contain at least one principle".into(),
+        });
+    }
+    for (idx, p) in principles.iter().enumerate() {
+        require_non_empty(&format!("principles[{idx}].id"), &p.id)?;
+        require_non_empty(&format!("principles[{idx}].title"), &p.title)?;
+        require_non_empty(&format!("principles[{idx}].statement"), &p.statement)?;
+    }
+    Ok(())
+}
+
 fn validate_feedback_refs(
     engine: &AfterlifeEngine,
     ids: &[FeedbackId],
@@ -61,9 +89,7 @@ pub fn validate_command(
         } => {
             require_non_empty("title", title)?;
             if let Some(did) = target_district_hint {
-                if engine.find_district(did).is_none() {
-                    return Err(TransitionError::DistrictNotFound(did.clone()));
-                }
+                require_active_district(engine, did)?;
             }
             Ok(())
         }
@@ -88,9 +114,7 @@ pub fn validate_command(
                 require_non_empty("title", t)?;
             }
             if let Some(did) = target_district_hint {
-                if engine.find_district(did).is_none() {
-                    return Err(TransitionError::DistrictNotFound(did.clone()));
-                }
+                require_active_district(engine, did)?;
             }
             Ok(())
         }
@@ -165,17 +189,7 @@ pub fn validate_command(
             }
             require_non_empty("summary", summary)?;
             require_non_empty("rationale", rationale)?;
-            if principles.is_empty() {
-                return Err(TransitionError::InvalidInput {
-                    field: "principles".into(),
-                    reason: "must contain at least one principle".into(),
-                });
-            }
-            for (idx, p) in principles.iter().enumerate() {
-                require_non_empty(&format!("principles[{idx}].id"), &p.id)?;
-                require_non_empty(&format!("principles[{idx}].title"), &p.title)?;
-                require_non_empty(&format!("principles[{idx}].statement"), &p.statement)?;
-            }
+            validate_principles(principles)?;
             validate_feedback_refs(engine, source_feedback_ids)?;
             Ok(())
         }
@@ -205,6 +219,35 @@ pub fn validate_command(
             require_non_empty("template_id", template_id.as_str())?;
             require_non_empty("name", name)?;
             require_non_empty("description", description)?;
+            require_non_empty("rationale", rationale)?;
+            validate_feedback_refs(engine, source_feedback_ids)?;
+            Ok(())
+        }
+        EngineCommand::ProposeDistrictCreate {
+            name,
+            summary,
+            principles,
+            rationale,
+            source_feedback_ids,
+            ..
+        } => {
+            require_non_empty("name", name)?;
+            require_non_empty("summary", summary)?;
+            require_non_empty("rationale", rationale)?;
+            validate_principles(principles)?;
+            validate_feedback_refs(engine, source_feedback_ids)?;
+            Ok(())
+        }
+        EngineCommand::ProposeDistrictArchive {
+            rationale,
+            source_feedback_ids,
+            ..
+        }
+        | EngineCommand::ProposeDistrictRestore {
+            rationale,
+            source_feedback_ids,
+            ..
+        } => {
             require_non_empty("rationale", rationale)?;
             validate_feedback_refs(engine, source_feedback_ids)?;
             Ok(())

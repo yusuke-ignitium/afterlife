@@ -43,6 +43,12 @@ pub fn authorize_command(
         return Err((StatusCode::FORBIDDEN, "insufficient_scope"));
     }
 
+    if matches!(cmd, EngineCommand::ProposeDistrictCreate { .. })
+        && !principal.scopes.allows_workspace_structure()
+    {
+        return Err((StatusCode::FORBIDDEN, "district_scope_denied"));
+    }
+
     let target_district = match cmd {
         EngineCommand::PullNextJob { district_id, .. }
         | EngineCommand::AssignJobToDistrict { district_id, .. }

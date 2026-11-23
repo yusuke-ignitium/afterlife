@@ -95,6 +95,11 @@ const FLAG_FENCING_OPT: FlagSpec = FlagSpec::opt("--fencing-token", "fencing_tok
 const FLAG_FENCING_REQ: FlagSpec = FlagSpec::req("--fencing-token", "fencing_token", FlagKind::U64);
 const FLAG_EXPECTED_REV: FlagSpec =
     FlagSpec::opt("--expected-revision", "expected_revision", FlagKind::U64);
+const FLAG_ANTI_PATTERN: FlagSpec = FlagSpec::rep("--anti-pattern", "anti_patterns", FlagKind::String);
+const FLAG_HEURISTIC: FlagSpec =
+    FlagSpec::rep("--heuristic", "decision_heuristics", FlagKind::String);
+const FLAG_FEEDBACK_ID: FlagSpec =
+    FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String);
 
 fn prepare_artifact_attach_payload(
     payload: &mut Map<String, Value>,
@@ -219,12 +224,12 @@ pub const TOOLMAP: &[ToolSpec] = &[
             FlagSpec::opt("--setup-by", "setup_by", FlagKind::String),
             FlagSpec::req("--summary", "summary", FlagKind::String),
             FlagSpec::req("--principles-json", "principles", FlagKind::Json),
-            FlagSpec::opt("--anti-patterns-json", "anti_patterns", FlagKind::Json),
-            FlagSpec::opt("--heuristics-json", "decision_heuristics", FlagKind::Json),
+            FLAG_ANTI_PATTERN,
+            FLAG_HEURISTIC,
             FlagSpec::req("--stages-json", "stages", FlagKind::Json),
             FlagSpec::opt("--changelog", "changelog", FlagKind::String),
             FlagSpec::req("--rationale", "rationale", FlagKind::String),
-            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_FEEDBACK_ID,
             FLAG_COMMAND_ID,
         ],
         default_runner: None,
@@ -237,7 +242,7 @@ pub const TOOLMAP: &[ToolSpec] = &[
         positionals: &[PositionalSpec::new("district_id", "district_id")],
         flags: &[
             FlagSpec::req("--rationale", "rationale", FlagKind::String),
-            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_FEEDBACK_ID,
             FLAG_COMMAND_ID,
         ],
         default_runner: None,
@@ -250,7 +255,7 @@ pub const TOOLMAP: &[ToolSpec] = &[
         positionals: &[PositionalSpec::new("district_id", "district_id")],
         flags: &[
             FlagSpec::req("--rationale", "rationale", FlagKind::String),
-            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_FEEDBACK_ID,
             FLAG_COMMAND_ID,
         ],
         default_runner: None,
@@ -475,9 +480,9 @@ pub const TOOLMAP: &[ToolSpec] = &[
             FlagSpec::req("--summary", "summary", FlagKind::String),
             FlagSpec::req("--rationale", "rationale", FlagKind::String),
             FlagSpec::req("--principles-json", "principles", FlagKind::Json),
-            FlagSpec::rep("--anti-pattern", "anti_patterns", FlagKind::String),
-            FlagSpec::rep("--heuristic", "decision_heuristics", FlagKind::String),
-            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_ANTI_PATTERN,
+            FLAG_HEURISTIC,
+            FLAG_FEEDBACK_ID,
             FLAG_COMMAND_ID,
         ],
         default_runner: None,

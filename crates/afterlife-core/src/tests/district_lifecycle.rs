@@ -139,6 +139,28 @@ fn district_create_archive_restore_requires_human_approval_and_enforces_guards()
     );
     assert!(matches!(dup_id, Err(TransitionError::DistrictAlreadyExists(_))));
 
+    let bad_fb_create = engine.apply(
+        &agent,
+        EngineCommand::ProposeDistrictCreate {
+            district_id: None,
+            name: "Bad Feedback District".into(),
+            setup_by: None,
+            summary: "Summary".into(),
+            principles: minimal_principles(),
+            anti_patterns: vec![],
+            decision_heuristics: vec![],
+            stages: minimal_valid_stages(),
+            changelog: "v1".into(),
+            rationale: "Test unknown feedback".into(),
+            source_feedback_ids: vec![FeedbackId::from("FB-NOPE")],
+            at: 1_900_000_000_250,
+        },
+    );
+    assert!(matches!(
+        bad_fb_create,
+        Err(TransitionError::InvalidInput { ref field, .. }) if field == "source_feedback_ids"
+    ));
+
     let prop_ev = engine
         .apply(
             &agent,
@@ -241,6 +263,20 @@ fn district_create_archive_restore_requires_human_approval_and_enforces_guards()
         )
         .unwrap();
 
+    let bad_fb_arch = engine.apply(
+        &agent,
+        EngineCommand::ProposeDistrictArchive {
+            district_id: new_dist_id.clone(),
+            rationale: "Archive with unknown feedback".into(),
+            source_feedback_ids: vec![FeedbackId::from("FB-UNKNOWN")],
+            at: 1_900_000_002_900,
+        },
+    );
+    assert!(matches!(
+        bad_fb_arch,
+        Err(TransitionError::InvalidInput { ref field, .. }) if field == "source_feedback_ids"
+    ));
+
     let arch_prop_ev = engine
         .apply(
             &agent,
@@ -295,7 +331,35 @@ fn district_create_archive_restore_requires_human_approval_and_enforces_guards()
     assert_eq!(archived_dist.spec_history.len(), 1);
     assert!(engine.active_districts().iter().all(|d| d.id != new_dist_id));
 
-    let q_job = engine.queue_preset_job("Blocked Job", Some(&new_dist_id));
+    assert!(matches!(
+        engine.apply(
+            &human,
+            EngineCommand::QueueJob {
+                title: "Hinted Archived Job".into(),
+                raw_input: "raw".into(),
+                target_district_hint: Some(new_dist_id.clone()),
+                at: 1_900_000_003_250,
+            }
+        ),
+        Err(TransitionError::DistrictArchived(_))
+    ));
+    let q_job = engine.queue_preset_job("Blocked Job", None);
+    assert!(matches!(
+        engine.apply(
+            &human,
+            EngineCommand::UpdateJob {
+                job_id: q_job.clone(),
+                title: None,
+                raw_input: None,
+                spec_summary: None,
+                target_district_hint: Some(new_dist_id.clone()),
+                expected_revision: None,
+                fencing_token: None,
+                at: 1_900_000_003_260,
+            }
+        ),
+        Err(TransitionError::DistrictArchived(_))
+    ));
     assert!(matches!(
         engine.apply(
             &human,
@@ -387,6 +451,20 @@ fn district_create_archive_restore_requires_human_approval_and_enforces_guards()
             }
         ),
         Err(TransitionError::DistrictNotArchived(_))
+    ));
+
+    let bad_fb_res = engine.apply(
+        &agent,
+        EngineCommand::ProposeDistrictRestore {
+            district_id: new_dist_id.clone(),
+            rationale: "Restore with unknown feedback".into(),
+            source_feedback_ids: vec![FeedbackId::from("FB-MISSING")],
+            at: 1_900_000_003_900,
+        },
+    );
+    assert!(matches!(
+        bad_fb_res,
+        Err(TransitionError::InvalidInput { ref field, .. }) if field == "source_feedback_ids"
     ));
 
     let res_prop_ev = engine

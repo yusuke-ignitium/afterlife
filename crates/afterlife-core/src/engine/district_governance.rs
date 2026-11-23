@@ -1,5 +1,5 @@
 use crate::{
-    engine::{AfterlifeEngine, validate::validate_stages},
+    engine::{AfterlifeEngine, validate::validate_stages, validation::validate_principles},
     error::TransitionError,
     ids::{
         DistrictId, FeedbackId, JobId, OwnerId, PhilosophyVersion, ProposalId, SpecVersion,
@@ -24,33 +24,6 @@ fn validate_district_id_format(id: &DistrictId) -> Result<DistrictId, Transition
         });
     }
     Ok(DistrictId::new(trimmed))
-}
-
-fn validate_philosophy_inputs(
-    summary: &str,
-    principles: &[Principle],
-) -> Result<(), TransitionError> {
-    if summary.trim().is_empty() {
-        return Err(TransitionError::InvalidInput {
-            field: "summary".into(),
-            reason: "must not be empty".into(),
-        });
-    }
-    if principles.is_empty() {
-        return Err(TransitionError::InvalidInput {
-            field: "principles".into(),
-            reason: "must include at least one principle".into(),
-        });
-    }
-    for pr in principles {
-        if pr.id.trim().is_empty() || pr.title.trim().is_empty() || pr.statement.trim().is_empty() {
-            return Err(TransitionError::InvalidInput {
-                field: "principles".into(),
-                reason: "each principle requires non-empty id, title, and statement".into(),
-            });
-        }
-    }
-    Ok(())
 }
 
 impl AfterlifeEngine {
@@ -140,19 +113,7 @@ impl AfterlifeEngine {
         at: TimestampMs,
     ) -> Result<Vec<JobEvent>, TransitionError> {
         let name = name.trim().to_string();
-        if name.is_empty() {
-            return Err(TransitionError::InvalidInput {
-                field: "name".into(),
-                reason: "must not be empty".into(),
-            });
-        }
         let rationale = rationale.trim().to_string();
-        if rationale.is_empty() {
-            return Err(TransitionError::InvalidInput {
-                field: "rationale".into(),
-                reason: "must not be empty".into(),
-            });
-        }
         let normalized_id = match district_id {
             Some(raw) => {
                 let valid = validate_district_id_format(&raw)?;
@@ -163,7 +124,6 @@ impl AfterlifeEngine {
             }
             None => None,
         };
-        validate_philosophy_inputs(&summary, &principles)?;
         let validation_id = normalized_id
             .clone()
             .unwrap_or_else(|| self.allocate_district_id());
@@ -368,7 +328,13 @@ impl AfterlifeEngine {
                         reason: "must not be empty".into(),
                     });
                 }
-                validate_philosophy_inputs(&philosophy.summary, &philosophy.principles)?;
+                if philosophy.summary.trim().is_empty() {
+                    return Err(TransitionError::InvalidInput {
+                        field: "summary".into(),
+                        reason: "must not be empty".into(),
+                    });
+                }
+                validate_principles(&philosophy.principles)?;
                 let final_id = match proposed_district_id {
                     Some(raw) => {
                         let valid = validate_district_id_format(&raw)?;

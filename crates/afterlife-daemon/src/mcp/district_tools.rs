@@ -67,7 +67,12 @@ pub(super) fn handle_districts_list(
                     })
                 })
                 .collect();
-            let pending_proposals = snap.engine.pending_district_proposals();
+            let pending_proposals: Vec<_> = snap
+                .engine
+                .pending_district_proposals()
+                .into_iter()
+                .filter(|p| principal.scopes.allows_district_proposal(&p.action))
+                .collect();
             rpc_ok(
                 id,
                 tool_text(
