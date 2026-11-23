@@ -4,9 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+doctest = false
+
 [[bin]]
 name = "afterlifed"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 afterlife-core = { path = "../afterlife-core" }

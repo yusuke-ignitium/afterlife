@@ -150,6 +150,9 @@ impl AfterlifeEngine {
         let district = self
             .find_district(&district_id)
             .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
+        if district.archived {
+            return Err(TransitionError::DistrictArchived(district_id));
+        }
         if district.active_philosophy_version != base_version {
             return Err(TransitionError::PhilosophyVersionConflict {
                 district_id,
@@ -222,6 +225,9 @@ impl AfterlifeEngine {
             .iter_mut()
             .find(|d| d.id == prop.district_id)
             .ok_or_else(|| TransitionError::DistrictNotFound(prop.district_id.clone()))?;
+        if district.archived {
+            return Err(TransitionError::DistrictArchived(prop.district_id));
+        }
         if district.active_philosophy_version != prop.base_version {
             return Err(TransitionError::PhilosophyVersionConflict {
                 district_id: prop.district_id,
@@ -271,6 +277,9 @@ impl AfterlifeEngine {
         let district = self
             .find_district(&district_id)
             .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
+        if district.archived {
+            return Err(TransitionError::DistrictArchived(district_id));
+        }
         if district.active_spec_version != base_version {
             return Err(TransitionError::SpecVersionConflict {
                 district_id,
@@ -348,6 +357,9 @@ impl AfterlifeEngine {
             .iter_mut()
             .find(|d| d.id == prop.district_id)
             .ok_or_else(|| TransitionError::DistrictNotFound(prop.district_id.clone()))?;
+        if district.archived {
+            return Err(TransitionError::DistrictArchived(prop.district_id));
+        }
         if district.active_spec_version != prop.base_version {
             return Err(TransitionError::SpecVersionConflict {
                 district_id: prop.district_id,

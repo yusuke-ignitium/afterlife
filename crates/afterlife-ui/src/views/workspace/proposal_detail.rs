@@ -1,4 +1,7 @@
-use afterlife_core::{PhilosophyProposal, Principle, ProposalId, SpecProposal, StageDef};
+use afterlife_core::{
+    DistrictProposal, DistrictProposalAction, PhilosophyProposal, Principle, ProposalId,
+    SpecProposal, StageDef,
+};
 use afterlife_design::{FontPx, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha};
 use gpui::{
     AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, div,
@@ -284,6 +287,216 @@ fn render_spec_body(st: &AppState, prop: &SpecProposal) -> AnyElement {
         .into_any_element()
 }
 
+fn district_action_banner(
+    st: &AppState,
+    district_id: &afterlife_core::DistrictId,
+    color: gpui::Rgba,
+    message: &'static str,
+) -> AnyElement {
+    let p = st.palette;
+    let name = st
+        .engine
+        .find_district(district_id)
+        .map(|d| d.name.clone())
+        .unwrap_or_else(|| district_id.to_string());
+    div()
+        .flex()
+        .flex_col()
+        .gap(SpacePx::S8.px())
+        .child(meta_row(st, "Target Name", name))
+        .child(
+            div()
+                .px(SpacePx::S8.px())
+                .py(SpacePx::S4.px())
+                .rounded(p.radius_f32(&st.glass, 0.55))
+                .bg(with_alpha(color, 0.12))
+                .text_size(FontPx::F11.px())
+                .text_color(color)
+                .child(message),
+        )
+        .into_any_element()
+}
+
+fn render_district_proposal_body(st: &AppState, prop: &DistrictProposal) -> AnyElement {
+    let p = st.palette;
+    match &prop.action {
+        DistrictProposalAction::Create {
+            setup_by,
+            philosophy,
+            spec,
+            ..
+        } => div()
+            .flex()
+            .flex_col()
+            .gap(SpacePx::S8.px())
+            .child(meta_row(st, "Setup By", setup_by.clone()))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(div().text_size(FontPx::F11.px()).text_color(p.text_tertiary).child("Initial Philosophy Summary"))
+                    .child(div().text_size(FontPx::F12.px()).text_color(p.text_primary).child(SharedString::from(philosophy.summary.clone()))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(SpacePx::S4.px())
+                    .child(div().text_size(FontPx::F11.px()).text_color(p.text_tertiary).child(SharedString::from(format!("Principles ({})", philosophy.principles.len()))))
+                    .children(philosophy.principles.iter().map(|pr| {
+                        div()
+                            .px(SpacePx::S8.px())
+                            .py(SpacePx::S4.px())
+                            .rounded(p.radius_f32(&st.glass, 0.55))
+                            .bg(with_alpha(p.text_primary, 0.028))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(div().text_size(FontPx::F11.px()).text_color(p.accent).child(SharedString::from(format!("[+] {} · {}", pr.id, pr.title))))
+                            .child(div().text_size(FontPx::F12.px()).text_color(p.text_secondary).child(SharedString::from(pr.statement.clone())))
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(SpacePx::S4.px())
+                    .child(div().text_size(FontPx::F11.px()).text_color(p.text_tertiary).child(SharedString::from(format!("Initial Stages ({})", spec.stages.len()))))
+                    .children(spec.stages.iter().map(|stage| {
+                        let checks_n = stage.gate_rubric.as_ref().map(|r| r.checks.len()).unwrap_or(0);
+                        div()
+                            .px(SpacePx::S8.px())
+                            .py(SpacePx::S4.px())
+                            .rounded(p.radius_f32(&st.glass, 0.55))
+                            .bg(with_alpha(p.text_primary, 0.028))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(div().text_size(FontPx::F11.px()).text_color(p.accent).child(SharedString::from(format!("[+] {}", stage.label))))
+                            .child(div().text_size(FontPx::F11.px()).text_color(p.text_secondary).child(SharedString::from(format!("{} · {:?} · {} · {} checks", stage.id, stage.kind, stage.runner, checks_n))))
+                    })),
+            )
+            .into_any_element(),
+        DistrictProposalAction::Archive { district_id } => district_action_banner(
+            st,
+            district_id,
+            p.coral,
+            "Hides this District from the active board while preserving Philosophy/Spec history and completed job records.",
+        ),
+        DistrictProposalAction::Restore { district_id } => district_action_banner(
+            st,
+            district_id,
+            p.accent,
+            "Restores this archived District back to the active board with its full Philosophy/Spec version history intact.",
+        ),
+    }
+}
+
+pub(super) struct ProposalDetailHeader {
+    pub(super) meta_rows: Vec<(&'static str, String)>,
+    pub(super) rationale: String,
+    pub(super) fb_ids: Vec<afterlife_core::FeedbackId>,
+    pub(super) rename_banner: Option<String>,
+}
+
+pub(super) fn build_proposal_header(
+    engine: &afterlife_core::AfterlifeEngine,
+    proposal_id: &ProposalId,
+) -> Option<ProposalDetailHeader> {
+    if let Some(pr) = engine.philosophy_proposals.iter().find(|p| &p.id == proposal_id) {
+        let cur_name = engine
+            .find_district(&pr.district_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| pr.district_id.to_string());
+        return Some(ProposalDetailHeader {
+            meta_rows: vec![
+                ("District", pr.district_id.to_string()),
+                ("Kind", "Philosophy".into()),
+                ("Version", format!("Φ v{} → v{}", pr.base_version.0, pr.proposed.version.0)),
+            ],
+            rationale: pr.rationale.clone(),
+            fb_ids: pr.source_feedback_ids.clone(),
+            rename_banner: pr
+                .proposed_district_name
+                .as_ref()
+                .map(|new_name| format!("District Rename: {cur_name} → {new_name}")),
+        });
+    }
+    if let Some(pr) = engine.spec_proposals.iter().find(|p| &p.id == proposal_id) {
+        let cur_name = engine
+            .find_district(&pr.district_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| pr.district_id.to_string());
+        return Some(ProposalDetailHeader {
+            meta_rows: vec![
+                ("District", pr.district_id.to_string()),
+                ("Kind", "ProcedureSpec".into()),
+                ("Version", format!("S v{} → v{}", pr.base_version.0, pr.proposed.version.0)),
+            ],
+            rationale: pr.rationale.clone(),
+            fb_ids: pr.source_feedback_ids.clone(),
+            rename_banner: pr
+                .proposed_district_name
+                .as_ref()
+                .map(|new_name| format!("District Rename: {cur_name} → {new_name}")),
+        });
+    }
+    if let Some(pr) = engine.template_proposals.iter().find(|p| &p.id == proposal_id) {
+        let action = if engine.templates.contains_key(&pr.template_id) {
+            "Update Existing"
+        } else {
+            "New Template"
+        };
+        return Some(ProposalDetailHeader {
+            meta_rows: vec![
+                ("Template", pr.template_id.to_string()),
+                ("Kind", "Sub-Machine Template".into()),
+                ("Action", action.into()),
+            ],
+            rationale: pr.rationale.clone(),
+            fb_ids: pr.source_feedback_ids.clone(),
+            rename_banner: None,
+        });
+    }
+    if let Some(pr) = engine.district_proposals.iter().find(|p| &p.id == proposal_id) {
+        let meta_rows = match &pr.action {
+            DistrictProposalAction::Create {
+                proposed_district_id,
+                name,
+                ..
+            } => {
+                let mut rows = vec![("Name", name.clone())];
+                if let Some(did) = proposed_district_id {
+                    rows.push(("District ID", did.to_string()));
+                } else {
+                    rows.push(("District ID", "Auto-assigned".into()));
+                }
+                rows.push(("Kind", "District Lifecycle".into()));
+                rows.push(("Action", "Create District".into()));
+                rows
+            }
+            DistrictProposalAction::Archive { district_id } => vec![
+                ("District", district_id.to_string()),
+                ("Kind", "District Lifecycle".into()),
+                ("Action", "Archive District".into()),
+            ],
+            DistrictProposalAction::Restore { district_id } => vec![
+                ("District", district_id.to_string()),
+                ("Kind", "District Lifecycle".into()),
+                ("Action", "Restore District".into()),
+            ],
+        };
+        return Some(ProposalDetailHeader {
+            meta_rows,
+            rationale: pr.rationale.clone(),
+            fb_ids: pr.source_feedback_ids.clone(),
+            rename_banner: None,
+        });
+    }
+    None
+}
+
 pub(super) fn render_proposal_detail_sheet(
     st: &AppState,
     proposal_id: ProposalId,
@@ -293,70 +506,19 @@ pub(super) fn render_proposal_detail_sheet(
     cx: &mut Context<AfterlifeApp>,
 ) -> Option<AnyElement> {
     let p = st.palette;
-    let phil_prop = st
-        .engine
-        .philosophy_proposals
-        .iter()
-        .find(|pr| pr.id == proposal_id);
-    let spec_prop = st
-        .engine
-        .spec_proposals
-        .iter()
-        .find(|pr| pr.id == proposal_id);
-    let tmpl_prop = st
-        .engine
-        .template_proposals
-        .iter()
-        .find(|pr| pr.id == proposal_id);
+    let header = build_proposal_header(&st.engine, &proposal_id)?;
+    let body_el = if let Some(pr) = st.engine.philosophy_proposals.iter().find(|p| p.id == proposal_id) {
+        render_philosophy_body(st, pr)
+    } else if let Some(pr) = st.engine.spec_proposals.iter().find(|p| p.id == proposal_id) {
+        render_spec_body(st, pr)
+    } else if let Some(pr) = st.engine.template_proposals.iter().find(|p| p.id == proposal_id) {
+        render_template_proposal_body(st, pr)
+    } else if let Some(pr) = st.engine.district_proposals.iter().find(|p| p.id == proposal_id) {
+        render_district_proposal_body(st, pr)
+    } else {
+        return None;
+    };
 
-    let (scope_label, scope_val, kind_label, version_str, rationale, fb_ids, rename, body_el) =
-        if let Some(pr) = phil_prop {
-            (
-                "District",
-                pr.district_id.to_string(),
-                "Philosophy",
-                format!("Φ v{} → v{}", pr.base_version.0, pr.proposed.version.0),
-                pr.rationale.clone(),
-                pr.source_feedback_ids.clone(),
-                pr.proposed_district_name.clone(),
-                render_philosophy_body(st, pr),
-            )
-        } else if let Some(pr) = spec_prop {
-            (
-                "District",
-                pr.district_id.to_string(),
-                "ProcedureSpec",
-                format!("S v{} → v{}", pr.base_version.0, pr.proposed.version.0),
-                pr.rationale.clone(),
-                pr.source_feedback_ids.clone(),
-                pr.proposed_district_name.clone(),
-                render_spec_body(st, pr),
-            )
-        } else if let Some(pr) = tmpl_prop {
-            let status_label = if st.engine.templates.contains_key(&pr.template_id) {
-                "Update Existing"
-            } else {
-                "New Template"
-            };
-            (
-                "Template",
-                pr.template_id.to_string(),
-                "Sub-Machine Template",
-                status_label.to_string(),
-                pr.rationale.clone(),
-                pr.source_feedback_ids.clone(),
-                None,
-                render_template_proposal_body(st, pr),
-            )
-        } else {
-            return None;
-        };
-
-    let current_district_name = st
-        .engine
-        .find_district(&afterlife_core::DistrictId::from(scope_val.as_str()))
-        .map(|d| d.name.clone())
-        .unwrap_or_else(|| scope_val.clone());
     let pid_approve = proposal_id.clone();
 
     let mut body_nodes: Vec<AnyElement> = vec![
@@ -364,11 +526,10 @@ pub(super) fn render_proposal_detail_sheet(
             .flex()
             .flex_col()
             .gap(SpacePx::S4.px())
-            .child(meta_row(st, scope_label, scope_val))
-            .child(meta_row(st, "Kind", kind_label.to_string()))
-            .child(meta_row(st, "Version", version_str))
-            .when(!fb_ids.is_empty(), |d| {
-                let joined = fb_ids
+            .children(header.meta_rows.into_iter().map(|(k, v)| meta_row(st, k, v)))
+            .when(!header.fb_ids.is_empty(), |d| {
+                let joined = header
+                    .fb_ids
                     .iter()
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
@@ -378,7 +539,7 @@ pub(super) fn render_proposal_detail_sheet(
             .into_any_element(),
     ];
 
-    if let Some(new_name) = rename {
+    if let Some(banner) = header.rename_banner {
         body_nodes.push(
             div()
                 .px(SpacePx::S8.px())
@@ -387,9 +548,7 @@ pub(super) fn render_proposal_detail_sheet(
                 .bg(with_alpha(p.amber, 0.12))
                 .text_size(FontPx::F11.px())
                 .text_color(p.amber)
-                .child(SharedString::from(format!(
-                    "District Rename: {current_district_name} → {new_name}"
-                )))
+                .child(SharedString::from(banner))
                 .into_any_element(),
         );
     }
@@ -409,7 +568,7 @@ pub(super) fn render_proposal_detail_sheet(
                 div()
                     .text_size(FontPx::F12.px())
                     .text_color(p.text_secondary)
-                    .child(SharedString::from(rationale)),
+                    .child(SharedString::from(header.rationale)),
             )
             .into_any_element(),
     );

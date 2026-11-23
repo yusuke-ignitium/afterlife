@@ -25,6 +25,13 @@ pub enum TransitionError {
     },
     JobNotFound(JobId),
     DistrictNotFound(DistrictId),
+    DistrictArchived(DistrictId),
+    DistrictNotArchived(DistrictId),
+    DistrictAlreadyExists(DistrictId),
+    DistrictHasActiveJobs {
+        district_id: DistrictId,
+        active_job_ids: Vec<JobId>,
+    },
     StageNotFound {
         district_id: DistrictId,
         stage_id: StageId,
@@ -129,6 +136,10 @@ impl TransitionError {
             Self::AgentExecutionRequired { .. } => "agent_execution_required",
             Self::JobNotFound(_) => "job_not_found",
             Self::DistrictNotFound(_) => "district_not_found",
+            Self::DistrictArchived(_) => "district_archived",
+            Self::DistrictNotArchived(_) => "district_not_archived",
+            Self::DistrictAlreadyExists(_) => "district_already_exists",
+            Self::DistrictHasActiveJobs { .. } => "district_has_active_jobs",
             Self::StageNotFound { .. } => "stage_not_found",
             Self::TemplateNotFound(_) => "template_not_found",
             Self::ProposalNotFound(_) => "proposal_not_found",
@@ -175,6 +186,20 @@ impl fmt::Display for TransitionError {
             }
             Self::JobNotFound(id) => write!(f, "job not found: {id}"),
             Self::DistrictNotFound(id) => write!(f, "district not found: {id}"),
+            Self::DistrictArchived(id) => write!(f, "district is archived: {id}"),
+            Self::DistrictNotArchived(id) => write!(f, "district is not archived: {id}"),
+            Self::DistrictAlreadyExists(id) => write!(f, "district already exists: {id}"),
+            Self::DistrictHasActiveJobs {
+                district_id,
+                active_job_ids,
+            } => {
+                let ids: Vec<String> = active_job_ids.iter().map(ToString::to_string).collect();
+                write!(
+                    f,
+                    "district {district_id} has active jobs and cannot be archived: {}",
+                    ids.join(", ")
+                )
+            }
             Self::StageNotFound {
                 district_id,
                 stage_id,

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use afterlife_core::{Actor, DistrictId, OwnerId, TimestampMs};
+use afterlife_core::{Actor, DistrictId, DistrictProposalAction, OwnerId, TimestampMs};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -106,16 +106,30 @@ impl ScopeSet {
         self.scopes.contains(scope)
     }
 
-    pub fn allows_district(&self, district_id: &DistrictId) -> bool {
-        let has_district_restrictions = self
-            .scopes
+    pub fn is_district_restricted(&self) -> bool {
+        self.scopes
             .iter()
-            .any(|s| matches!(s, Scope::DistrictScoped(_)));
-        if !has_district_restrictions {
+            .any(|s| matches!(s, Scope::DistrictScoped(_)))
+    }
+
+    pub fn allows_workspace_structure(&self) -> bool {
+        !self.is_district_restricted()
+    }
+
+    pub fn allows_district(&self, district_id: &DistrictId) -> bool {
+        if !self.is_district_restricted() {
             return true;
         }
         self.scopes
             .contains(&Scope::DistrictScoped(district_id.clone()))
+    }
+
+    pub fn allows_district_proposal(&self, action: &DistrictProposalAction) -> bool {
+        match action {
+            DistrictProposalAction::Create { .. } => self.allows_workspace_structure(),
+            DistrictProposalAction::Archive { district_id }
+            | DistrictProposalAction::Restore { district_id } => self.allows_district(district_id),
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Scope> {

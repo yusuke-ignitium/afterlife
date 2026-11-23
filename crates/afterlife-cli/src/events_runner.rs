@@ -15,8 +15,18 @@ use crate::{
     transport::{CliError, get_json, open_sse_reader},
 };
 
-const INITIAL_BACKOFF_MS: u64 = 100;
+const INITIAL_BACKOFF_MS: u64 = 25;
 const MAX_BACKOFF_MS: u64 = 2_000;
+
+fn parse_deadline(payload: &Map<String, Value>) -> Option<Instant> {
+    if let Some(ms) = payload.get("timeout_ms").and_then(Value::as_u64) {
+        return Some(Instant::now() + Duration::from_millis(ms));
+    }
+    payload
+        .get("timeout")
+        .and_then(Value::as_u64)
+        .map(|s| Instant::now() + Duration::from_secs(s))
+}
 
 fn parse_filter(payload: &Map<String, Value>, default_preds: &str) -> Result<EventFilter, CliError> {
     let raw_preds = payload
@@ -109,8 +119,7 @@ fn resolve_initial_cursor(
 pub fn run_wait_command(payload: &Map<String, Value>) -> Result<(Value, u8), CliError> {
     let filter = parse_filter(payload, "approved,reworked,resumed")?;
     let since_seq = payload.get("since_seq").and_then(Value::as_u64);
-    let timeout_secs = payload.get("timeout").and_then(Value::as_u64);
-    let deadline = timeout_secs.map(|s| Instant::now() + Duration::from_secs(s));
+    let deadline = parse_deadline(payload);
 
     let mut last_seq = match resolve_initial_cursor(since_seq, &filter)? {
         Ok((cursor, _)) => cursor,
@@ -256,8 +265,7 @@ pub fn run_watch_command(payload: &Map<String, Value>) -> Result<(), CliError> {
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let max_events = payload.get("max_events").and_then(Value::as_u64);
-    let timeout_secs = payload.get("timeout").and_then(Value::as_u64);
-    let deadline = timeout_secs.map(|s| Instant::now() + Duration::from_secs(s));
+    let deadline = parse_deadline(payload);
 
     let mut last_seq = match since_seq_opt {
         Some(s) => s,

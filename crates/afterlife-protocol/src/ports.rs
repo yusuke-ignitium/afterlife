@@ -104,4 +104,7 @@ pub trait TelemetrySink: Send + Sync {
 pub trait EventBus: Send + Sync {
     fn publish(&self, record: EventRecord);
     fn subscribe(&self) -> broadcast::Receiver<EventRecord>;
+    fn subscriber_count(&self) -> usize {
+        0
+    }
 }

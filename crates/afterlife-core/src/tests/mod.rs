@@ -3,6 +3,9 @@ use std::collections::BTreeMap;
 use crate::*;
 
 mod artifact_uris_and_specs;
+mod district_lifecycle;
+mod fade_px_guard;
+mod module_size_guard;
 mod governance_and_rework;
 mod seed_invariants;
 mod step_artifacts;

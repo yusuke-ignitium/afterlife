@@ -13,37 +13,6 @@ use super::{
     rpc_err, rpc_ok, run_mcp_cmd, tool_text,
 };
 
-pub(super) fn handle_districts_list(state: &Arc<AppDaemonState>, principal: &Principal, id: Value) -> Value {
-    if !principal.scopes.contains(&Scope::JobsRead) {
-        return rpc_ok(
-            id,
-            tool_text(json!({ "error": "insufficient_scope" }), true),
-        );
-    }
-    match state.ports.store.load_workspace(&principal.owner_id) {
-        Ok(snap) => {
-            let list: Vec<Value> = snap
-                .engine
-                .districts
-                .iter()
-                .filter(|d| principal.scopes.allows_district(&d.id))
-                .map(|d| {
-                    json!({
-                        "id": d.id,
-                        "name": d.name,
-                        "active_philosophy_version": d.active_philosophy_version,
-                        "philosophy_summary": d.active_philosophy().summary,
-                        "active_spec_version": d.active_spec_version,
-                        "stage_count": d.stages().len(),
-                    })
-                })
-                .collect();
-            rpc_ok(id, tool_text(json!({ "districts": list }), false))
-        }
-        Err(e) => rpc_ok(id, tool_text(json!({ "error": e.to_string() }), true)),
-    }
-}
-
 pub(super) fn handle_jobs_list(
     state: &Arc<AppDaemonState>,
     principal: &Principal,

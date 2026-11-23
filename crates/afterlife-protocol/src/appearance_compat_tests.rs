@@ -1,6 +1,6 @@
 use std::fs;
 
-use afterlife_protocol::{BackdropConfig, BackdropGlassAppearance, BackdropStore};
+use crate::{BackdropConfig, BackdropGlassAppearance, BackdropStore};
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()

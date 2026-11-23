@@ -54,43 +54,16 @@ pub struct FlagSpec {
 
 impl FlagSpec {
     const fn opt(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::McpKey(key),
-            kind,
-            required: false,
-            repeatable: false,
-        }
+        Self { flag, target: FlagTarget::McpKey(key), kind, required: false, repeatable: false }
     }
-
     const fn req(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::McpKey(key),
-            kind,
-            required: true,
-            repeatable: false,
-        }
+        Self { flag, target: FlagTarget::McpKey(key), kind, required: true, repeatable: false }
     }
-
     const fn rep(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::McpKey(key),
-            kind,
-            required: false,
-            repeatable: true,
-        }
+        Self { flag, target: FlagTarget::McpKey(key), kind, required: false, repeatable: true }
     }
-
     const fn local_opt(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::LocalKey(key),
-            kind,
-            required: false,
-            repeatable: false,
-        }
+        Self { flag, target: FlagTarget::LocalKey(key), kind, required: false, repeatable: false }
     }
 }
 
@@ -101,10 +74,7 @@ pub struct PositionalSpec {
 
 impl PositionalSpec {
     const fn new(placeholder: &'static str, mcp_key: &'static str) -> Self {
-        Self {
-            placeholder,
-            mcp_key,
-        }
+        Self { placeholder, mcp_key }
     }
 }
 
@@ -125,6 +95,11 @@ const FLAG_FENCING_OPT: FlagSpec = FlagSpec::opt("--fencing-token", "fencing_tok
 const FLAG_FENCING_REQ: FlagSpec = FlagSpec::req("--fencing-token", "fencing_token", FlagKind::U64);
 const FLAG_EXPECTED_REV: FlagSpec =
     FlagSpec::opt("--expected-revision", "expected_revision", FlagKind::U64);
+const FLAG_ANTI_PATTERN: FlagSpec = FlagSpec::rep("--anti-pattern", "anti_patterns", FlagKind::String);
+const FLAG_HEURISTIC: FlagSpec =
+    FlagSpec::rep("--heuristic", "decision_heuristics", FlagKind::String);
+const FLAG_FEEDBACK_ID: FlagSpec =
+    FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String);
 
 fn prepare_artifact_attach_payload(
     payload: &mut Map<String, Value>,
@@ -203,6 +178,7 @@ pub const TOOLMAP: &[ToolSpec] = &[
             FlagSpec::opt("--until", "until", FlagKind::String),
             FlagSpec::opt("--since-seq", "since_seq", FlagKind::U64),
             FlagSpec::opt("--timeout", "timeout", FlagKind::U64),
+            FlagSpec::opt("--timeout-ms", "timeout_ms", FlagKind::U64),
             FlagSpec::opt("--exit-on-stop", "exit_on_stop", FlagKind::Bool),
             FlagSpec::opt("--wake-on-stop", "wake_on_stop", FlagKind::Bool),
         ],
@@ -222,6 +198,7 @@ pub const TOOLMAP: &[ToolSpec] = &[
             FlagSpec::opt("--debounce-ms", "debounce_ms", FlagKind::U64),
             FlagSpec::opt("--max-events", "max_events", FlagKind::U64),
             FlagSpec::opt("--timeout", "timeout", FlagKind::U64),
+            FlagSpec::opt("--timeout-ms", "timeout_ms", FlagKind::U64),
             FlagSpec::opt("--ndjson", "ndjson", FlagKind::Bool),
         ],
         default_runner: None,
@@ -232,7 +209,64 @@ pub const TOOLMAP: &[ToolSpec] = &[
         mcp_tool: Some("districts_list"),
         mutates: false,
         positionals: &[],
-        flags: &[],
+        flags: &[FlagSpec::opt("--include-archived", "include_archived", FlagKind::Bool)],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "propose-create"],
+        mcp_tool: Some("districts_propose_create"),
+        mutates: true,
+        positionals: &[],
+        flags: &[
+            FlagSpec::opt("--district-id", "district_id", FlagKind::String),
+            FlagSpec::req("--name", "name", FlagKind::String),
+            FlagSpec::opt("--setup-by", "setup_by", FlagKind::String),
+            FlagSpec::req("--summary", "summary", FlagKind::String),
+            FlagSpec::req("--principles-json", "principles", FlagKind::Json),
+            FLAG_ANTI_PATTERN,
+            FLAG_HEURISTIC,
+            FlagSpec::req("--stages-json", "stages", FlagKind::Json),
+            FlagSpec::opt("--changelog", "changelog", FlagKind::String),
+            FlagSpec::req("--rationale", "rationale", FlagKind::String),
+            FLAG_FEEDBACK_ID,
+            FLAG_COMMAND_ID,
+        ],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "propose-archive"],
+        mcp_tool: Some("districts_propose_archive"),
+        mutates: true,
+        positionals: &[PositionalSpec::new("district_id", "district_id")],
+        flags: &[
+            FlagSpec::req("--rationale", "rationale", FlagKind::String),
+            FLAG_FEEDBACK_ID,
+            FLAG_COMMAND_ID,
+        ],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "propose-restore"],
+        mcp_tool: Some("districts_propose_restore"),
+        mutates: true,
+        positionals: &[PositionalSpec::new("district_id", "district_id")],
+        flags: &[
+            FlagSpec::req("--rationale", "rationale", FlagKind::String),
+            FLAG_FEEDBACK_ID,
+            FLAG_COMMAND_ID,
+        ],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "approve-proposal"],
+        mcp_tool: Some("districts_approve_proposal"),
+        mutates: true,
+        positionals: &[PositionalSpec::new("proposal_id", "proposal_id")],
+        flags: &[FLAG_COMMAND_ID],
         default_runner: None,
         payload_hook: None,
     },
@@ -446,9 +480,9 @@ pub const TOOLMAP: &[ToolSpec] = &[
             FlagSpec::req("--summary", "summary", FlagKind::String),
             FlagSpec::req("--rationale", "rationale", FlagKind::String),
             FlagSpec::req("--principles-json", "principles", FlagKind::Json),
-            FlagSpec::rep("--anti-pattern", "anti_patterns", FlagKind::String),
-            FlagSpec::rep("--heuristic", "decision_heuristics", FlagKind::String),
-            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_ANTI_PATTERN,
+            FLAG_HEURISTIC,
+            FLAG_FEEDBACK_ID,
             FLAG_COMMAND_ID,
         ],
         default_runner: None,

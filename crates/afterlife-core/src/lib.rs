@@ -14,16 +14,16 @@ pub use ids::{
     SubStageId, TimestampMs,
 };
 pub use model::{
-    Actor, Artifact, ArtifactKind, District, ExecutionContext, Feedback, FeedbackKind, GateRubric,
-    GateVerdict, GateVerification, InlineLink, Job, JobEvent, JobLease, JobLocation,
-    MAX_ARTIFACT_BLOB_BYTES, ParsedArtifactUri, ParsedBlobUri, ParsedInlineText, Philosophy,
-    PhilosophyProposal, Principle, ProcedureSpec, ProposalStatus, RunnerKind, SpecProposal,
-    StageDef, StageKind, STEP_FIELD_DECISION_LABEL, STEP_FIELD_EXECUTION_LABEL,
-    STEP_FIELD_NOTE_LABEL, STEP_FIELD_REASON_LABEL, StepFieldDef, StepRecord, StepRecordOutcome,
-    SubMachineTemplate, SubStageDef, TemplateProposal, builtin_step_field_label,
-    default_step_fields, format_blob_uri, is_openable_url, is_valid_lower_sha256,
-    parse_artifact_uri, parse_blob_uri, parse_inline_links, sanitize_blob_filename,
-    sanitize_owner_segment,
+    Actor, Artifact, ArtifactKind, District, DistrictProposal, DistrictProposalAction,
+    ExecutionContext, Feedback, FeedbackKind, GateRubric, GateVerdict, GateVerification,
+    InlineLink, Job, JobEvent, JobLease, JobLocation, MAX_ARTIFACT_BLOB_BYTES, ParsedArtifactUri,
+    ParsedBlobUri, ParsedInlineText, Philosophy, PhilosophyProposal, Principle, ProcedureSpec,
+    ProposalStatus, RunnerKind, SpecProposal, StageDef, StageKind, STEP_FIELD_DECISION_LABEL,
+    STEP_FIELD_EXECUTION_LABEL, STEP_FIELD_NOTE_LABEL, STEP_FIELD_REASON_LABEL, StepFieldDef,
+    StepRecord, StepRecordOutcome, SubMachineTemplate, SubStageDef, TemplateProposal,
+    builtin_step_field_label, default_step_fields, format_blob_uri, is_openable_url,
+    is_valid_lower_sha256, parse_artifact_uri, parse_blob_uri, parse_inline_links,
+    sanitize_blob_filename, sanitize_owner_segment,
 };
 
 #[cfg(test)]

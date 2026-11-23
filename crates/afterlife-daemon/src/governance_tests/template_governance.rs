@@ -5,7 +5,7 @@ use std::{
 };
 
 use afterlife_core::{EngineCommand, ProposalId, SubMachineTemplateId};
-use afterlife_daemon::{AppDaemonState, build_router};
+use crate::{AppDaemonState, build_router};
 use afterlife_protocol::AfterlifeConfig;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::{BodyExt, Full};

@@ -1,4 +1,5 @@
 pub mod command;
+mod district_governance;
 mod governance;
 pub mod policy;
 mod stop_resume;
@@ -18,9 +19,10 @@ use crate::{
         SubMachineTemplateId, TimestampMs,
     },
     model::{
-        Actor, Artifact, ArtifactKind, District, ExecutionContext, Feedback, FeedbackKind,
-        GateVerification, Job, JobEvent, JobLease, JobLocation, PhilosophyProposal, SpecProposal,
-        StageDef, StepRecord, StepRecordOutcome, SubMachineTemplate, TemplateProposal,
+        Actor, Artifact, ArtifactKind, District, DistrictProposal, ExecutionContext, Feedback,
+        FeedbackKind, GateVerification, Job, JobEvent, JobLease, JobLocation, PhilosophyProposal,
+        SpecProposal, StageDef, StepRecord, StepRecordOutcome, SubMachineTemplate,
+        TemplateProposal,
     },
 };
 
@@ -47,6 +49,8 @@ pub struct AfterlifeEngine {
     pub spec_proposals: Vec<SpecProposal>,
     #[serde(default)]
     pub template_proposals: Vec<TemplateProposal>,
+    #[serde(default)]
+    pub district_proposals: Vec<DistrictProposal>,
     pub event_log: Vec<JobEvent>,
     next_job_seq: u32,
     next_fencing_token: u64,
@@ -78,6 +82,7 @@ impl AfterlifeEngine {
             philosophy_proposals: Vec::new(),
             spec_proposals: Vec::new(),
             template_proposals: Vec::new(),
+            district_proposals: Vec::new(),
             event_log: Vec::new(),
             next_job_seq: seed.next_job_seq,
             next_fencing_token: seed.next_fencing_token,
@@ -416,6 +421,12 @@ impl AfterlifeEngine {
                 }]
             }
             EngineCommand::PullNextJob { district_id, at } => {
+                let district = self
+                    .find_district(&district_id)
+                    .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
+                if district.archived {
+                    return Err(TransitionError::DistrictArchived(district_id));
+                }
                 let Some(job_id) = self
                     .jobs
                     .iter()
@@ -444,6 +455,9 @@ impl AfterlifeEngine {
                     .find_district(&district_id)
                     .cloned()
                     .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
+                if district.archived {
+                    return Err(TransitionError::DistrictArchived(district_id));
+                }
                 let first_stage = district
                     .stages()
                     .first()
@@ -1428,6 +1442,9 @@ impl AfterlifeEngine {
                     .iter_mut()
                     .find(|d| d.id == district_id)
                     .ok_or_else(|| TransitionError::DistrictNotFound(district_id.clone()))?;
+                if district.archived {
+                    return Err(TransitionError::DistrictArchived(district_id));
+                }
                 let stage = district
                     .active_spec_mut()
                     .stages
@@ -1480,6 +1497,64 @@ impl AfterlifeEngine {
             }
             EngineCommand::SyncBuiltinTemplates { template_ids, at } => {
                 self.apply_sync_builtin_templates(owner_id, actor, template_ids, at)?
+            }
+            EngineCommand::ProposeDistrictCreate {
+                district_id,
+                name,
+                setup_by,
+                summary,
+                principles,
+                anti_patterns,
+                decision_heuristics,
+                stages,
+                changelog,
+                rationale,
+                source_feedback_ids,
+                at,
+            } => self.apply_propose_district_create(
+                owner_id,
+                actor,
+                district_id,
+                name,
+                setup_by,
+                summary,
+                principles,
+                anti_patterns,
+                decision_heuristics,
+                stages,
+                changelog,
+                rationale,
+                source_feedback_ids,
+                at,
+            )?,
+            EngineCommand::ProposeDistrictArchive {
+                district_id,
+                rationale,
+                source_feedback_ids,
+                at,
+            } => self.apply_propose_district_archive(
+                owner_id,
+                actor,
+                district_id,
+                rationale,
+                source_feedback_ids,
+                at,
+            )?,
+            EngineCommand::ProposeDistrictRestore {
+                district_id,
+                rationale,
+                source_feedback_ids,
+                at,
+            } => self.apply_propose_district_restore(
+                owner_id,
+                actor,
+                district_id,
+                rationale,
+                source_feedback_ids,
+                at,
+            )?,
+            EngineCommand::ApproveDistrictProposal { proposal_id, at } => {
+                self.apply_approve_district_proposal(owner_id, actor, proposal_id, at)?
             }
         };
 

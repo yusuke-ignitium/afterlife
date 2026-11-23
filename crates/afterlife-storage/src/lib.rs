@@ -1,6 +1,10 @@
 pub mod factory;
 pub mod local_adapters;
 pub mod sqlite;
+#[cfg(test)]
+mod district_compat_tests;
+#[cfg(test)]
+mod stop_resume_compat_tests;
 
 pub use factory::RuntimePorts;
 pub use local_adapters::{
