@@ -83,7 +83,7 @@ fn clamped_sanitizes_nan_infinity_and_out_of_range_values() {
     assert_eq!(glass.radius, 0.0);
     assert_eq!(glass.tint_rgb, [12, 34, 56]);
     assert!(glass.pause_animation_when_inactive);
-    assert_eq!(glass.fade_ui_after_secs, 60.0);
+    assert_eq!(glass.fade_ui_after_secs, 120.0);
     assert!(glass.compact_districts);
 }
 

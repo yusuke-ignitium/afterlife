@@ -530,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn inactive_fade_transitions_smoothly_and_preserves_visibility_floor() {
+    fn inactive_fade_transitions_smoothly_across_full_range_and_restores_on_wake() {
         let mut st = AppState::new_ephemeral();
         st.fade_ui_after_secs = 0.0;
         let t0 = Instant::now();
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(snap0.inactive_ui_opacity, 1.0);
         assert!(!snap0.animating);
 
-        st.fade_ui_after_secs = 10.0;
+        st.fade_ui_after_secs = 120.0;
         let t1 = t0 + Duration::from_millis(10);
         let snap1 = motion.sync(&st, true, t1);
         assert!(snap1.animating);
@@ -555,24 +555,30 @@ mod tests {
         assert!((snap_settled.inactive_ui_opacity - 0.24).abs() < 1e-4);
         assert!(!snap_settled.animating);
 
-        st.set_glass_param(crate::app::appearance::GlassParamKey::InactiveFadeTransparencyPct, 90.0);
+        st.set_glass_param(crate::app::appearance::GlassParamKey::InactiveFadeTransparencyPct, 100.0);
         let t_max = t_settled + Duration::from_millis(10);
         let _ = motion.sync(&st, true, t_max);
         let snap_floor = motion.sync(&st, true, t_max + Duration::from_millis(INACTIVE_FADE_IN_MS + 50));
-        assert!((snap_floor.inactive_ui_opacity - 0.10).abs() < 1e-4);
+        assert!((snap_floor.inactive_ui_opacity - 0.0).abs() < 1e-4);
         assert!(!snap_floor.animating);
 
+        let t_wake_from_full = t_max + Duration::from_millis(INACTIVE_FADE_IN_MS + 60);
+        let snap_waking = motion.sync(&st, false, t_wake_from_full);
+        assert!(snap_waking.animating);
+        let snap_woke = motion.sync(
+            &st,
+            false,
+            t_wake_from_full + Duration::from_millis(INACTIVE_FADE_OUT_MS + 50),
+        );
+        assert_eq!(snap_woke.inactive_ui_opacity, 1.0);
+        assert!(!snap_woke.animating);
+
         st.set_glass_param(crate::app::appearance::GlassParamKey::InactiveFadeTransparencyPct, 0.0);
-        let t_zero = t_max + Duration::from_millis(INACTIVE_FADE_IN_MS + 60);
+        let t_zero = t_wake_from_full + Duration::from_millis(INACTIVE_FADE_OUT_MS + 60);
         let _ = motion.sync(&st, true, t_zero);
         let snap_zero = motion.sync(&st, true, t_zero + Duration::from_millis(INACTIVE_FADE_IN_MS + 50));
         assert!((snap_zero.inactive_ui_opacity - 1.0).abs() < 1e-4);
         assert!(!snap_zero.animating);
-
-        let t_wake = t_zero + Duration::from_millis(INACTIVE_FADE_IN_MS + 60);
-        let snap_restored = motion.sync(&st, false, t_wake + Duration::from_millis(INACTIVE_FADE_OUT_MS + 50));
-        assert_eq!(snap_restored.inactive_ui_opacity, 1.0);
-        assert!(!snap_restored.animating);
     }
 
     #[test]

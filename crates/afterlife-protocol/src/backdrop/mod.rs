@@ -18,6 +18,8 @@ pub const DEFAULT_IMAGE_PEAK_LUMINANCE: f32 = 0.55;
 pub const DEFAULT_IMAGE_SATURATION: f32 = 0.64;
 pub const DEFAULT_MASTER_BRIGHTNESS: f32 = 1.50;
 pub const DEFAULT_FADE_UI_TRANSPARENCY_PCT: f32 = 76.0;
+pub const MAX_FADE_UI_AFTER_SECS: f32 = 120.0;
+pub const MAX_FADE_UI_TRANSPARENCY_PCT: f32 = 100.0;
 
 
 fn finite_clamp(val: f32, min: f32, max: f32, fallback: f32) -> f32 {
@@ -26,6 +28,20 @@ fn finite_clamp(val: f32, min: f32, max: f32, fallback: f32) -> f32 {
     } else {
         fallback
     }
+}
+
+pub fn sanitize_fade_ui_after_secs(val: f32) -> f32 {
+    finite_clamp(val, 0.0, MAX_FADE_UI_AFTER_SECS, 0.0).round()
+}
+
+pub fn sanitize_fade_ui_transparency_pct(val: f32) -> f32 {
+    finite_clamp(
+        val,
+        0.0,
+        MAX_FADE_UI_TRANSPARENCY_PCT,
+        DEFAULT_FADE_UI_TRANSPARENCY_PCT,
+    )
+    .round()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -156,8 +172,10 @@ impl BackdropGlassAppearance {
             radius: finite_clamp(self.radius, 0.0, 20.0, def.radius),
             tint_rgb: self.tint_rgb,
             pause_animation_when_inactive: self.pause_animation_when_inactive,
-            fade_ui_after_secs: finite_clamp(self.fade_ui_after_secs, 0.0, 60.0, def.fade_ui_after_secs).round(),
-            fade_ui_transparency_pct: finite_clamp(self.fade_ui_transparency_pct, 0.0, 90.0, def.fade_ui_transparency_pct).round(),
+            fade_ui_after_secs: sanitize_fade_ui_after_secs(self.fade_ui_after_secs),
+            fade_ui_transparency_pct: sanitize_fade_ui_transparency_pct(
+                self.fade_ui_transparency_pct,
+            ),
             approval_notifications_enabled: self.approval_notifications_enabled,
             compact_districts: self.compact_districts,
         }
