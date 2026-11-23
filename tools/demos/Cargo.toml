@@ -28,6 +28,14 @@ path = "src/bin/detail_overlap_demo.rs"
 name = "step-history-demo"
 path = "src/bin/step_history_demo.rs"
 
+[[bin]]
+name = "job-stopper-demo"
+path = "src/bin/job_stopper_demo.rs"
+
+[[bin]]
+name = "detail-footer-demo"
+path = "src/bin/detail_footer_demo.rs"
+
 [dependencies]
 afterlife-design = { path = "../../crates/afterlife-design" }
 gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }
