@@ -1,5 +1,7 @@
 pub mod artifacts;
 pub mod auth;
+#[cfg(test)]
+mod governance_tests;
 pub mod mcp;
 pub mod metrics;
 pub mod rest;

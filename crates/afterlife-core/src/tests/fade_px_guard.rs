@@ -20,7 +20,7 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn overflow_fade_calls_use_fade_px_tokens() {
-    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../afterlife-ui/src");
     let mut files = Vec::new();
     collect_rust_files(&src_dir, &mut files);
     assert!(!files.is_empty());

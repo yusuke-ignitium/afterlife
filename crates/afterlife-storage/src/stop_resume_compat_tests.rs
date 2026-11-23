@@ -1,6 +1,6 @@
 use afterlife_core::{Actor, CommandId, DistrictId, EngineCommand, JobEvent, OwnerId};
 use afterlife_protocol::{CommandEnvelope, WorkspaceStore};
-use afterlife_storage::SqliteWorkspaceStore;
+use crate::SqliteWorkspaceStore;
 
 fn temp_path(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()

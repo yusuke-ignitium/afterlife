@@ -19,3 +19,6 @@ pub use config::{
 };
 pub use envelope::{CommandEnvelope, CommandOutcome, EventRecord, WorkspaceSnapshot};
 pub use ports::{ArtifactBlobStore, BlobRef, EventBus, PortError, TelemetrySink, WorkspaceStore};
+
+#[cfg(test)]
+mod appearance_compat_tests;

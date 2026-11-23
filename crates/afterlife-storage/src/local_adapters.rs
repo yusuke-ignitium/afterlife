@@ -191,4 +191,8 @@ impl EventBus for InMemoryEventBus {
     fn subscribe(&self) -> broadcast::Receiver<EventRecord> {
         self.tx.subscribe()
     }
+
+    fn subscriber_count(&self) -> usize {
+        self.tx.receiver_count()
+    }
 }

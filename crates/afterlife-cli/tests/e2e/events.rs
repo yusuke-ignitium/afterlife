@@ -96,6 +96,17 @@ impl TestDaemon {
             .latest_seq
     }
 
+    async fn wait_for_sse_subscriber(&self) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while self.state.ports.event_bus.subscriber_count() == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for SSE subscriber"
+            );
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+
     fn exec_human(&self, command: EngineCommand) -> Vec<JobEvent> {
         let owner = OwnerId::from("local-owner");
         let cmd_id = CommandId::new(format!(
@@ -247,7 +258,7 @@ async fn wait_handles_precheck_live_sse_stop_timeout_and_reconnect() {
             "5".into(),
         ],
     ));
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    daemon.wait_for_sse_subscriber().await;
     daemon.exec_human(EngineCommand::StopJob {
         job_id: job_id.clone(),
         reason: Some("Operator hold".into()),
@@ -268,8 +279,8 @@ async fn wait_handles_precheck_live_sse_stop_timeout_and_reconnect() {
             jid_str.clone(),
             "--until".into(),
             "resumed".into(),
-            "--timeout".into(),
-            "1".into(),
+            "--timeout-ms".into(),
+            "120".into(),
         ],
     )
     .await;
@@ -316,10 +327,10 @@ async fn wait_handles_precheck_live_sse_stop_timeout_and_reconnect() {
             "8".into(),
         ],
     ));
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    daemon.wait_for_sse_subscriber().await;
     daemon.stop().await;
-    tokio::time::sleep(Duration::from_millis(150)).await;
     let daemon2 = TestDaemon::start_on(dir.path(), saved_addr).await;
+    daemon2.wait_for_sse_subscriber().await;
     daemon2.exec_human(EngineCommand::StopJob {
         job_id: job_id.clone(),
         reason: Some("Pause before resume".into()),
@@ -396,7 +407,7 @@ async fn watch_ndjson_streams_matching_events_and_filters_noise() {
             "--ndjson".into(),
         ],
     ));
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    daemon.wait_for_sse_subscriber().await;
 
     daemon.exec_human(EngineCommand::StopJob {
         job_id: j2,

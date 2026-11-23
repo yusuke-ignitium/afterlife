@@ -7,7 +7,6 @@ use std::{
 const DEFAULT_MAX_LINES: usize = 650;
 
 const LEGACY_RATCHET_LIMITS: &[(&str, usize)] = &[
-    ("crates/afterlife-cli/tests/e2e_cli.rs", 700),
     ("crates/afterlife-core/src/engine/mod.rs", 1685),
     ("crates/afterlife-core/src/fixtures.rs", 1960),
     ("crates/afterlife-daemon/src/auth.rs", 955),
