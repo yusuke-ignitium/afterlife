@@ -109,3 +109,10 @@ These properties must hold continuously on every commit and release:
 - Whenever creating a git commit in this repository (including chat requests, `/commit`, and diff-tab commit-and-push actions), always read and follow `.agents/skills/commit/SKILL.md`.
 - This project-level commit skill takes precedence over any global commit skill.
 - Never include intermediate exploration logs, trial-and-error history, or machine-specific paths in commit messages.
+
+---
+
+## 8. Pre-Delivery Approval PR Workflow
+
+- Whenever advancing a codebase-changing Afterlife job into a **pre-delivery (merge/ship) `ApprovalGate`** (after implementation and verification are complete), always read and follow `.agents/skills/approval-pr/SKILL.md` before the final `afterlife jobs advance`.
+- Do **not** apply this for upstream/intermediate approval gates (such as design or spec sign-off in multi-gate Districts) or for non-code jobs.
