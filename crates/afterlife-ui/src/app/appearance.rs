@@ -1,5 +1,8 @@
 use afterlife_design::GlassSettings;
-use afterlife_protocol::{BackdropConfig, BackdropGlassAppearance, BackdropTuning};
+use afterlife_protocol::{
+    BackdropConfig, BackdropGlassAppearance, BackdropTuning, MAX_FADE_UI_AFTER_SECS,
+    MAX_FADE_UI_TRANSPARENCY_PCT, sanitize_fade_ui_after_secs, sanitize_fade_ui_transparency_pct,
+};
 
 use crate::app::state::AppState;
 
@@ -191,8 +194,10 @@ impl GlassParamKey {
             Self::BlurStdDev => ("Frost Blur", 0.0, 20.0, 1),
             Self::BgAlpha => ("Glass Opacity", 0.0, 0.85, 2),
             Self::Radius => ("Corner Radius", 0.0, 20.0, 1),
-            Self::InactiveFadeSecs => ("Fade UI After", 0.0, 60.0, 0),
-            Self::InactiveFadeTransparencyPct => ("Fade Transparency", 0.0, 90.0, 0),
+            Self::InactiveFadeSecs => ("Fade UI After", 0.0, MAX_FADE_UI_AFTER_SECS, 0),
+            Self::InactiveFadeTransparencyPct => {
+                ("Fade Transparency", 0.0, MAX_FADE_UI_TRANSPARENCY_PCT, 0)
+            }
         }
     }
 
@@ -221,7 +226,7 @@ impl GlassParamKey {
 
     pub fn format_value(self, val: f32) -> String {
         if self == Self::InactiveFadeSecs {
-            let secs = val.round().clamp(0.0, 60.0) as u32;
+            let secs = sanitize_fade_ui_after_secs(val) as u32;
             return if secs == 0 {
                 "Off".to_string()
             } else {
@@ -229,7 +234,7 @@ impl GlassParamKey {
             };
         }
         if self == Self::InactiveFadeTransparencyPct {
-            let pct = val.round().clamp(0.0, 90.0) as u32;
+            let pct = sanitize_fade_ui_transparency_pct(val) as u32;
             return format!("{pct}%");
         }
         let (_, _, _, dp) = self.spec();
@@ -285,6 +290,11 @@ mod tests {
             saved_glass_def
         );
         assert_eq!(glass_def.particle_wave_tuning(), wave_def);
+        assert_eq!(GlassParamKey::InactiveFadeSecs.spec().2, MAX_FADE_UI_AFTER_SECS);
+        assert_eq!(
+            GlassParamKey::InactiveFadeTransparencyPct.spec().2,
+            MAX_FADE_UI_TRANSPARENCY_PCT
+        );
     }
 
     #[test]

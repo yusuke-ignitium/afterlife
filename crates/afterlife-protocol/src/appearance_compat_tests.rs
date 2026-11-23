@@ -76,22 +76,36 @@ fn legacy_backdrop_json_without_notification_flag_loads_cleanly() {
     assert!(reloaded_glass.compact_districts);
 
     let clamped_hi = BackdropGlassAppearance {
+        fade_ui_after_secs: 180.0,
         fade_ui_transparency_pct: 120.0,
         ..BackdropGlassAppearance::default()
     }
     .clamped();
-    assert_eq!(clamped_hi.fade_ui_transparency_pct, 90.0);
+    assert_eq!(clamped_hi.fade_ui_after_secs, 120.0);
+    assert_eq!(clamped_hi.fade_ui_transparency_pct, 100.0);
+    let clamped_exact = BackdropGlassAppearance {
+        fade_ui_after_secs: 120.0,
+        fade_ui_transparency_pct: 100.0,
+        ..BackdropGlassAppearance::default()
+    }
+    .clamped();
+    assert_eq!(clamped_exact.fade_ui_after_secs, 120.0);
+    assert_eq!(clamped_exact.fade_ui_transparency_pct, 100.0);
     let clamped_lo = BackdropGlassAppearance {
+        fade_ui_after_secs: -15.0,
         fade_ui_transparency_pct: -10.0,
         ..BackdropGlassAppearance::default()
     }
     .clamped();
+    assert_eq!(clamped_lo.fade_ui_after_secs, 0.0);
     assert_eq!(clamped_lo.fade_ui_transparency_pct, 0.0);
     let clamped_nan = BackdropGlassAppearance {
+        fade_ui_after_secs: f32::NAN,
         fade_ui_transparency_pct: f32::NAN,
         ..BackdropGlassAppearance::default()
     }
     .clamped();
+    assert_eq!(clamped_nan.fade_ui_after_secs, 0.0);
     assert_eq!(clamped_nan.fade_ui_transparency_pct, 76.0);
 
     let _ = fs::remove_dir_all(&dir);

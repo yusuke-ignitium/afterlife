@@ -15,7 +15,7 @@ use afterlife_daemon::AppDaemonState;
 use afterlife_design::{GlassSettings, Palette, UiStyle};
 use afterlife_protocol::{
     AfterlifeConfig, BackdropStore, CommandEnvelope, EventRecord, resolve_tile_size_for_display,
-    sanitize_display_tile_sizes,
+    sanitize_display_tile_sizes, sanitize_fade_ui_after_secs, sanitize_fade_ui_transparency_pct,
 };
 use gpui::{Entity, Image, ImageFormat, set_particle_wave_tuning};
 
@@ -367,16 +367,11 @@ impl AppState {
     pub fn set_glass_param(&mut self, key: GlassParamKey, value: f32) {
         match key {
             GlassParamKey::InactiveFadeSecs => {
-                self.fade_ui_after_secs =
-                    if value.is_finite() { value.clamp(0.0, 60.0).round() } else { 0.0 };
+                self.fade_ui_after_secs = sanitize_fade_ui_after_secs(value);
                 return;
             }
             GlassParamKey::InactiveFadeTransparencyPct => {
-                self.fade_ui_transparency_pct = if value.is_finite() {
-                    value.clamp(0.0, 90.0).round()
-                } else {
-                    afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT
-                };
+                self.fade_ui_transparency_pct = sanitize_fade_ui_transparency_pct(value);
                 return;
             }
             GlassParamKey::BgTileSizePx => {
@@ -399,17 +394,13 @@ impl AppState {
     }
 
     pub fn inactive_fade_delay_secs(&self) -> Option<u64> {
-        let secs = self.fade_ui_after_secs.round().clamp(0.0, 60.0) as u64;
+        let secs = sanitize_fade_ui_after_secs(self.fade_ui_after_secs) as u64;
         (secs > 0).then_some(secs)
     }
 
     pub fn inactive_fade_target_opacity(&self) -> f32 {
-        let pct = if self.fade_ui_transparency_pct.is_finite() {
-            self.fade_ui_transparency_pct.clamp(0.0, 90.0).round()
-        } else {
-            afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT
-        };
-        (1.0 - pct / 100.0).clamp(0.10, 1.0)
+        let pct = sanitize_fade_ui_transparency_pct(self.fade_ui_transparency_pct);
+        (1.0 - pct / 100.0).clamp(0.0, 1.0)
     }
 
     pub fn reset_glass_settings(&mut self, preset: GlassSettings) {
@@ -624,14 +615,22 @@ mod tests {
         assert_eq!(st.inactive_fade_delay_secs(), Some(13));
         assert!(!GlassParamKey::InactiveFadeTransparencyPct.is_dimmed(&st));
         assert_eq!(GlassParamKey::InactiveFadeSecs.format_value(13.0), "13s");
+        st.set_glass_param(GlassParamKey::InactiveFadeTransparencyPct, 100.0);
+        assert!((st.inactive_fade_target_opacity() - 0.0).abs() < 1e-4);
+        assert_eq!(GlassParamKey::InactiveFadeTransparencyPct.format_value(100.0), "100%");
         st.set_glass_param(GlassParamKey::InactiveFadeTransparencyPct, 999.0);
-        assert!((st.inactive_fade_target_opacity() - 0.10).abs() < 1e-4);
+        assert!((st.inactive_fade_target_opacity() - 0.0).abs() < 1e-4);
         st.set_glass_param(GlassParamKey::InactiveFadeTransparencyPct, -5.0);
         assert!((st.inactive_fade_target_opacity() - 1.0).abs() < 1e-4);
         st.set_glass_param(GlassParamKey::InactiveFadeTransparencyPct, f32::NAN);
         assert!((st.inactive_fade_target_opacity() - 0.24).abs() < 1e-4);
+        st.set_glass_param(GlassParamKey::InactiveFadeSecs, 95.4);
+        assert_eq!(st.inactive_fade_delay_secs(), Some(95));
+        assert_eq!(GlassParamKey::InactiveFadeSecs.format_value(120.0), "120s");
         st.set_glass_param(GlassParamKey::InactiveFadeSecs, 999.0);
-        assert_eq!(st.inactive_fade_delay_secs(), Some(60));
+        assert_eq!(st.inactive_fade_delay_secs(), Some(120));
+        st.set_glass_param(GlassParamKey::InactiveFadeSecs, f32::NAN);
+        assert_eq!(st.inactive_fade_delay_secs(), None);
         st.set_glass_param(GlassParamKey::InactiveFadeSecs, -5.0);
         assert_eq!(st.inactive_fade_delay_secs(), None);
     }
