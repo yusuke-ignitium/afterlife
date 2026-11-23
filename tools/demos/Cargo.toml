@@ -40,6 +40,10 @@ path = "src/bin/detail_footer_demo.rs"
 name = "district-compact-demo"
 path = "src/bin/district_compact_demo/main.rs"
 
+[[bin]]
+name = "detail-pr-demo"
+path = "src/bin/detail_pr_demo/main.rs"
+
 [dependencies]
 afterlife-design = { path = "../../crates/afterlife-design" }
 gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }

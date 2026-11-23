@@ -12,9 +12,9 @@ pub mod sub_machine;
 
 pub use actor::Actor;
 pub use artifact_uri::{
-    MAX_ARTIFACT_BLOB_BYTES, ParsedArtifactUri, ParsedBlobUri, format_blob_uri,
-    is_valid_lower_sha256, parse_artifact_uri, parse_blob_uri, sanitize_blob_filename,
-    sanitize_owner_segment,
+    MAX_ARTIFACT_BLOB_BYTES, ParsedArtifactUri, ParsedBlobUri, PullRequestRef,
+    canonical_pull_request_key, format_blob_uri, is_valid_lower_sha256, parse_artifact_uri,
+    parse_blob_uri, parse_pull_request_ref, sanitize_blob_filename, sanitize_owner_segment,
 };
 pub use district::{
     District, DistrictProposal, DistrictProposalAction, GateRubric, ProcedureSpec, SpecProposal,

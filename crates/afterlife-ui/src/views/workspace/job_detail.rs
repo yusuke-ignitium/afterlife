@@ -1,4 +1,7 @@
-use afterlife_core::{Artifact, EngineCommand, Job, JobLocation, parse_blob_uri};
+use afterlife_core::{
+    Artifact, ArtifactKind, EngineCommand, Job, JobId, JobLocation, canonical_pull_request_key,
+    is_openable_url, parse_blob_uri, parse_pull_request_ref,
+};
 use afterlife_design::{FontPx, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha};
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -68,6 +71,159 @@ pub(super) fn render_artifact_row(
             show_centerline: st.show_centerline,
             centerline: p.centerline,
         },
+    )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct JobPullRequest {
+    pub label: String,
+    pub uri: String,
+    pub openable: bool,
+}
+
+pub(crate) fn extract_job_pull_requests(artifacts: &[Artifact]) -> Vec<JobPullRequest> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut out: Vec<JobPullRequest> = Vec::new();
+    for art in artifacts
+        .iter()
+        .filter(|a| a.kind == ArtifactKind::PullRequest)
+    {
+        let uri = art.uri.trim().to_string();
+        let (label, openable) = match parse_pull_request_ref(&uri) {
+            Some(pr) => (pr.display_label(), true),
+            None => {
+                let trimmed_label = art.label.trim();
+                let fallback = if !trimmed_label.is_empty() {
+                    trimmed_label.to_string()
+                } else {
+                    uri.clone()
+                };
+                (fallback, is_openable_url(&uri))
+            }
+        };
+        if label.is_empty() {
+            continue;
+        }
+        let key = canonical_pull_request_key(&uri);
+        let item = JobPullRequest {
+            label,
+            uri,
+            openable,
+        };
+        if let Some(pos) = keys.iter().position(|k| k == &key) {
+            out[pos] = item;
+        } else {
+            keys.push(key);
+            out.push(item);
+        }
+    }
+    out
+}
+
+fn render_pr_meta_row(
+    st: &AppState,
+    job_id: &JobId,
+    prs: &[JobPullRequest],
+) -> Option<AnyElement> {
+    if prs.is_empty() {
+        return None;
+    }
+    let p = st.palette;
+    let items = prs.iter().enumerate().map(|(idx, pr)| {
+        let id = SharedString::from(format!("d-pr-{}-{idx}", job_id));
+        let grp = SharedString::from(format!("d-pr-grp-{}-{idx}", job_id));
+        if pr.openable {
+            let open_uri = pr.uri.clone();
+            div()
+                .id(id)
+                .group(grp.clone())
+                .cursor_pointer()
+                .h(RowHeightPx::H22.px())
+                .max_w_full()
+                .px(SpacePx::S4.px())
+                .mr(px(-4.0))
+                .rounded(p.radius_f32(&st.glass, 0.55))
+                .hover(move |s| s.bg(with_alpha(p.accent_inactive, 0.24)))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_end()
+                .gap(px(4.0))
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    cx.open_url(&open_uri);
+                })
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(FontPx::F11.px())
+                        .text_color(p.accent)
+                        .child(SharedString::from(pr.label.clone())),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(FontPx::F11.px())
+                        .text_color(with_alpha(p.accent, 0.55))
+                        .group_hover(grp, move |s| s.text_color(p.accent))
+                        .child("↗"),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .id(id)
+                .h(RowHeightPx::H22.px())
+                .max_w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_end()
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(FontPx::F11.px())
+                        .text_color(p.text_secondary)
+                        .child(SharedString::from(pr.label.clone())),
+                )
+                .into_any_element()
+        }
+    });
+
+    Some(
+        div()
+            .flex()
+            .flex_row()
+            .items_start()
+            .justify_between()
+            .gap(SpacePx::S12.px())
+            .child(div().flex_shrink_0().child(single_line(
+                RowHeightPx::H22,
+                SpacePx::S0,
+                SpacePx::S4,
+                FontPx::F11,
+                RadiusPx::R0,
+                None,
+                None,
+                p.text_tertiary,
+                st.show_centerline,
+                p.centerline,
+                [SharedString::from("PR").into_any_element()],
+            )))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .gap(px(2.0))
+                    .children(items),
+            )
+            .into_any_element(),
     )
 }
 
@@ -164,6 +320,13 @@ pub(super) fn render_job_detail_sheet(
         p.text_secondary
     };
 
+    let pull_requests = extract_job_pull_requests(&job.artifacts);
+    let non_pr_artifacts: Vec<&Artifact> = job
+        .artifacts
+        .iter()
+        .filter(|a| a.kind != ArtifactKind::PullRequest)
+        .collect();
+
     let mut body_nodes: Vec<AnyElement> = vec![
         div()
             .text_size(FontPx::F13.px())
@@ -185,6 +348,9 @@ pub(super) fn render_job_detail_sheet(
                 job.claimed_by().unwrap_or("Unclaimed").to_string(),
                 p.text_secondary,
             ))
+            .when_some(render_pr_meta_row(st, &job.id, &pull_requests), |d, row| {
+                d.child(row)
+            })
             .into_any_element(),
         div()
             .text_size(FontPx::F12.px())
@@ -215,7 +381,7 @@ pub(super) fn render_job_detail_sheet(
         body_nodes.push(render_step_history(st, &job, cx));
     }
 
-    if !job.artifacts.is_empty() {
+    if !non_pr_artifacts.is_empty() {
         body_nodes.push(
             div()
                 .flex()
@@ -234,7 +400,7 @@ pub(super) fn render_job_detail_sheet(
                     p.centerline,
                     [SharedString::from("Artifacts").into_any_element()],
                 ))
-                .children(job.artifacts.iter().map(|art| {
+                .children(non_pr_artifacts.into_iter().map(|art| {
                     render_artifact_row(
                         SharedString::from(format!("art-{}", art.id)),
                         art,
@@ -363,4 +529,79 @@ pub(super) fn render_job_detail_sheet(
     };
 
     render_detail_sheet_frame(st, motion, chrome, body_nodes, None, footer_actions, cx)
+}
+
+#[cfg(test)]
+mod tests {
+    use afterlife_core::ArtifactId;
+
+    use super::*;
+
+    fn mk_artifact(id: &str, kind: ArtifactKind, label: &str, uri: &str) -> Artifact {
+        Artifact {
+            id: ArtifactId::from(id),
+            kind,
+            label: label.to_string(),
+            uri: uri.to_string(),
+            sha256: None,
+            produced_at_stage: None,
+            produced_at_sub_stage: None,
+            revision_at_capture: 1,
+        }
+    }
+
+    #[test]
+    fn extract_job_pull_requests_formats_multi_repo_dedups_and_stays_fail_closed() {
+        assert!(extract_job_pull_requests(&[]).is_empty());
+
+        let artifacts = vec![
+            mk_artifact(
+                "art-1",
+                ArtifactKind::VerificationReport,
+                "report.md",
+                "https://example.com/report",
+            ),
+            mk_artifact(
+                "art-2",
+                ArtifactKind::PullRequest,
+                "PR #14",
+                "https://github.com/org/afterlife/pull/14",
+            ),
+            mk_artifact(
+                "art-3",
+                ArtifactKind::PullRequest,
+                "PR #14 files",
+                "https://GITHUB.COM/org/afterlife/pull/14/files?w=1",
+            ),
+            mk_artifact(
+                "art-4",
+                ArtifactKind::PullRequest,
+                "MR #42",
+                "https://gitlab.com/org/sub/afterlife-cloud/-/merge_requests/42",
+            ),
+            mk_artifact(
+                "art-5",
+                ArtifactKind::PullRequest,
+                "Custom PR Label",
+                "https://review.example.com/changes/99",
+            ),
+            mk_artifact(
+                "art-6",
+                ArtifactKind::PullRequest,
+                "Unsafe PR",
+                "javascript:alert(1)",
+            ),
+        ];
+
+        let prs = extract_job_pull_requests(&artifacts);
+        assert_eq!(prs.len(), 4);
+        assert_eq!(prs[0].label, "afterlife #14");
+        assert!(prs[0].openable);
+        assert_eq!(prs[1].label, "afterlife-cloud #42");
+        assert!(prs[1].openable);
+        assert_eq!(prs[2].label, "Custom PR Label");
+        assert!(prs[2].openable);
+        assert_eq!(prs[3].label, "Unsafe PR");
+        assert!(!prs[3].openable);
+    }
 }
