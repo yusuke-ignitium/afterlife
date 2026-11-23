@@ -88,6 +88,38 @@ pub struct SpecProposal {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum DistrictProposalAction {
+    Create {
+        #[serde(default)]
+        proposed_district_id: Option<DistrictId>,
+        name: String,
+        setup_by: String,
+        philosophy: Philosophy,
+        spec: ProcedureSpec,
+    },
+    Archive {
+        district_id: DistrictId,
+    },
+    Restore {
+        district_id: DistrictId,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DistrictProposal {
+    pub id: ProposalId,
+    pub owner_id: OwnerId,
+    pub action: DistrictProposalAction,
+    pub rationale: String,
+    pub source_feedback_ids: Vec<FeedbackId>,
+    pub proposed_by: Actor,
+    pub status: ProposalStatus,
+    pub created_at: TimestampMs,
+    pub resolved_at: Option<TimestampMs>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct District {
     pub id: DistrictId,
     pub owner_id: OwnerId,
@@ -97,6 +129,10 @@ pub struct District {
     pub philosophy_history: Vec<Philosophy>,
     pub active_spec_version: SpecVersion,
     pub spec_history: Vec<ProcedureSpec>,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub archived_at: Option<TimestampMs>,
 }
 
 impl District {

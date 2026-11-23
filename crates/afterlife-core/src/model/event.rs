@@ -210,6 +210,36 @@ pub enum JobEvent {
         skipped_template_ids: Vec<SubMachineTemplateId>,
         at: TimestampMs,
     },
+    DistrictProposalCreated {
+        owner_id: OwnerId,
+        actor: Actor,
+        proposal_id: ProposalId,
+        action: String,
+        district_id: Option<DistrictId>,
+        at: TimestampMs,
+    },
+    DistrictCreated {
+        owner_id: OwnerId,
+        actor: Actor,
+        proposal_id: ProposalId,
+        district_id: DistrictId,
+        name: String,
+        at: TimestampMs,
+    },
+    DistrictArchived {
+        owner_id: OwnerId,
+        actor: Actor,
+        proposal_id: ProposalId,
+        district_id: DistrictId,
+        at: TimestampMs,
+    },
+    DistrictRestored {
+        owner_id: OwnerId,
+        actor: Actor,
+        proposal_id: ProposalId,
+        district_id: DistrictId,
+        at: TimestampMs,
+    },
 }
 
 impl JobEvent {
@@ -236,7 +266,11 @@ impl JobEvent {
             | Self::StageSubTemplateChanged { owner_id, .. }
             | Self::TemplateProposed { owner_id, .. }
             | Self::TemplateUpdated { owner_id, .. }
-            | Self::BuiltinTemplatesSynced { owner_id, .. } => owner_id,
+            | Self::BuiltinTemplatesSynced { owner_id, .. }
+            | Self::DistrictProposalCreated { owner_id, .. }
+            | Self::DistrictCreated { owner_id, .. }
+            | Self::DistrictArchived { owner_id, .. }
+            | Self::DistrictRestored { owner_id, .. } => owner_id,
         }
     }
 
@@ -263,7 +297,11 @@ impl JobEvent {
             | Self::StageSubTemplateChanged { at, .. }
             | Self::TemplateProposed { at, .. }
             | Self::TemplateUpdated { at, .. }
-            | Self::BuiltinTemplatesSynced { at, .. } => *at,
+            | Self::BuiltinTemplatesSynced { at, .. }
+            | Self::DistrictProposalCreated { at, .. }
+            | Self::DistrictCreated { at, .. }
+            | Self::DistrictArchived { at, .. }
+            | Self::DistrictRestored { at, .. } => *at,
         }
     }
 }

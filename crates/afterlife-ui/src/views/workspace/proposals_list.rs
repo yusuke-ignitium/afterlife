@@ -1,5 +1,6 @@
 use afterlife_core::{
-    AfterlifeEngine, Principle, ProposalId, StageDef, SubStageDef, TimestampMs,
+    AfterlifeEngine, DistrictProposalAction, Principle, ProposalId, StageDef, SubStageDef,
+    TimestampMs,
 };
 use afterlife_design::{
     EdgeAccent, FontPx, GlassSurface, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha,
@@ -20,6 +21,7 @@ pub enum ProposalKindTag {
     Philosophy,
     Spec,
     Template,
+    District,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +89,44 @@ pub fn collect_pending_proposals(engine: &AfterlifeEngine) -> Vec<PendingProposa
             version_label: action_label.into(),
             summary_line: p.rationale.clone(),
             proposed_district_name: None,
+            created_at: p.created_at,
+        });
+    }
+    for p in engine.pending_district_proposals() {
+        let (scope_id, version_label, summary_line, proposed_name) = match &p.action {
+            DistrictProposalAction::Create {
+                proposed_district_id,
+                name,
+                ..
+            } => (
+                proposed_district_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "NEW".to_string()),
+                "Create".to_string(),
+                p.rationale.clone(),
+                Some(name.clone()),
+            ),
+            DistrictProposalAction::Archive { district_id } => (
+                district_id.to_string(),
+                "Archive".to_string(),
+                p.rationale.clone(),
+                None,
+            ),
+            DistrictProposalAction::Restore { district_id } => (
+                district_id.to_string(),
+                "Restore".to_string(),
+                p.rationale.clone(),
+                None,
+            ),
+        };
+        items.push(PendingProposalCard {
+            id: p.id.clone(),
+            scope_id,
+            kind: ProposalKindTag::District,
+            version_label,
+            summary_line,
+            proposed_district_name: proposed_name,
             created_at: p.created_at,
         });
     }
@@ -181,6 +221,7 @@ pub(super) fn render_proposals_section(
                     ProposalKindTag::Philosophy => "Philosophy",
                     ProposalKindTag::Spec => "ProcedureSpec",
                     ProposalKindTag::Template => "Template",
+                    ProposalKindTag::District => "District",
                 };
 
                 GlassSurface::card(&p, &st.glass)
@@ -436,5 +477,91 @@ mod tests {
         st.sync_builtin_templates(None).unwrap();
         assert!(st.engine.outdated_builtin_template_ids().is_empty());
         assert!(st.engine.templates[&obs_id].description.is_ascii());
+    }
+
+    #[test]
+    fn district_lifecycle_proposals_collect_and_approve_through_app_state() {
+        let mut st = AppState::new_ephemeral();
+        let human = st.human_actor.clone();
+        let dist1_stages = st.engine.districts[0].stages().to_vec();
+
+        let create_ev = st
+            .engine_mut()
+            .apply(
+                &human,
+                EngineCommand::ProposeDistrictCreate {
+                    district_id: None,
+                    name: "DISTRICT 06 - UI Test".into(),
+                    setup_by: None,
+                    summary: "UI proposal test".into(),
+                    principles: vec![Principle {
+                        id: "P-UI-1".into(),
+                        title: "Cohesive".into(),
+                        statement: "Keep UI clean.".into(),
+                        rationale: "Clarity.".into(),
+                    }],
+                    anti_patterns: vec![],
+                    decision_heuristics: vec![],
+                    stages: dist1_stages,
+                    changelog: "v1".into(),
+                    rationale: "Create via UI test".into(),
+                    source_feedback_ids: vec![],
+                    at: 1_900_000_020_000,
+                },
+            )
+            .unwrap();
+        let create_pid = match &create_ev[0] {
+            JobEvent::DistrictProposalCreated { proposal_id, .. } => proposal_id.clone(),
+            _ => unreachable!(),
+        };
+        let items = collect_pending_proposals(&st.engine);
+        assert!(items.iter().any(|i| i.id == create_pid && i.kind == ProposalKindTag::District && i.version_label == "Create"));
+
+        st.open_proposal_detail(create_pid.clone());
+        st.approve_proposal(create_pid).unwrap();
+        let d6 = afterlife_core::DistrictId::from("DIST-006");
+        assert!(st.engine.active_districts().iter().any(|d| d.id == d6));
+
+        let arch_ev = st
+            .engine_mut()
+            .apply(
+                &human,
+                EngineCommand::ProposeDistrictArchive {
+                    district_id: d6.clone(),
+                    rationale: "Archive via UI test".into(),
+                    source_feedback_ids: vec![],
+                    at: 1_900_000_021_000,
+                },
+            )
+            .unwrap();
+        let arch_pid = match &arch_ev[0] {
+            JobEvent::DistrictProposalCreated { proposal_id, .. } => proposal_id.clone(),
+            _ => unreachable!(),
+        };
+        let items = collect_pending_proposals(&st.engine);
+        assert!(items.iter().any(|i| i.id == arch_pid && i.kind == ProposalKindTag::District && i.version_label == "Archive"));
+        st.approve_proposal(arch_pid).unwrap();
+        assert!(st.engine.active_districts().iter().all(|d| d.id != d6));
+
+        let res_ev = st
+            .engine_mut()
+            .apply(
+                &human,
+                EngineCommand::ProposeDistrictRestore {
+                    district_id: d6.clone(),
+                    rationale: "Restore via UI test".into(),
+                    source_feedback_ids: vec![],
+                    at: 1_900_000_022_000,
+                },
+            )
+            .unwrap();
+        let res_pid = match &res_ev[0] {
+            JobEvent::DistrictProposalCreated { proposal_id, .. } => proposal_id.clone(),
+            _ => unreachable!(),
+        };
+        let items = collect_pending_proposals(&st.engine);
+        assert!(items.iter().any(|i| i.id == res_pid && i.kind == ProposalKindTag::District && i.version_label == "Restore"));
+        st.approve_proposal(res_pid).unwrap();
+        assert!(st.engine.active_districts().iter().any(|d| d.id == d6));
     }
 }

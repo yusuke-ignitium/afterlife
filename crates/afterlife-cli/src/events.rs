@@ -182,9 +182,13 @@ fn classify_event_outcome(ev: &Value) -> &'static str {
         "job_queued" => "queued",
         "job_claimed" => "claimed",
         "job_lease_released" => "lease_released",
-        "philosophy_updated" | "spec_updated" | "template_updated" | "builtin_templates_synced" => {
-            "proposal_resolved"
-        }
+        "philosophy_updated"
+        | "spec_updated"
+        | "template_updated"
+        | "builtin_templates_synced"
+        | "district_created"
+        | "district_archived"
+        | "district_restored" => "proposal_resolved",
         "step_recorded" => match ev.get("outcome").and_then(Value::as_str) {
             Some("approved") => "approved",
             Some("reworked") => "reworked",

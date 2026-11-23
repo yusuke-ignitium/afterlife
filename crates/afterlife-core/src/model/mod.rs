@@ -16,7 +16,10 @@ pub use artifact_uri::{
     is_valid_lower_sha256, parse_artifact_uri, parse_blob_uri, sanitize_blob_filename,
     sanitize_owner_segment,
 };
-pub use district::{District, GateRubric, ProcedureSpec, SpecProposal, StageDef, StageKind};
+pub use district::{
+    District, DistrictProposal, DistrictProposalAction, GateRubric, ProcedureSpec, SpecProposal,
+    StageDef, StageKind,
+};
 pub use event::JobEvent;
 pub use feedback::{Feedback, FeedbackKind, GateVerdict, GateVerification};
 pub use inline_link::{InlineLink, ParsedInlineText, is_openable_url, parse_inline_links};

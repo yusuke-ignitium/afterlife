@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{AppDaemonState, auth::now_ms};
 
-use super::{governance_tools, jobs_tools, rpc_err};
+use super::{district_tools, governance_tools, jobs_tools, rpc_err};
 
 pub(super) fn handle_tool_call(
     state: &Arc<AppDaemonState>,
@@ -16,7 +16,19 @@ pub(super) fn handle_tool_call(
 ) -> Value {
     let now = now_ms();
     match name {
-        "districts_list" => jobs_tools::handle_districts_list(state, principal, id),
+        "districts_list" => district_tools::handle_districts_list(state, principal, id, args),
+        "districts_propose_create" => {
+            district_tools::handle_districts_propose_create(state, principal, id, args, now)
+        }
+        "districts_propose_archive" => {
+            district_tools::handle_districts_propose_archive(state, principal, id, args, now)
+        }
+        "districts_propose_restore" => {
+            district_tools::handle_districts_propose_restore(state, principal, id, args, now)
+        }
+        "districts_approve_proposal" => {
+            district_tools::handle_districts_approve_proposal(state, principal, id, args, now)
+        }
         "jobs_list" => jobs_tools::handle_jobs_list(state, principal, id, args),
         "job_get_context" => jobs_tools::handle_job_get_context(state, principal, id, args),
         "jobs_create" => jobs_tools::handle_jobs_create(state, principal, id, args, now),

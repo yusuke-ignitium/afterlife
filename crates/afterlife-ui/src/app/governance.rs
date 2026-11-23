@@ -55,6 +55,16 @@ impl AppState {
                 proposal_id: proposal_id.clone(),
                 at: now_ms(),
             }
+        } else if self
+            .engine
+            .district_proposals
+            .iter()
+            .any(|p| p.id == proposal_id)
+        {
+            EngineCommand::ApproveDistrictProposal {
+                proposal_id: proposal_id.clone(),
+                at: now_ms(),
+            }
         } else {
             let msg = format!("Proposal {proposal_id} was not found.");
             self.proposal_error = Some(msg.clone());

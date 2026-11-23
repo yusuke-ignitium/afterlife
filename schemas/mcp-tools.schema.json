@@ -7,10 +7,78 @@
   "tools": [
     {
       "name": "districts_list",
-      "description": "List the authenticated user's Districts along with their active Philosophy and ProcedureSpec versions.",
+      "description": "List the authenticated user's Districts along with their active Philosophy and ProcedureSpec versions, plus pending District lifecycle proposals (archived Districts excluded unless include_archived is true).",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "include_archived": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "districts_propose_create",
+      "description": "Propose creating a new District with an initial v1 Philosophy and ProcedureSpec (requires human sign-off to activate).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["name", "summary", "principles", "stages", "rationale"],
+        "properties": {
+          "command_id": { "type": "string" },
+          "district_id": { "type": "string" },
+          "name": { "type": "string" },
+          "setup_by": { "type": "string" },
+          "summary": { "type": "string" },
+          "principles": { "type": "array" },
+          "anti_patterns": { "type": "array", "items": { "type": "string" } },
+          "decision_heuristics": { "type": "array", "items": { "type": "string" } },
+          "stages": { "type": "array" },
+          "changelog": { "type": "string" },
+          "rationale": { "type": "string" },
+          "source_feedback_ids": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "districts_propose_archive",
+      "description": "Propose archiving an active District that has no active in-district Jobs while preserving its history (requires human sign-off to activate).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["district_id", "rationale"],
+        "properties": {
+          "command_id": { "type": "string" },
+          "district_id": { "type": "string" },
+          "rationale": { "type": "string" },
+          "source_feedback_ids": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "districts_propose_restore",
+      "description": "Propose restoring an archived District back to active status with its full version history intact (requires human sign-off to activate).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["district_id", "rationale"],
+        "properties": {
+          "command_id": { "type": "string" },
+          "district_id": { "type": "string" },
+          "rationale": { "type": "string" },
+          "source_feedback_ids": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "districts_approve_proposal",
+      "description": "Approve a pending District lifecycle proposal (Create, Archive, or Restore). Strictly human-only (Actor::Human with approvals:decide scope; agents are fail-closed rejected).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["proposal_id"],
+        "properties": {
+          "command_id": { "type": "string" },
+          "proposal_id": { "type": "string" }
+        },
         "additionalProperties": false
       }
     },

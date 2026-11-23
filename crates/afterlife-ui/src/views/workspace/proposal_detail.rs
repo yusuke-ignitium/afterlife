@@ -1,4 +1,7 @@
-use afterlife_core::{PhilosophyProposal, Principle, ProposalId, SpecProposal, StageDef};
+use afterlife_core::{
+    DistrictProposal, DistrictProposalAction, PhilosophyProposal, Principle, ProposalId,
+    SpecProposal, StageDef,
+};
 use afterlife_design::{FontPx, RadiusPx, RowHeightPx, SpacePx, single_line, with_alpha};
 use gpui::{
     AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, div,
@@ -284,6 +287,114 @@ fn render_spec_body(st: &AppState, prop: &SpecProposal) -> AnyElement {
         .into_any_element()
 }
 
+fn district_action_banner(
+    st: &AppState,
+    district_id: &afterlife_core::DistrictId,
+    color: gpui::Rgba,
+    message: &'static str,
+) -> AnyElement {
+    let p = st.palette;
+    let name = st
+        .engine
+        .find_district(district_id)
+        .map(|d| d.name.clone())
+        .unwrap_or_else(|| district_id.to_string());
+    div()
+        .flex()
+        .flex_col()
+        .gap(SpacePx::S8.px())
+        .child(meta_row(st, "Target Name", name))
+        .child(
+            div()
+                .px(SpacePx::S8.px())
+                .py(SpacePx::S4.px())
+                .rounded(p.radius_f32(&st.glass, 0.55))
+                .bg(with_alpha(color, 0.12))
+                .text_size(FontPx::F11.px())
+                .text_color(color)
+                .child(message),
+        )
+        .into_any_element()
+}
+
+fn render_district_proposal_body(st: &AppState, prop: &DistrictProposal) -> AnyElement {
+    let p = st.palette;
+    match &prop.action {
+        DistrictProposalAction::Create {
+            name,
+            setup_by,
+            philosophy,
+            spec,
+            ..
+        } => div()
+            .flex()
+            .flex_col()
+            .gap(SpacePx::S8.px())
+            .child(meta_row(st, "Name", name.clone()))
+            .child(meta_row(st, "Setup By", setup_by.clone()))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(div().text_size(FontPx::F11.px()).text_color(p.text_tertiary).child("Initial Philosophy Summary"))
+                    .child(div().text_size(FontPx::F12.px()).text_color(p.text_primary).child(SharedString::from(philosophy.summary.clone()))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(SpacePx::S4.px())
+                    .child(div().text_size(FontPx::F11.px()).text_color(p.text_tertiary).child(SharedString::from(format!("Principles ({})", philosophy.principles.len()))))
+                    .children(philosophy.principles.iter().map(|pr| {
+                        div()
+                            .px(SpacePx::S8.px())
+                            .py(SpacePx::S4.px())
+                            .rounded(p.radius_f32(&st.glass, 0.55))
+                            .bg(with_alpha(p.text_primary, 0.028))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(div().text_size(FontPx::F11.px()).text_color(p.accent).child(SharedString::from(format!("[+] {} · {}", pr.id, pr.title))))
+                            .child(div().text_size(FontPx::F12.px()).text_color(p.text_secondary).child(SharedString::from(pr.statement.clone())))
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(SpacePx::S4.px())
+                    .child(div().text_size(FontPx::F11.px()).text_color(p.text_tertiary).child(SharedString::from(format!("Initial Stages ({})", spec.stages.len()))))
+                    .children(spec.stages.iter().map(|stage| {
+                        let checks_n = stage.gate_rubric.as_ref().map(|r| r.checks.len()).unwrap_or(0);
+                        div()
+                            .px(SpacePx::S8.px())
+                            .py(SpacePx::S4.px())
+                            .rounded(p.radius_f32(&st.glass, 0.55))
+                            .bg(with_alpha(p.text_primary, 0.028))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(div().text_size(FontPx::F11.px()).text_color(p.accent).child(SharedString::from(format!("[+] {}", stage.label))))
+                            .child(div().text_size(FontPx::F11.px()).text_color(p.text_secondary).child(SharedString::from(format!("{} · {:?} · {} · {} checks", stage.id, stage.kind, stage.runner, checks_n))))
+                    })),
+            )
+            .into_any_element(),
+        DistrictProposalAction::Archive { district_id } => district_action_banner(
+            st,
+            district_id,
+            p.coral,
+            "Hides this District from the active board while preserving Philosophy/Spec history and completed job records.",
+        ),
+        DistrictProposalAction::Restore { district_id } => district_action_banner(
+            st,
+            district_id,
+            p.accent,
+            "Restores this archived District back to the active board with its full Philosophy/Spec version history intact.",
+        ),
+    }
+}
+
 pub(super) fn render_proposal_detail_sheet(
     st: &AppState,
     proposal_id: ProposalId,
@@ -306,6 +417,11 @@ pub(super) fn render_proposal_detail_sheet(
     let tmpl_prop = st
         .engine
         .template_proposals
+        .iter()
+        .find(|pr| pr.id == proposal_id);
+    let dist_prop = st
+        .engine
+        .district_proposals
         .iter()
         .find(|pr| pr.id == proposal_id);
 
@@ -347,6 +463,35 @@ pub(super) fn render_proposal_detail_sheet(
                 pr.source_feedback_ids.clone(),
                 None,
                 render_template_proposal_body(st, pr),
+            )
+        } else if let Some(pr) = dist_prop {
+            let (scope_val, action_label) = match &pr.action {
+                DistrictProposalAction::Create {
+                    proposed_district_id,
+                    ..
+                } => (
+                    proposed_district_id
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| "Auto-assigned on approval".to_string()),
+                    "Create District",
+                ),
+                DistrictProposalAction::Archive { district_id } => {
+                    (district_id.to_string(), "Archive District")
+                }
+                DistrictProposalAction::Restore { district_id } => {
+                    (district_id.to_string(), "Restore District")
+                }
+            };
+            (
+                "District",
+                scope_val,
+                "District Lifecycle",
+                action_label.to_string(),
+                pr.rationale.clone(),
+                pr.source_feedback_ids.clone(),
+                None,
+                render_district_proposal_body(st, pr),
             )
         } else {
             return None;

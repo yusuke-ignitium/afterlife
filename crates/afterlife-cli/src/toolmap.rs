@@ -54,43 +54,16 @@ pub struct FlagSpec {
 
 impl FlagSpec {
     const fn opt(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::McpKey(key),
-            kind,
-            required: false,
-            repeatable: false,
-        }
+        Self { flag, target: FlagTarget::McpKey(key), kind, required: false, repeatable: false }
     }
-
     const fn req(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::McpKey(key),
-            kind,
-            required: true,
-            repeatable: false,
-        }
+        Self { flag, target: FlagTarget::McpKey(key), kind, required: true, repeatable: false }
     }
-
     const fn rep(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::McpKey(key),
-            kind,
-            required: false,
-            repeatable: true,
-        }
+        Self { flag, target: FlagTarget::McpKey(key), kind, required: false, repeatable: true }
     }
-
     const fn local_opt(flag: &'static str, key: &'static str, kind: FlagKind) -> Self {
-        Self {
-            flag,
-            target: FlagTarget::LocalKey(key),
-            kind,
-            required: false,
-            repeatable: false,
-        }
+        Self { flag, target: FlagTarget::LocalKey(key), kind, required: false, repeatable: false }
     }
 }
 
@@ -101,10 +74,7 @@ pub struct PositionalSpec {
 
 impl PositionalSpec {
     const fn new(placeholder: &'static str, mcp_key: &'static str) -> Self {
-        Self {
-            placeholder,
-            mcp_key,
-        }
+        Self { placeholder, mcp_key }
     }
 }
 
@@ -234,7 +204,64 @@ pub const TOOLMAP: &[ToolSpec] = &[
         mcp_tool: Some("districts_list"),
         mutates: false,
         positionals: &[],
-        flags: &[],
+        flags: &[FlagSpec::opt("--include-archived", "include_archived", FlagKind::Bool)],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "propose-create"],
+        mcp_tool: Some("districts_propose_create"),
+        mutates: true,
+        positionals: &[],
+        flags: &[
+            FlagSpec::opt("--district-id", "district_id", FlagKind::String),
+            FlagSpec::req("--name", "name", FlagKind::String),
+            FlagSpec::opt("--setup-by", "setup_by", FlagKind::String),
+            FlagSpec::req("--summary", "summary", FlagKind::String),
+            FlagSpec::req("--principles-json", "principles", FlagKind::Json),
+            FlagSpec::opt("--anti-patterns-json", "anti_patterns", FlagKind::Json),
+            FlagSpec::opt("--heuristics-json", "decision_heuristics", FlagKind::Json),
+            FlagSpec::req("--stages-json", "stages", FlagKind::Json),
+            FlagSpec::opt("--changelog", "changelog", FlagKind::String),
+            FlagSpec::req("--rationale", "rationale", FlagKind::String),
+            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_COMMAND_ID,
+        ],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "propose-archive"],
+        mcp_tool: Some("districts_propose_archive"),
+        mutates: true,
+        positionals: &[PositionalSpec::new("district_id", "district_id")],
+        flags: &[
+            FlagSpec::req("--rationale", "rationale", FlagKind::String),
+            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_COMMAND_ID,
+        ],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "propose-restore"],
+        mcp_tool: Some("districts_propose_restore"),
+        mutates: true,
+        positionals: &[PositionalSpec::new("district_id", "district_id")],
+        flags: &[
+            FlagSpec::req("--rationale", "rationale", FlagKind::String),
+            FlagSpec::rep("--feedback-id", "source_feedback_ids", FlagKind::String),
+            FLAG_COMMAND_ID,
+        ],
+        default_runner: None,
+        payload_hook: None,
+    },
+    ToolSpec {
+        path: &["districts", "approve-proposal"],
+        mcp_tool: Some("districts_approve_proposal"),
+        mutates: true,
+        positionals: &[PositionalSpec::new("proposal_id", "proposal_id")],
+        flags: &[FLAG_COMMAND_ID],
         default_runner: None,
         payload_hook: None,
     },

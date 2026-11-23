@@ -33,7 +33,8 @@ pub fn authorize_command(
         | EngineCommand::ResumeJob { .. }
         | EngineCommand::ApprovePhilosophyProposal { .. }
         | EngineCommand::ApproveSpecProposal { .. }
-        | EngineCommand::ApproveTemplateProposal { .. } => Scope::ApprovalsDecide,
+        | EngineCommand::ApproveTemplateProposal { .. }
+        | EngineCommand::ApproveDistrictProposal { .. } => Scope::ApprovalsDecide,
         EngineCommand::SetStageSubTemplate { .. }
         | EngineCommand::SyncBuiltinTemplates { .. } => Scope::DistrictsAdmin,
         _ => Scope::JobsWork,
@@ -48,6 +49,8 @@ pub fn authorize_command(
         | EngineCommand::SubmitFeedback { district_id, .. }
         | EngineCommand::ProposePhilosophyUpdate { district_id, .. }
         | EngineCommand::ProposeSpecUpdate { district_id, .. }
+        | EngineCommand::ProposeDistrictArchive { district_id, .. }
+        | EngineCommand::ProposeDistrictRestore { district_id, .. }
         | EngineCommand::SetStageSubTemplate { district_id, .. } => Some(district_id),
         EngineCommand::QueueJob {
             target_district_hint,
@@ -112,7 +115,11 @@ pub fn transition_error_to_dispatch(te: afterlife_core::TransitionError) -> Disp
         | afterlife_core::TransitionError::JobStopped { .. }
         | afterlife_core::TransitionError::JobNotStopped { .. }
         | afterlife_core::TransitionError::PhilosophyVersionConflict { .. }
-        | afterlife_core::TransitionError::SpecVersionConflict { .. } => StatusCode::CONFLICT,
+        | afterlife_core::TransitionError::SpecVersionConflict { .. }
+        | afterlife_core::TransitionError::DistrictArchived(_)
+        | afterlife_core::TransitionError::DistrictNotArchived(_)
+        | afterlife_core::TransitionError::DistrictAlreadyExists(_)
+        | afterlife_core::TransitionError::DistrictHasActiveJobs { .. } => StatusCode::CONFLICT,
         _ => StatusCode::UNPROCESSABLE_ENTITY,
     };
     DispatchError {

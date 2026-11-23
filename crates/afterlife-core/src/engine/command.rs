@@ -188,4 +188,42 @@ pub enum EngineCommand {
         template_ids: Option<Vec<SubMachineTemplateId>>,
         at: TimestampMs,
     },
+    ProposeDistrictCreate {
+        #[serde(default)]
+        district_id: Option<DistrictId>,
+        name: String,
+        #[serde(default)]
+        setup_by: Option<String>,
+        summary: String,
+        principles: Vec<Principle>,
+        #[serde(default)]
+        anti_patterns: Vec<String>,
+        #[serde(default)]
+        decision_heuristics: Vec<String>,
+        stages: Vec<StageDef>,
+        #[serde(default)]
+        changelog: String,
+        rationale: String,
+        #[serde(default)]
+        source_feedback_ids: Vec<FeedbackId>,
+        at: TimestampMs,
+    },
+    ProposeDistrictArchive {
+        district_id: DistrictId,
+        rationale: String,
+        #[serde(default)]
+        source_feedback_ids: Vec<FeedbackId>,
+        at: TimestampMs,
+    },
+    ProposeDistrictRestore {
+        district_id: DistrictId,
+        rationale: String,
+        #[serde(default)]
+        source_feedback_ids: Vec<FeedbackId>,
+        at: TimestampMs,
+    },
+    ApproveDistrictProposal {
+        proposal_id: ProposalId,
+        at: TimestampMs,
+    },
 }

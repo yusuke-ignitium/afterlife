@@ -58,7 +58,7 @@ pub fn render_right_districts_pane(
         .overflow_y_scroll()
         .restrict_scroll_to_axis()
         .gap(SpacePx::S24.px())
-        .children(st.engine.districts.iter().map(|district| {
+        .children(st.engine.districts.iter().filter(|d| !d.archived).map(|district| {
             let district_id_drop = district.id.clone();
             let district_pulse_key = format!("district-drop-{}", district.id);
             let district_pulse = motion.pulse_strength(&district_pulse_key);

@@ -1861,6 +1861,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
             philosophy_history: vec![delivery_philosophy],
             active_spec_version: SpecVersion::new(1),
             spec_history: vec![delivery_spec],
+            archived: false,
+            archived_at: None,
         },
         District {
             id: DistrictId::from("DIST-002"),
@@ -1871,6 +1873,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
             philosophy_history: vec![discovery_philosophy],
             active_spec_version: SpecVersion::new(1),
             spec_history: vec![discovery_spec],
+            archived: false,
+            archived_at: None,
         },
         District {
             id: DistrictId::from("DIST-003"),
@@ -1881,6 +1885,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
             philosophy_history: vec![root_cause_philosophy],
             active_spec_version: SpecVersion::new(1),
             spec_history: vec![root_cause_spec],
+            archived: false,
+            archived_at: None,
         },
         District {
             id: DistrictId::from("DIST-004"),
@@ -1891,6 +1897,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
             philosophy_history: vec![perf_philosophy],
             active_spec_version: SpecVersion::new(1),
             spec_history: vec![perf_spec],
+            archived: false,
+            archived_at: None,
         },
         District {
             id: DistrictId::from("DIST-005"),
@@ -1901,6 +1909,8 @@ pub fn default_workspace(owner_id: &OwnerId) -> WorkspaceSeed {
             philosophy_history: vec![prune_philosophy],
             active_spec_version: SpecVersion::new(1),
             spec_history: vec![prune_spec],
+            archived: false,
+            archived_at: None,
         },
     ];
 

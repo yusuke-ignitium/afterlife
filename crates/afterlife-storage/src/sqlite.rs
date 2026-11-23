@@ -54,6 +54,10 @@ fn event_type_name(ev: &JobEvent) -> &'static str {
         JobEvent::TemplateProposed { .. } => "template_proposed",
         JobEvent::TemplateUpdated { .. } => "template_updated",
         JobEvent::BuiltinTemplatesSynced { .. } => "builtin_templates_synced",
+        JobEvent::DistrictProposalCreated { .. } => "district_proposal_created",
+        JobEvent::DistrictCreated { .. } => "district_created",
+        JobEvent::DistrictArchived { .. } => "district_archived",
+        JobEvent::DistrictRestored { .. } => "district_restored",
     }
 }
 
