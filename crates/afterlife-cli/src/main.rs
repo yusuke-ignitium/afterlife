@@ -1,5 +1,7 @@
 mod args;
 mod backdrop;
+mod events;
+mod events_runner;
 mod toolmap;
 mod transport;
 
@@ -10,9 +12,16 @@ use serde_json::{Value, json};
 use crate::{
     args::{build_toolmap, find_spec, parse_spec_args},
     backdrop::run_backdrop_command,
+    events_runner::{run_wait_command, run_watch_command},
     toolmap::{CONCEPT, TOOLMAP},
     transport::{CliError, get_json, mcp_call_tool, mcp_rpc},
 };
+
+enum CliOutput {
+    Silent,
+    Json(Value),
+    JsonWithExit(Value, u8),
+}
 
 fn print_usage() {
     for line in CONCEPT {
@@ -25,14 +34,14 @@ fn print_usage() {
     eprintln!("\nENV: AFTERLIFE_URL (default http://127.0.0.1:4319), AFTERLIFE_TOKEN");
 }
 
-fn run(args: &[String]) -> Result<Option<Value>, CliError> {
+fn run(args: &[String]) -> Result<CliOutput, CliError> {
     if args.is_empty() || matches!(args[0].as_str(), "-h" | "--help" | "help") {
         print_usage();
-        return Ok(None);
+        return Ok(CliOutput::Silent);
     }
 
     if args[0] == "guide" {
-        return Ok(Some(build_toolmap()));
+        return Ok(CliOutput::Json(build_toolmap()));
     }
 
     let Some((spec, consumed)) = find_spec(args) else {
@@ -48,16 +57,26 @@ fn run(args: &[String]) -> Result<Option<Value>, CliError> {
         if let Some(hook) = spec.payload_hook {
             hook(&mut payload, &local_args)?;
         }
-        return mcp_call_tool(tool_name, Value::Object(payload)).map(Some);
+        return mcp_call_tool(tool_name, Value::Object(payload)).map(CliOutput::Json);
     }
 
     match spec.path {
-        ["toolmap"] => Ok(Some(build_toolmap())),
-        ["health"] => get_json("/v1/health").map(Some),
-        ["tools"] => mcp_rpc("tools/list", json!({})).map(Some),
+        ["toolmap"] => Ok(CliOutput::Json(build_toolmap())),
+        ["health"] => get_json("/v1/health").map(CliOutput::Json),
+        ["tools"] => mcp_rpc("tools/list", json!({})).map(CliOutput::Json),
+        ["wait"] => {
+            let (payload, _) = parse_spec_args(spec, rest)?;
+            let (val, code) = run_wait_command(&payload)?;
+            Ok(CliOutput::JsonWithExit(val, code))
+        }
+        ["watch"] => {
+            let (payload, _) = parse_spec_args(spec, rest)?;
+            run_watch_command(&payload)?;
+            Ok(CliOutput::Silent)
+        }
         ["backdrop", sub] => {
             let (payload, _) = parse_spec_args(spec, rest)?;
-            run_backdrop_command(sub, &payload).map(Some)
+            run_backdrop_command(sub, &payload).map(CliOutput::Json)
         }
         ["mcp", "call"] => {
             let (mut payload, _) = parse_spec_args(spec, rest)?;
@@ -66,7 +85,7 @@ fn run(args: &[String]) -> Result<Option<Value>, CliError> {
                 .and_then(|v| v.as_str().map(str::to_string))
                 .ok_or_else(|| CliError::usage("missing <tool_name>"))?;
             let arguments = payload.remove("arguments").unwrap_or_else(|| json!({}));
-            mcp_call_tool(&tool_name, arguments).map(Some)
+            mcp_call_tool(&tool_name, arguments).map(CliOutput::Json)
         }
         _ => Err(CliError::usage("unhandled command")),
     }
@@ -75,10 +94,14 @@ fn run(args: &[String]) -> Result<Option<Value>, CliError> {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match run(&args) {
-        Ok(None) => ExitCode::SUCCESS,
-        Ok(Some(val)) => {
+        Ok(CliOutput::Silent) => ExitCode::SUCCESS,
+        Ok(CliOutput::Json(val)) => {
             println!("{}", serde_json::to_string_pretty(&val).unwrap());
             ExitCode::SUCCESS
+        }
+        Ok(CliOutput::JsonWithExit(val, code)) => {
+            println!("{}", serde_json::to_string_pretty(&val).unwrap());
+            ExitCode::from(code)
         }
         Err(err) => {
             eprintln!("{}", serde_json::to_string_pretty(&err.payload).unwrap());

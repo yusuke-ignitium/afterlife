@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, io::Read, time::Duration};
 
 use serde_json::{Value, json};
 
@@ -73,6 +73,35 @@ pub fn get_json(path: &str) -> Result<Value, CliError> {
             Err(CliError::remote(parsed))
         }
         Err(e) => Err(CliError::transport(format!("GET {url} failed: {e}"))),
+    }
+}
+
+pub fn open_sse_reader(
+    since_seq: u64,
+    read_timeout: Option<Duration>,
+) -> Result<Box<dyn Read + Send + Sync>, CliError> {
+    let url = format!(
+        "{}/v1/events?since_seq={since_seq}",
+        base_url().trim_end_matches('/')
+    );
+    let mut builder = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(5));
+    if let Some(rt) = read_timeout {
+        builder = builder.timeout_read(rt.max(Duration::from_millis(50)));
+    }
+    let agent = builder.build();
+    let mut req = agent.get(&url).set("Accept", "text/event-stream");
+    if let Some(tok) = bearer_token() {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    match req.call() {
+        Ok(resp) => Ok(resp.into_reader()),
+        Err(ureq::Error::Status(status, resp)) => {
+            let raw = resp.into_string().unwrap_or_default();
+            let parsed = serde_json::from_str::<Value>(&raw)
+                .unwrap_or_else(|_| json!({ "status": status, "error": raw }));
+            Err(CliError::remote(parsed))
+        }
+        Err(e) => Err(CliError::transport(format!("SSE {url} failed: {e}"))),
     }
 }
 
