@@ -84,6 +84,7 @@ pub struct AppState {
     pub inspector_open: bool,
     pub pause_animation_when_inactive: bool,
     pub fade_ui_after_secs: f32,
+    pub fade_ui_transparency_pct: f32,
     pub approval_notifications_enabled: bool,
     approval_gate_snapshot: BTreeMap<JobId, ApprovalGateEntry>,
     pub collapsed_step_groups: HashSet<(JobId, usize)>,
@@ -112,6 +113,7 @@ impl AppState {
         let mut display_tile_sizes = BTreeMap::new();
         let mut pause_animation_when_inactive = false;
         let mut fade_ui_after_secs = 0.0;
+        let mut fade_ui_transparency_pct = afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT;
         let mut approval_notifications_enabled = true;
         let load_backdrop_store = backdrop_store
             .clone()
@@ -123,6 +125,7 @@ impl AppState {
                         &mut glass,
                         &mut pause_animation_when_inactive,
                         &mut fade_ui_after_secs,
+                        &mut fade_ui_transparency_pct,
                         &mut approval_notifications_enabled,
                         &backdrop,
                     );
@@ -210,6 +213,7 @@ impl AppState {
             inspector_open: false,
             pause_animation_when_inactive,
             fade_ui_after_secs,
+            fade_ui_transparency_pct,
             approval_notifications_enabled,
             approval_gate_snapshot,
             collapsed_step_groups: HashSet::new(),
@@ -218,11 +222,7 @@ impl AppState {
     }
 
     pub fn open_artifact_preview(&mut self, art: &Artifact) {
-        self.preview_artifact = Some(load_artifact_preview(
-            &self.owner_id,
-            self.daemon.as_ref(),
-            art,
-        ));
+        self.preview_artifact = Some(load_artifact_preview(&self.owner_id, self.daemon.as_ref(), art));
     }
 
     pub fn close_artifact_preview(&mut self) {
@@ -258,10 +258,7 @@ impl AppState {
     }
 
     pub fn sync_approval_badge(&self) {
-        sync_dock_badge(
-            self.engine.approval_jobs().len(),
-            self.approval_notifications_enabled,
-        );
+        sync_dock_badge(self.engine.approval_jobs().len(), self.approval_notifications_enabled);
     }
 
     pub fn toggle_approval_notifications(&mut self) {
@@ -359,29 +356,35 @@ impl AppState {
     }
 
     pub fn set_glass_param(&mut self, key: GlassParamKey, value: f32) {
-        if key == GlassParamKey::InactiveFadeSecs {
-            self.fade_ui_after_secs = if value.is_finite() {
-                value.clamp(0.0, 60.0).round()
-            } else {
-                0.0
-            };
-            return;
-        }
-        if key == GlassParamKey::BgTileSizePx {
-            let clamped = if value.is_finite() {
-                value.clamp(2.0, 24.0).round()
-            } else {
-                self.glass.bg_tile_size_px.round().clamp(2.0, 24.0)
-            };
-            self.glass.bg_tile_size_px = clamped;
-            if let Some(ref uuid) = self.active_display_uuid {
-                self.display_tile_sizes.insert(uuid.clone(), clamped);
+        match key {
+            GlassParamKey::InactiveFadeSecs => {
+                self.fade_ui_after_secs =
+                    if value.is_finite() { value.clamp(0.0, 60.0).round() } else { 0.0 };
+                return;
             }
-            if self.active_display_scale >= 1.5 || self.active_display_uuid.is_none() {
-                self.base_tile_size_px = clamped;
+            GlassParamKey::InactiveFadeTransparencyPct => {
+                self.fade_ui_transparency_pct = if value.is_finite() {
+                    value.clamp(0.0, 90.0).round()
+                } else {
+                    afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT
+                };
+                return;
             }
-        } else {
-            key.set(&mut self.glass, value);
+            GlassParamKey::BgTileSizePx => {
+                let clamped = if value.is_finite() {
+                    value.clamp(2.0, 24.0).round()
+                } else {
+                    self.glass.bg_tile_size_px.round().clamp(2.0, 24.0)
+                };
+                self.glass.bg_tile_size_px = clamped;
+                if let Some(ref uuid) = self.active_display_uuid {
+                    self.display_tile_sizes.insert(uuid.clone(), clamped);
+                }
+                if self.active_display_scale >= 1.5 || self.active_display_uuid.is_none() {
+                    self.base_tile_size_px = clamped;
+                }
+            }
+            _ => key.set(&mut self.glass, value),
         }
         self.refresh_palette();
     }
@@ -389,6 +392,15 @@ impl AppState {
     pub fn inactive_fade_delay_secs(&self) -> Option<u64> {
         let secs = self.fade_ui_after_secs.round().clamp(0.0, 60.0) as u64;
         (secs > 0).then_some(secs)
+    }
+
+    pub fn inactive_fade_target_opacity(&self) -> f32 {
+        let pct = if self.fade_ui_transparency_pct.is_finite() {
+            self.fade_ui_transparency_pct.clamp(0.0, 90.0).round()
+        } else {
+            afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT
+        };
+        (1.0 - pct / 100.0).clamp(0.10, 1.0)
     }
 
     pub fn reset_glass_settings(&mut self, preset: GlassSettings) {
@@ -427,6 +439,7 @@ impl AppState {
             self.glass,
             self.pause_animation_when_inactive,
             self.fade_ui_after_secs,
+            self.fade_ui_transparency_pct,
             self.approval_notifications_enabled,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
@@ -435,6 +448,7 @@ impl AppState {
             &mut self.glass,
             &mut self.pause_animation_when_inactive,
             &mut self.fade_ui_after_secs,
+            &mut self.fade_ui_transparency_pct,
             &mut self.approval_notifications_enabled,
             &cfg,
         );
@@ -450,6 +464,7 @@ impl AppState {
             self.glass,
             self.pause_animation_when_inactive,
             self.fade_ui_after_secs,
+            self.fade_ui_transparency_pct,
             self.approval_notifications_enabled,
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
@@ -475,6 +490,7 @@ impl AppState {
                 &self.glass,
                 self.pause_animation_when_inactive,
                 self.fade_ui_after_secs,
+                self.fade_ui_transparency_pct,
                 self.approval_notifications_enabled,
             ),
             self.display_tile_sizes.clone(),
@@ -604,10 +620,20 @@ mod tests {
         assert!(st.active_tab == TabId::Workspace);
 
         assert_eq!(st.inactive_fade_delay_secs(), None);
+        assert!(GlassParamKey::InactiveFadeTransparencyPct.is_dimmed(&st));
+        assert!((st.inactive_fade_target_opacity() - 0.24).abs() < 1e-4);
         assert_eq!(GlassParamKey::InactiveFadeSecs.format_value(0.0), "Off");
+        assert_eq!(GlassParamKey::InactiveFadeTransparencyPct.format_value(76.0), "76%");
         st.set_glass_param(GlassParamKey::InactiveFadeSecs, 12.6);
         assert_eq!(st.inactive_fade_delay_secs(), Some(13));
+        assert!(!GlassParamKey::InactiveFadeTransparencyPct.is_dimmed(&st));
         assert_eq!(GlassParamKey::InactiveFadeSecs.format_value(13.0), "13s");
+        st.set_glass_param(GlassParamKey::InactiveFadeTransparencyPct, 999.0);
+        assert!((st.inactive_fade_target_opacity() - 0.10).abs() < 1e-4);
+        st.set_glass_param(GlassParamKey::InactiveFadeTransparencyPct, -5.0);
+        assert!((st.inactive_fade_target_opacity() - 1.0).abs() < 1e-4);
+        st.set_glass_param(GlassParamKey::InactiveFadeTransparencyPct, f32::NAN);
+        assert!((st.inactive_fade_target_opacity() - 0.24).abs() < 1e-4);
         st.set_glass_param(GlassParamKey::InactiveFadeSecs, 999.0);
         assert_eq!(st.inactive_fade_delay_secs(), Some(60));
         st.set_glass_param(GlassParamKey::InactiveFadeSecs, -5.0);

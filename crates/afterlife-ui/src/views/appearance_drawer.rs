@@ -258,7 +258,7 @@ fn render_slider_row(
     let val = key.get(st);
     let frac = ((val - min) / (max - min)).clamp(0.0, 1.0);
     let val_text = key.format_value(val);
-    let dimmed = key.is_dimmed(&st.glass);
+    let dimmed = key.is_dimmed(st);
     let grp = SharedString::from(format!("slider-grp-{}", idx));
     let thumb_size = if is_dragging { 10.0 } else { 8.0 };
     let thumb_half = thumb_size * 0.5;

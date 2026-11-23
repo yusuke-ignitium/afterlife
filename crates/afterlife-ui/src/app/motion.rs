@@ -20,7 +20,6 @@ pub const TOGGLE_MS: u64 = 220;
 pub const PULSE_MS: u64 = 300;
 pub const INACTIVE_FADE_IN_MS: u64 = 1400;
 pub const INACTIVE_FADE_OUT_MS: u64 = 260;
-pub const INACTIVE_UI_MIN_OPACITY: f32 = 0.24;
 
 pub fn ease_out_cubic(t: f32) -> f32 {
     let clamped = t.clamp(0.0, 1.0);
@@ -287,12 +286,9 @@ impl UiMotion {
                 if st.approval_notifications_enabled { 1.0 } else { 0.0 },
                 now,
             );
+            let fade_opacity = st.inactive_fade_target_opacity();
             self.inactive_ui_opacity = ScalarTransition::settled(
-                if should_dim_ui {
-                    INACTIVE_UI_MIN_OPACITY
-                } else {
-                    1.0
-                },
+                if should_dim_ui { fade_opacity } else { 1.0 },
                 now,
             );
             if let Some(id) = &selected_id {
@@ -415,7 +411,7 @@ impl UiMotion {
                 now,
             );
             let (inactive_target, inactive_ms) = if should_dim_ui {
-                (INACTIVE_UI_MIN_OPACITY, INACTIVE_FADE_IN_MS)
+                (st.inactive_fade_target_opacity(), INACTIVE_FADE_IN_MS)
             } else {
                 (1.0, INACTIVE_FADE_OUT_MS)
             };
@@ -584,7 +580,7 @@ mod tests {
 
     #[test]
     fn inactive_fade_transitions_smoothly_and_preserves_visibility_floor() {
-        let mut st = AppState::new();
+        let mut st = AppState::new_ephemeral();
         st.fade_ui_after_secs = 0.0;
         let t0 = Instant::now();
         let mut motion = UiMotion::new();
@@ -600,28 +596,30 @@ mod tests {
 
         let t_mid = t1 + Duration::from_millis(INACTIVE_FADE_IN_MS / 2);
         let snap_mid = motion.sync(&st, true, t_mid);
-        assert!(snap_mid.inactive_ui_opacity < 0.8);
-        assert!(snap_mid.inactive_ui_opacity > INACTIVE_UI_MIN_OPACITY);
+        assert!(snap_mid.inactive_ui_opacity < 0.8 && snap_mid.inactive_ui_opacity > 0.24);
         assert!(snap_mid.animating);
 
         let t_settled = t1 + Duration::from_millis(INACTIVE_FADE_IN_MS + 50);
         let snap_settled = motion.sync(&st, true, t_settled);
-        assert!((snap_settled.inactive_ui_opacity - INACTIVE_UI_MIN_OPACITY).abs() < 1e-4);
-        assert!(snap_settled.inactive_ui_opacity > 0.15);
+        assert!((snap_settled.inactive_ui_opacity - 0.24).abs() < 1e-4);
         assert!(!snap_settled.animating);
 
-        let t_wake = t_settled + Duration::from_millis(10);
-        let _ = motion.sync(&st, false, t_wake);
-        let snap_waking = motion.sync(&st, false, t_wake + Duration::from_millis(100));
-        assert!(snap_waking.inactive_ui_opacity > INACTIVE_UI_MIN_OPACITY);
-        assert!(snap_waking.inactive_ui_opacity < 1.0);
-        assert!(snap_waking.animating);
+        st.set_glass_param(crate::app::appearance::GlassParamKey::InactiveFadeTransparencyPct, 90.0);
+        let t_max = t_settled + Duration::from_millis(10);
+        let _ = motion.sync(&st, true, t_max);
+        let snap_floor = motion.sync(&st, true, t_max + Duration::from_millis(INACTIVE_FADE_IN_MS + 50));
+        assert!((snap_floor.inactive_ui_opacity - 0.10).abs() < 1e-4);
+        assert!(!snap_floor.animating);
 
-        let snap_restored = motion.sync(
-            &st,
-            false,
-            t_wake + Duration::from_millis(INACTIVE_FADE_OUT_MS + 50),
-        );
+        st.set_glass_param(crate::app::appearance::GlassParamKey::InactiveFadeTransparencyPct, 0.0);
+        let t_zero = t_max + Duration::from_millis(INACTIVE_FADE_IN_MS + 60);
+        let _ = motion.sync(&st, true, t_zero);
+        let snap_zero = motion.sync(&st, true, t_zero + Duration::from_millis(INACTIVE_FADE_IN_MS + 50));
+        assert!((snap_zero.inactive_ui_opacity - 1.0).abs() < 1e-4);
+        assert!(!snap_zero.animating);
+
+        let t_wake = t_zero + Duration::from_millis(INACTIVE_FADE_IN_MS + 60);
+        let snap_restored = motion.sync(&st, false, t_wake + Duration::from_millis(INACTIVE_FADE_OUT_MS + 50));
         assert_eq!(snap_restored.inactive_ui_opacity, 1.0);
         assert!(!snap_restored.animating);
     }

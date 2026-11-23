@@ -7,6 +7,7 @@ pub(crate) fn apply_backdrop_config(
     glass: &mut GlassSettings,
     pause_animation_when_inactive: &mut bool,
     fade_ui_after_secs: &mut f32,
+    fade_ui_transparency_pct: &mut f32,
     approval_notifications_enabled: &mut bool,
     cfg: &BackdropConfig,
 ) {
@@ -33,6 +34,7 @@ pub(crate) fn apply_backdrop_config(
         glass.tint_rgb = saved.tint_rgb;
         *pause_animation_when_inactive = saved.pause_animation_when_inactive;
         *fade_ui_after_secs = saved.fade_ui_after_secs;
+        *fade_ui_transparency_pct = saved.fade_ui_transparency_pct;
         *approval_notifications_enabled = saved.approval_notifications_enabled;
     }
 }
@@ -56,6 +58,7 @@ pub(crate) fn snapshot_glass_appearance(
     glass: &GlassSettings,
     pause_animation_when_inactive: bool,
     fade_ui_after_secs: f32,
+    fade_ui_transparency_pct: f32,
     approval_notifications_enabled: bool,
 ) -> BackdropGlassAppearance {
     BackdropGlassAppearance {
@@ -71,6 +74,7 @@ pub(crate) fn snapshot_glass_appearance(
         tint_rgb: glass.tint_rgb,
         pause_animation_when_inactive,
         fade_ui_after_secs,
+        fade_ui_transparency_pct,
         approval_notifications_enabled,
     }
 }
@@ -100,10 +104,11 @@ pub enum GlassParamKey {
     BgAlpha,
     Radius,
     InactiveFadeSecs,
+    InactiveFadeTransparencyPct,
 }
 
 impl GlassParamKey {
-    pub const ALL: [GlassParamKey; 16] = [
+    pub const ALL: [GlassParamKey; 17] = [
         Self::BgBrightness,
         Self::BgTileSizePx,
         Self::BgImageHoldSecs,
@@ -120,6 +125,7 @@ impl GlassParamKey {
         Self::BgAlpha,
         Self::Radius,
         Self::InactiveFadeSecs,
+        Self::InactiveFadeTransparencyPct,
     ];
 
     pub fn section(self) -> GlassParamSection {
@@ -130,12 +136,15 @@ impl GlassParamKey {
             | Self::BgImageBrightness
             | Self::BgPeakLuminance
             | Self::BgImageSaturation => GlassParamSection::Backdrop,
-            Self::InactiveFadeSecs => GlassParamSection::Inactive,
+            Self::InactiveFadeSecs | Self::InactiveFadeTransparencyPct => {
+                GlassParamSection::Inactive
+            }
             _ => GlassParamSection::Surface,
         }
     }
 
-    pub fn is_dimmed(self, glass: &GlassSettings) -> bool {
+    pub fn is_dimmed(self, st: &AppState) -> bool {
+        let glass = &st.glass;
         match self {
             Self::BgImageHoldSecs => !glass.bg_image_enabled,
             Self::BgImageBrightness | Self::BgPeakLuminance | Self::BgImageSaturation => {
@@ -143,6 +152,7 @@ impl GlassParamKey {
                     && !glass.bg_apple_music_artwork_enabled
                     && !glass.bg_youtube_mirror_enabled
             }
+            Self::InactiveFadeTransparencyPct => st.inactive_fade_delay_secs().is_none(),
             _ => false,
         }
     }
@@ -165,6 +175,7 @@ impl GlassParamKey {
             Self::BgAlpha => ("Glass Opacity", 0.0, 0.85, 2),
             Self::Radius => ("Corner Radius", 0.0, 20.0, 1),
             Self::InactiveFadeSecs => ("Fade UI After", 0.0, 60.0, 0),
+            Self::InactiveFadeTransparencyPct => ("Fade Transparency", 0.0, 90.0, 0),
         }
     }
 
@@ -187,6 +198,7 @@ impl GlassParamKey {
             Self::BgAlpha => g.bg_alpha,
             Self::Radius => g.radius,
             Self::InactiveFadeSecs => st.fade_ui_after_secs,
+            Self::InactiveFadeTransparencyPct => st.fade_ui_transparency_pct,
         }
     }
 
@@ -198,6 +210,10 @@ impl GlassParamKey {
             } else {
                 format!("{secs}s")
             };
+        }
+        if self == Self::InactiveFadeTransparencyPct {
+            let pct = val.round().clamp(0.0, 90.0) as u32;
+            return format!("{pct}%");
         }
         let (_, _, _, dp) = self.spec();
         match dp {
@@ -226,7 +242,7 @@ impl GlassParamKey {
             Self::BlurStdDev => g.blur_std_dev = v,
             Self::BgAlpha => g.bg_alpha = v,
             Self::Radius => g.radius = v,
-            Self::InactiveFadeSecs => {}
+            Self::InactiveFadeSecs | Self::InactiveFadeTransparencyPct => {}
         }
     }
 }
@@ -248,7 +264,13 @@ mod tests {
 
         assert_eq!(snapshot_tuning(&glass_def), tuning_def);
         assert_eq!(
-            snapshot_glass_appearance(&glass_def, false, 0.0, true),
+            snapshot_glass_appearance(
+                &glass_def,
+                false,
+                0.0,
+                afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT,
+                true,
+            ),
             saved_glass_def
         );
         assert_eq!(glass_def.particle_wave_tuning(), wave_def);
@@ -281,18 +303,22 @@ mod tests {
         let cfg = BackdropConfig {
             images: Vec::new(),
             tuning: snapshot_tuning(&original),
-            glass: Some(snapshot_glass_appearance(&original, true, 15.0, false)),
+            glass: Some(snapshot_glass_appearance(
+                &original, true, 15.0, 55.0, false,
+            )),
             display_tile_sizes: BTreeMap::new(),
         };
 
         let mut restored = GlassSettings::default();
         let mut pause_inactive = false;
         let mut fade_after_secs = 0.0;
+        let mut fade_transparency_pct = 76.0;
         let mut approval_notifications = true;
         apply_backdrop_config(
             &mut restored,
             &mut pause_inactive,
             &mut fade_after_secs,
+            &mut fade_transparency_pct,
             &mut approval_notifications,
             &cfg,
         );
@@ -300,6 +326,7 @@ mod tests {
         assert_eq!(restored, original);
         assert!(pause_inactive);
         assert_eq!(fade_after_secs, 15.0);
+        assert_eq!(fade_transparency_pct, 55.0);
         assert!(!approval_notifications);
     }
 }

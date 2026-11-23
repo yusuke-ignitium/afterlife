@@ -57,16 +57,39 @@ fn legacy_backdrop_json_without_notification_flag_loads_cleanly() {
     let glass = loaded.glass.expect("glass section should load");
     assert!(glass.pause_animation_when_inactive);
     assert_eq!(glass.fade_ui_after_secs, 12.0);
+    assert_eq!(glass.fade_ui_transparency_pct, 76.0);
     assert!(glass.approval_notifications_enabled);
     assert_eq!(glass.disp_scale, BackdropGlassAppearance::default().disp_scale);
 
     let mut updated_glass = glass;
     updated_glass.approval_notifications_enabled = false;
+    updated_glass.fade_ui_transparency_pct = 42.6;
     store
         .save_appearance_with_displays(loaded.tuning, updated_glass, std::collections::BTreeMap::new())
         .unwrap();
     let reloaded = store.load().unwrap();
-    assert!(!reloaded.glass.unwrap().approval_notifications_enabled);
+    let reloaded_glass = reloaded.glass.unwrap();
+    assert!(!reloaded_glass.approval_notifications_enabled);
+    assert_eq!(reloaded_glass.fade_ui_transparency_pct, 43.0);
+
+    let clamped_hi = BackdropGlassAppearance {
+        fade_ui_transparency_pct: 120.0,
+        ..BackdropGlassAppearance::default()
+    }
+    .clamped();
+    assert_eq!(clamped_hi.fade_ui_transparency_pct, 90.0);
+    let clamped_lo = BackdropGlassAppearance {
+        fade_ui_transparency_pct: -10.0,
+        ..BackdropGlassAppearance::default()
+    }
+    .clamped();
+    assert_eq!(clamped_lo.fade_ui_transparency_pct, 0.0);
+    let clamped_nan = BackdropGlassAppearance {
+        fade_ui_transparency_pct: f32::NAN,
+        ..BackdropGlassAppearance::default()
+    }
+    .clamped();
+    assert_eq!(clamped_nan.fade_ui_transparency_pct, 76.0);
 
     let _ = fs::remove_dir_all(&dir);
 }

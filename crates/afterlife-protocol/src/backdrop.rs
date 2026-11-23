@@ -19,6 +19,7 @@ pub const DEFAULT_IMAGE_BRIGHTNESS: f32 = 0.40;
 pub const DEFAULT_IMAGE_PEAK_LUMINANCE: f32 = 0.55;
 pub const DEFAULT_IMAGE_SATURATION: f32 = 0.64;
 pub const DEFAULT_MASTER_BRIGHTNESS: f32 = 1.50;
+pub const DEFAULT_FADE_UI_TRANSPARENCY_PCT: f32 = 76.0;
 
 const MAX_BACKDROP_DIM: &str = "1600";
 static TMP_FILE_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -122,6 +123,7 @@ pub struct BackdropGlassAppearance {
     pub tint_rgb: [u8; 3],
     pub pause_animation_when_inactive: bool,
     pub fade_ui_after_secs: f32,
+    pub fade_ui_transparency_pct: f32,
     pub approval_notifications_enabled: bool,
 }
 
@@ -140,6 +142,7 @@ impl Default for BackdropGlassAppearance {
             tint_rgb: [7, 9, 14],
             pause_animation_when_inactive: false,
             fade_ui_after_secs: 0.0,
+            fade_ui_transparency_pct: DEFAULT_FADE_UI_TRANSPARENCY_PCT,
             approval_notifications_enabled: true,
         }
     }
@@ -161,6 +164,7 @@ impl BackdropGlassAppearance {
             tint_rgb: self.tint_rgb,
             pause_animation_when_inactive: self.pause_animation_when_inactive,
             fade_ui_after_secs: finite_clamp(self.fade_ui_after_secs, 0.0, 60.0, def.fade_ui_after_secs).round(),
+            fade_ui_transparency_pct: finite_clamp(self.fade_ui_transparency_pct, 0.0, 90.0, def.fade_ui_transparency_pct).round(),
             approval_notifications_enabled: self.approval_notifications_enabled,
         }
     }
@@ -662,6 +666,7 @@ mod tests {
             tint_rgb: [12, 34, 56],
             pause_animation_when_inactive: true,
             fade_ui_after_secs: 999.0,
+            fade_ui_transparency_pct: f32::NAN,
             approval_notifications_enabled: false,
         }
         .clamped();
@@ -825,32 +830,17 @@ mod tests {
     #[test]
     fn resolve_tile_size_scales_with_backing_factor_and_prefers_per_display_override() {
         let mut overrides = BTreeMap::new();
-        assert_eq!(
-            resolve_tile_size_for_display(3.0, Some("retina-uuid"), 2.0, &overrides),
-            3.0
-        );
-        assert_eq!(
-            resolve_tile_size_for_display(3.0, Some("lg-tv-uuid"), 1.0, &overrides),
-            2.0
-        );
-        assert_eq!(
-            resolve_tile_size_for_display(6.0, Some("fhd-24-uuid"), 1.0, &overrides),
-            3.0
-        );
+        let res = |base, id, scale, ov: &BTreeMap<String, f32>| {
+            resolve_tile_size_for_display(base, Some(id), scale, ov)
+        };
+        assert_eq!(res(3.0, "retina-uuid", 2.0, &overrides), 3.0);
+        assert_eq!(res(3.0, "lg-tv-uuid", 1.0, &overrides), 2.0);
+        assert_eq!(res(6.0, "fhd-24-uuid", 1.0, &overrides), 3.0);
 
         overrides.insert("lg-tv-uuid".to_string(), 3.0289884);
-        assert_eq!(
-            resolve_tile_size_for_display(3.0, Some("lg-tv-uuid"), 1.0, &overrides),
-            3.0
-        );
-        assert_eq!(
-            resolve_tile_size_for_display(5.0, Some("fhd-24-uuid"), 1.0, &overrides),
-            3.0
-        );
-        assert_eq!(
-            resolve_tile_size_for_display(3.0, Some("retina-uuid"), 2.0, &overrides),
-            3.0
-        );
+        assert_eq!(res(3.0, "lg-tv-uuid", 1.0, &overrides), 3.0);
+        assert_eq!(res(5.0, "fhd-24-uuid", 1.0, &overrides), 3.0);
+        assert_eq!(res(3.0, "retina-uuid", 2.0, &overrides), 3.0);
     }
 
     #[test]
