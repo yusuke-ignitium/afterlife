@@ -23,7 +23,9 @@ pub use crate::app::appearance::{GlassParamKey, GlassParamSection};
 pub use crate::app::artifact_preview::{ArtifactPreview, ArtifactPreviewBody};
 use crate::{
     app::{
-        appearance::{apply_backdrop_config, snapshot_glass_appearance, snapshot_tuning},
+        appearance::{
+            UiPreferences, apply_backdrop_config, snapshot_glass_appearance, snapshot_tuning,
+        },
         artifact_preview::load_artifact_preview,
         notifications::{
             ApprovalGateEntry, diff_newly_entered_approval_gates, snapshot_approval_gates,
@@ -86,6 +88,7 @@ pub struct AppState {
     pub fade_ui_after_secs: f32,
     pub fade_ui_transparency_pct: f32,
     pub approval_notifications_enabled: bool,
+    pub compact_districts: bool,
     approval_gate_snapshot: BTreeMap<JobId, ApprovalGateEntry>,
     pub collapsed_step_groups: HashSet<(JobId, usize)>,
     pub preview_artifact: Option<ArtifactPreview>,
@@ -111,24 +114,14 @@ impl AppState {
         let mut glass = GlassSettings::default();
         let mut base_tile_size_px = glass.bg_tile_size_px;
         let mut display_tile_sizes = BTreeMap::new();
-        let mut pause_animation_when_inactive = false;
-        let mut fade_ui_after_secs = 0.0;
-        let mut fade_ui_transparency_pct = afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT;
-        let mut approval_notifications_enabled = true;
+        let mut prefs = UiPreferences::default();
         let load_backdrop_store = backdrop_store
             .clone()
             .or_else(|| perf_use_live_data.then(BackdropStore::open_default));
         if let Some(ref store) = load_backdrop_store {
             match store.load() {
                 Ok(backdrop) => {
-                    apply_backdrop_config(
-                        &mut glass,
-                        &mut pause_animation_when_inactive,
-                        &mut fade_ui_after_secs,
-                        &mut fade_ui_transparency_pct,
-                        &mut approval_notifications_enabled,
-                        &backdrop,
-                    );
+                    apply_backdrop_config(&mut glass, &mut prefs, &backdrop);
                     base_tile_size_px = backdrop.tuning.clamped().tile_size_px;
                     display_tile_sizes = sanitize_display_tile_sizes(backdrop.display_tile_sizes);
                 }
@@ -211,10 +204,11 @@ impl AppState {
             palette,
             settings_open: false,
             inspector_open: false,
-            pause_animation_when_inactive,
-            fade_ui_after_secs,
-            fade_ui_transparency_pct,
-            approval_notifications_enabled,
+            pause_animation_when_inactive: prefs.pause_animation_when_inactive,
+            fade_ui_after_secs: prefs.fade_ui_after_secs,
+            fade_ui_transparency_pct: prefs.fade_ui_transparency_pct,
+            approval_notifications_enabled: prefs.approval_notifications_enabled,
+            compact_districts: prefs.compact_districts,
             approval_gate_snapshot,
             collapsed_step_groups: HashSet::new(),
             preview_artifact: None,
@@ -265,6 +259,21 @@ impl AppState {
         self.approval_notifications_enabled = !self.approval_notifications_enabled;
         self.sync_approval_badge();
         self.persist_appearance();
+    }
+
+    pub fn toggle_compact_districts(&mut self) {
+        self.compact_districts = !self.compact_districts;
+        self.persist_appearance();
+    }
+
+    fn ui_preferences(&self) -> UiPreferences {
+        UiPreferences {
+            pause_animation_when_inactive: self.pause_animation_when_inactive,
+            fade_ui_after_secs: self.fade_ui_after_secs,
+            fade_ui_transparency_pct: self.fade_ui_transparency_pct,
+            approval_notifications_enabled: self.approval_notifications_enabled,
+            compact_districts: self.compact_districts,
+        }
     }
 
     pub fn dispatch(&mut self, command: EngineCommand) -> Result<Option<JobId>, String> {
@@ -437,21 +446,17 @@ impl AppState {
         };
         let before = (
             self.glass,
-            self.pause_animation_when_inactive,
-            self.fade_ui_after_secs,
-            self.fade_ui_transparency_pct,
-            self.approval_notifications_enabled,
+            self.ui_preferences(),
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
-        apply_backdrop_config(
-            &mut self.glass,
-            &mut self.pause_animation_when_inactive,
-            &mut self.fade_ui_after_secs,
-            &mut self.fade_ui_transparency_pct,
-            &mut self.approval_notifications_enabled,
-            &cfg,
-        );
+        let mut prefs = self.ui_preferences();
+        apply_backdrop_config(&mut self.glass, &mut prefs, &cfg);
+        self.pause_animation_when_inactive = prefs.pause_animation_when_inactive;
+        self.fade_ui_after_secs = prefs.fade_ui_after_secs;
+        self.fade_ui_transparency_pct = prefs.fade_ui_transparency_pct;
+        self.approval_notifications_enabled = prefs.approval_notifications_enabled;
+        self.compact_districts = prefs.compact_districts;
         self.base_tile_size_px = cfg.tuning.clamped().tile_size_px;
         self.display_tile_sizes = sanitize_display_tile_sizes(cfg.display_tile_sizes);
         self.glass.bg_tile_size_px = resolve_tile_size_for_display(
@@ -462,10 +467,7 @@ impl AppState {
         );
         let after = (
             self.glass,
-            self.pause_animation_when_inactive,
-            self.fade_ui_after_secs,
-            self.fade_ui_transparency_pct,
-            self.approval_notifications_enabled,
+            self.ui_preferences(),
             self.base_tile_size_px,
             self.display_tile_sizes.clone(),
         );
@@ -486,13 +488,7 @@ impl AppState {
         tuning.tile_size_px = self.base_tile_size_px.clamp(2.0, 24.0);
         if let Err(e) = store.save_appearance_with_displays(
             tuning,
-            snapshot_glass_appearance(
-                &self.glass,
-                self.pause_animation_when_inactive,
-                self.fade_ui_after_secs,
-                self.fade_ui_transparency_pct,
-                self.approval_notifications_enabled,
-            ),
+            snapshot_glass_appearance(&self.glass, self.ui_preferences()),
             self.display_tile_sizes.clone(),
         ) {
             eprintln!("afterlife-ui: failed to save appearance config ({e})");

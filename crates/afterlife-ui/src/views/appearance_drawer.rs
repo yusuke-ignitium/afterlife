@@ -562,6 +562,18 @@ pub fn render_appearance_drawer(
                     },
                     cx,
                 ))
+                .child(render_section_label(st, "Layout", SpacePx::S8))
+                .child(render_toggle_row(
+                    st,
+                    "toggle-compact-districts",
+                    "Compact Districts",
+                    st.compact_districts,
+                    motion.toggle_compact_districts_progress,
+                    |st| {
+                        st.toggle_compact_districts();
+                    },
+                    cx,
+                ))
                 .child(render_section_label(st, "Notifications", SpacePx::S8))
                 .child(render_toggle_row(
                     st,
