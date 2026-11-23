@@ -38,7 +38,7 @@ path = "src/bin/detail_footer_demo.rs"
 
 [[bin]]
 name = "district-compact-demo"
-path = "src/bin/district_compact_demo.rs"
+path = "src/bin/district_compact_demo/main.rs"
 
 [dependencies]
 afterlife-design = { path = "../../crates/afterlife-design" }
