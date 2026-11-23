@@ -116,6 +116,7 @@ pub struct BackdropGlassAppearance {
     pub fade_ui_after_secs: f32,
     pub fade_ui_transparency_pct: f32,
     pub approval_notifications_enabled: bool,
+    pub compact_districts: bool,
 }
 
 impl Default for BackdropGlassAppearance {
@@ -135,6 +136,7 @@ impl Default for BackdropGlassAppearance {
             fade_ui_after_secs: 0.0,
             fade_ui_transparency_pct: DEFAULT_FADE_UI_TRANSPARENCY_PCT,
             approval_notifications_enabled: true,
+            compact_districts: false,
         }
     }
 }
@@ -157,6 +159,7 @@ impl BackdropGlassAppearance {
             fade_ui_after_secs: finite_clamp(self.fade_ui_after_secs, 0.0, 60.0, def.fade_ui_after_secs).round(),
             fade_ui_transparency_pct: finite_clamp(self.fade_ui_transparency_pct, 0.0, 90.0, def.fade_ui_transparency_pct).round(),
             approval_notifications_enabled: self.approval_notifications_enabled,
+            compact_districts: self.compact_districts,
         }
     }
 }

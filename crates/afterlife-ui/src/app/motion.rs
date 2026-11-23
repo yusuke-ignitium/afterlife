@@ -113,6 +113,18 @@ impl ScalarTransition {
     }
 }
 
+fn settled_toggle(on: bool, now: Instant) -> ScalarTransition {
+    ScalarTransition::settled(if on { 1.0 } else { 0.0 }, now)
+}
+
+fn set_toggle_target(tr: &mut ScalarTransition, on: bool, now: Instant) {
+    tr.set_target(
+        if on { 1.0 } else { 0.0 },
+        Duration::from_millis(TOGGLE_MS),
+        now,
+    );
+}
+
 pub struct MotionSnapshot {
     pub drawer_progress: f32,
     pub inspector_progress: f32,
@@ -129,6 +141,7 @@ pub struct MotionSnapshot {
     pub toggle_centerline_progress: f32,
     pub toggle_px_guard_progress: f32,
     pub toggle_notifications_progress: f32,
+    pub toggle_compact_districts_progress: f32,
     pub inactive_ui_opacity: f32,
     pub selection_weights: HashMap<JobId, f32>,
     pub pulses: HashMap<String, f32>,
@@ -166,6 +179,7 @@ pub struct UiMotion {
     toggle_centerline: ScalarTransition,
     toggle_px_guard: ScalarTransition,
     toggle_notifications: ScalarTransition,
+    toggle_compact_districts: ScalarTransition,
     inactive_ui_opacity: ScalarTransition,
     selection_weights: HashMap<JobId, ScalarTransition>,
     pulses: HashMap<String, Instant>,
@@ -199,6 +213,7 @@ impl UiMotion {
             toggle_centerline: ScalarTransition::settled(0.0, now),
             toggle_px_guard: ScalarTransition::settled(0.0, now),
             toggle_notifications: ScalarTransition::settled(1.0, now),
+            toggle_compact_districts: ScalarTransition::settled(0.0, now),
             inactive_ui_opacity: ScalarTransition::settled(1.0, now),
             selection_weights: HashMap::new(),
             pulses: HashMap::new(),
@@ -242,50 +257,15 @@ impl UiMotion {
             self.last_detail_job_id = selected_id.clone();
             self.last_detail_proposal_id = selected_proposal.clone();
             self.last_tab = st.active_tab;
-            self.toggle_apple_music = ScalarTransition::settled(
-                if st.glass.bg_apple_music_artwork_enabled {
-                    1.0
-                } else {
-                    0.0
-                },
-                now,
-            );
-            self.toggle_youtube_mirror = ScalarTransition::settled(
-                if st.glass.bg_youtube_mirror_enabled {
-                    1.0
-                } else {
-                    0.0
-                },
-                now,
-            );
-            self.toggle_backdrop =
-                ScalarTransition::settled(if st.glass.bg_image_enabled { 1.0 } else { 0.0 }, now);
-            self.toggle_pause = ScalarTransition::settled(
-                if st.pause_animation_when_inactive {
-                    1.0
-                } else {
-                    0.0
-                },
-                now,
-            );
-            self.toggle_liquid_glass = ScalarTransition::settled(
-                if st.style == UiStyle::LiquidGlass {
-                    1.0
-                } else {
-                    0.0
-                },
-                now,
-            );
-            self.toggle_centerline =
-                ScalarTransition::settled(if st.show_centerline { 1.0 } else { 0.0 }, now);
-            self.toggle_px_guard = ScalarTransition::settled(
-                if st.active_tab == TabId::Guard { 1.0 } else { 0.0 },
-                now,
-            );
-            self.toggle_notifications = ScalarTransition::settled(
-                if st.approval_notifications_enabled { 1.0 } else { 0.0 },
-                now,
-            );
+            self.toggle_apple_music = settled_toggle(st.glass.bg_apple_music_artwork_enabled, now);
+            self.toggle_youtube_mirror = settled_toggle(st.glass.bg_youtube_mirror_enabled, now);
+            self.toggle_backdrop = settled_toggle(st.glass.bg_image_enabled, now);
+            self.toggle_pause = settled_toggle(st.pause_animation_when_inactive, now);
+            self.toggle_liquid_glass = settled_toggle(st.style == UiStyle::LiquidGlass, now);
+            self.toggle_centerline = settled_toggle(st.show_centerline, now);
+            self.toggle_px_guard = settled_toggle(st.active_tab == TabId::Guard, now);
+            self.toggle_notifications = settled_toggle(st.approval_notifications_enabled, now);
+            self.toggle_compact_districts = settled_toggle(st.compact_districts, now);
             let fade_opacity = st.inactive_fade_target_opacity();
             self.inactive_ui_opacity = ScalarTransition::settled(
                 if should_dim_ui { fade_opacity } else { 1.0 },
@@ -354,62 +334,31 @@ impl UiMotion {
                 self.tab_enter_started = Some(now);
             }
 
-            self.toggle_apple_music.set_target(
-                if st.glass.bg_apple_music_artwork_enabled {
-                    1.0
-                } else {
-                    0.0
-                },
-                Duration::from_millis(TOGGLE_MS),
+            set_toggle_target(
+                &mut self.toggle_apple_music,
+                st.glass.bg_apple_music_artwork_enabled,
                 now,
             );
-            self.toggle_youtube_mirror.set_target(
-                if st.glass.bg_youtube_mirror_enabled {
-                    1.0
-                } else {
-                    0.0
-                },
-                Duration::from_millis(TOGGLE_MS),
+            set_toggle_target(
+                &mut self.toggle_youtube_mirror,
+                st.glass.bg_youtube_mirror_enabled,
                 now,
             );
-            self.toggle_backdrop.set_target(
-                if st.glass.bg_image_enabled { 1.0 } else { 0.0 },
-                Duration::from_millis(TOGGLE_MS),
+            set_toggle_target(&mut self.toggle_backdrop, st.glass.bg_image_enabled, now);
+            set_toggle_target(&mut self.toggle_pause, st.pause_animation_when_inactive, now);
+            set_toggle_target(
+                &mut self.toggle_liquid_glass,
+                st.style == UiStyle::LiquidGlass,
                 now,
             );
-            self.toggle_pause.set_target(
-                if st.pause_animation_when_inactive {
-                    1.0
-                } else {
-                    0.0
-                },
-                Duration::from_millis(TOGGLE_MS),
+            set_toggle_target(&mut self.toggle_centerline, st.show_centerline, now);
+            set_toggle_target(&mut self.toggle_px_guard, st.active_tab == TabId::Guard, now);
+            set_toggle_target(
+                &mut self.toggle_notifications,
+                st.approval_notifications_enabled,
                 now,
             );
-            self.toggle_liquid_glass.set_target(
-                if st.style == UiStyle::LiquidGlass {
-                    1.0
-                } else {
-                    0.0
-                },
-                Duration::from_millis(TOGGLE_MS),
-                now,
-            );
-            self.toggle_centerline.set_target(
-                if st.show_centerline { 1.0 } else { 0.0 },
-                Duration::from_millis(TOGGLE_MS),
-                now,
-            );
-            self.toggle_px_guard.set_target(
-                if st.active_tab == TabId::Guard { 1.0 } else { 0.0 },
-                Duration::from_millis(TOGGLE_MS),
-                now,
-            );
-            self.toggle_notifications.set_target(
-                if st.approval_notifications_enabled { 1.0 } else { 0.0 },
-                Duration::from_millis(TOGGLE_MS),
-                now,
-            );
+            set_toggle_target(&mut self.toggle_compact_districts, st.compact_districts, now);
             let (inactive_target, inactive_ms) = if should_dim_ui {
                 (st.inactive_fade_target_opacity(), INACTIVE_FADE_IN_MS)
             } else {
@@ -500,6 +449,7 @@ impl UiMotion {
             || self.toggle_centerline.is_active(now)
             || self.toggle_px_guard.is_active(now)
             || self.toggle_notifications.is_active(now)
+            || self.toggle_compact_districts.is_active(now)
             || self.inactive_ui_opacity.is_active(now)
             || any_selection_active
             || !active_pulses.is_empty();
@@ -520,6 +470,7 @@ impl UiMotion {
             toggle_centerline_progress: self.toggle_centerline.value(now),
             toggle_px_guard_progress: self.toggle_px_guard.value(now),
             toggle_notifications_progress: self.toggle_notifications.value(now),
+            toggle_compact_districts_progress: self.toggle_compact_districts.value(now),
             inactive_ui_opacity: self.inactive_ui_opacity.value(now),
             selection_weights,
             pulses: active_pulses,
@@ -622,5 +573,32 @@ mod tests {
         let snap_restored = motion.sync(&st, false, t_wake + Duration::from_millis(INACTIVE_FADE_OUT_MS + 50));
         assert_eq!(snap_restored.inactive_ui_opacity, 1.0);
         assert!(!snap_restored.animating);
+    }
+
+    #[test]
+    fn compact_districts_toggle_animates_and_settles_with_zero_idle_redraws() {
+        let mut st = AppState::new_ephemeral();
+        assert!(!st.compact_districts);
+        let t0 = Instant::now();
+        let mut motion = UiMotion::new();
+
+        let initial = motion.sync(&st, false, t0);
+        assert_eq!(initial.toggle_compact_districts_progress, 0.0);
+        assert!(!initial.animating);
+
+        st.toggle_compact_districts();
+        assert!(st.compact_districts);
+        let t1 = t0 + Duration::from_millis(10);
+        let started = motion.sync(&st, false, t1);
+        assert!(started.animating);
+
+        let mid = motion.sync(&st, false, t1 + Duration::from_millis(TOGGLE_MS / 2));
+        assert!(mid.toggle_compact_districts_progress > 0.0);
+        assert!(mid.toggle_compact_districts_progress < 1.0);
+        assert!(mid.animating);
+
+        let settled = motion.sync(&st, false, t1 + Duration::from_millis(TOGGLE_MS + 20));
+        assert_eq!(settled.toggle_compact_districts_progress, 1.0);
+        assert!(!settled.animating);
     }
 }

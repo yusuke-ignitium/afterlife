@@ -59,11 +59,13 @@ fn legacy_backdrop_json_without_notification_flag_loads_cleanly() {
     assert_eq!(glass.fade_ui_after_secs, 12.0);
     assert_eq!(glass.fade_ui_transparency_pct, 76.0);
     assert!(glass.approval_notifications_enabled);
+    assert!(!glass.compact_districts);
     assert_eq!(glass.disp_scale, BackdropGlassAppearance::default().disp_scale);
 
     let mut updated_glass = glass;
     updated_glass.approval_notifications_enabled = false;
     updated_glass.fade_ui_transparency_pct = 42.6;
+    updated_glass.compact_districts = true;
     store
         .save_appearance_with_displays(loaded.tuning, updated_glass, std::collections::BTreeMap::new())
         .unwrap();
@@ -71,6 +73,7 @@ fn legacy_backdrop_json_without_notification_flag_loads_cleanly() {
     let reloaded_glass = reloaded.glass.unwrap();
     assert!(!reloaded_glass.approval_notifications_enabled);
     assert_eq!(reloaded_glass.fade_ui_transparency_pct, 43.0);
+    assert!(reloaded_glass.compact_districts);
 
     let clamped_hi = BackdropGlassAppearance {
         fade_ui_transparency_pct: 120.0,
@@ -90,6 +93,39 @@ fn legacy_backdrop_json_without_notification_flag_loads_cleanly() {
     }
     .clamped();
     assert_eq!(clamped_nan.fade_ui_transparency_pct, 76.0);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn backdrop_json_ignores_unknown_fields_and_preserves_existing_appearance_fields() {
+    let dir = temp_dir("future_fields");
+    let raw = serde_json::json!({
+        "images": [],
+        "tuning": {
+            "image_enabled": false,
+            "tile_size_px": 8.0
+        },
+        "glass": {
+            "disp_scale": 210.0,
+            "pause_animation_when_inactive": true,
+            "approval_notifications_enabled": false,
+            "future_unrecognized_flag": true
+        }
+    });
+    fs::write(
+        dir.join("backdrop.json"),
+        serde_json::to_string_pretty(&raw).unwrap(),
+    )
+    .unwrap();
+
+    let store = BackdropStore::open(&dir);
+    let loaded = store.load().unwrap();
+    let glass = loaded.glass.expect("glass section should load");
+    assert_eq!(glass.disp_scale, 210.0);
+    assert!(glass.pause_animation_when_inactive);
+    assert!(!glass.approval_notifications_enabled);
+    assert_eq!(loaded.tuning.tile_size_px, 8.0);
 
     let _ = fs::remove_dir_all(&dir);
 }

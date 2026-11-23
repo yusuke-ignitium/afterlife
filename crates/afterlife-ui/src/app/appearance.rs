@@ -3,12 +3,30 @@ use afterlife_protocol::{BackdropConfig, BackdropGlassAppearance, BackdropTuning
 
 use crate::app::state::AppState;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UiPreferences {
+    pub pause_animation_when_inactive: bool,
+    pub fade_ui_after_secs: f32,
+    pub fade_ui_transparency_pct: f32,
+    pub approval_notifications_enabled: bool,
+    pub compact_districts: bool,
+}
+
+impl Default for UiPreferences {
+    fn default() -> Self {
+        Self {
+            pause_animation_when_inactive: false,
+            fade_ui_after_secs: 0.0,
+            fade_ui_transparency_pct: afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT,
+            approval_notifications_enabled: true,
+            compact_districts: false,
+        }
+    }
+}
+
 pub(crate) fn apply_backdrop_config(
     glass: &mut GlassSettings,
-    pause_animation_when_inactive: &mut bool,
-    fade_ui_after_secs: &mut f32,
-    fade_ui_transparency_pct: &mut f32,
-    approval_notifications_enabled: &mut bool,
+    prefs: &mut UiPreferences,
     cfg: &BackdropConfig,
 ) {
     let tuning = cfg.tuning.clamped();
@@ -32,10 +50,11 @@ pub(crate) fn apply_backdrop_config(
         glass.bg_alpha = saved.bg_alpha;
         glass.radius = saved.radius;
         glass.tint_rgb = saved.tint_rgb;
-        *pause_animation_when_inactive = saved.pause_animation_when_inactive;
-        *fade_ui_after_secs = saved.fade_ui_after_secs;
-        *fade_ui_transparency_pct = saved.fade_ui_transparency_pct;
-        *approval_notifications_enabled = saved.approval_notifications_enabled;
+        prefs.pause_animation_when_inactive = saved.pause_animation_when_inactive;
+        prefs.fade_ui_after_secs = saved.fade_ui_after_secs;
+        prefs.fade_ui_transparency_pct = saved.fade_ui_transparency_pct;
+        prefs.approval_notifications_enabled = saved.approval_notifications_enabled;
+        prefs.compact_districts = saved.compact_districts;
     }
 }
 
@@ -56,10 +75,7 @@ pub(crate) fn snapshot_tuning(glass: &GlassSettings) -> BackdropTuning {
 
 pub(crate) fn snapshot_glass_appearance(
     glass: &GlassSettings,
-    pause_animation_when_inactive: bool,
-    fade_ui_after_secs: f32,
-    fade_ui_transparency_pct: f32,
-    approval_notifications_enabled: bool,
+    prefs: UiPreferences,
 ) -> BackdropGlassAppearance {
     BackdropGlassAppearance {
         disp_scale: glass.disp_scale,
@@ -72,10 +88,11 @@ pub(crate) fn snapshot_glass_appearance(
         bg_alpha: glass.bg_alpha,
         radius: glass.radius,
         tint_rgb: glass.tint_rgb,
-        pause_animation_when_inactive,
-        fade_ui_after_secs,
-        fade_ui_transparency_pct,
-        approval_notifications_enabled,
+        pause_animation_when_inactive: prefs.pause_animation_when_inactive,
+        fade_ui_after_secs: prefs.fade_ui_after_secs,
+        fade_ui_transparency_pct: prefs.fade_ui_transparency_pct,
+        approval_notifications_enabled: prefs.approval_notifications_enabled,
+        compact_districts: prefs.compact_districts,
     }
 }
 
@@ -264,13 +281,7 @@ mod tests {
 
         assert_eq!(snapshot_tuning(&glass_def), tuning_def);
         assert_eq!(
-            snapshot_glass_appearance(
-                &glass_def,
-                false,
-                0.0,
-                afterlife_protocol::DEFAULT_FADE_UI_TRANSPARENCY_PCT,
-                true,
-            ),
+            snapshot_glass_appearance(&glass_def, UiPreferences::default()),
             saved_glass_def
         );
         assert_eq!(glass_def.particle_wave_tuning(), wave_def);
@@ -299,34 +310,69 @@ mod tests {
             radius: 11.2,
             tint_rgb: [27, 45, 56],
         };
+        let original_prefs = UiPreferences {
+            pause_animation_when_inactive: true,
+            fade_ui_after_secs: 15.0,
+            fade_ui_transparency_pct: 55.0,
+            approval_notifications_enabled: false,
+            compact_districts: true,
+        };
 
         let cfg = BackdropConfig {
             images: Vec::new(),
             tuning: snapshot_tuning(&original),
-            glass: Some(snapshot_glass_appearance(
-                &original, true, 15.0, 55.0, false,
-            )),
+            glass: Some(snapshot_glass_appearance(&original, original_prefs)),
             display_tile_sizes: BTreeMap::new(),
         };
 
         let mut restored = GlassSettings::default();
-        let mut pause_inactive = false;
-        let mut fade_after_secs = 0.0;
-        let mut fade_transparency_pct = 76.0;
-        let mut approval_notifications = true;
-        apply_backdrop_config(
-            &mut restored,
-            &mut pause_inactive,
-            &mut fade_after_secs,
-            &mut fade_transparency_pct,
-            &mut approval_notifications,
-            &cfg,
-        );
+        let mut restored_prefs = UiPreferences::default();
+        apply_backdrop_config(&mut restored, &mut restored_prefs, &cfg);
 
         assert_eq!(restored, original);
-        assert!(pause_inactive);
-        assert_eq!(fade_after_secs, 15.0);
-        assert_eq!(fade_transparency_pct, 55.0);
-        assert!(!approval_notifications);
+        assert_eq!(restored_prefs, original_prefs);
+    }
+
+    #[test]
+    fn app_state_persists_and_reloads_compact_districts_across_restart_and_glass_reset() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "afterlife_ui_compact_persist_{}_{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = afterlife_protocol::BackdropStore::open(&dir);
+
+        let mut st = AppState::new_ephemeral();
+        st.backdrop_store = Some(store.clone());
+        assert!(!st.compact_districts);
+
+        st.toggle_compact_districts();
+        assert!(st.compact_districts);
+
+        st.reset_glass_settings(GlassSettings::overworld_exact_defaults());
+        st.persist_appearance();
+        assert!(st.compact_districts);
+
+        let mut restarted = AppState::new_ephemeral();
+        restarted.backdrop_store = Some(store);
+        assert!(!restarted.compact_districts);
+        assert!(restarted.reload_backdrop_tuning());
+        assert!(restarted.compact_districts);
+        assert!(!restarted.reload_backdrop_tuning());
+
+        restarted.toggle_compact_districts();
+        assert!(!restarted.compact_districts);
+
+        let mut restarted_off = AppState::new_ephemeral();
+        restarted_off.backdrop_store = Some(afterlife_protocol::BackdropStore::open(&dir));
+        restarted_off.compact_districts = true;
+        assert!(restarted_off.reload_backdrop_tuning());
+        assert!(!restarted_off.compact_districts);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
