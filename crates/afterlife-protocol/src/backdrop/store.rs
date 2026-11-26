@@ -193,6 +193,9 @@ impl BackdropStore {
         if let Some(v) = patch.image_enabled {
             cfg.tuning.image_enabled = v;
         }
+        if let Some(v) = patch.image_shuffle {
+            cfg.tuning.image_shuffle = v;
+        }
         if let Some(v) = patch.apple_music_artwork_enabled {
             cfg.tuning.apple_music_artwork_enabled = v;
         }

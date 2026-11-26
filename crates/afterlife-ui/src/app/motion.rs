@@ -136,6 +136,7 @@ pub struct MotionSnapshot {
     pub toggle_apple_music_progress: f32,
     pub toggle_youtube_mirror_progress: f32,
     pub toggle_backdrop_progress: f32,
+    pub toggle_backdrop_shuffle_progress: f32,
     pub toggle_pause_progress: f32,
     pub toggle_liquid_glass_progress: f32,
     pub toggle_centerline_progress: f32,
@@ -174,6 +175,7 @@ pub struct UiMotion {
     toggle_apple_music: ScalarTransition,
     toggle_youtube_mirror: ScalarTransition,
     toggle_backdrop: ScalarTransition,
+    toggle_backdrop_shuffle: ScalarTransition,
     toggle_pause: ScalarTransition,
     toggle_liquid_glass: ScalarTransition,
     toggle_centerline: ScalarTransition,
@@ -208,6 +210,7 @@ impl UiMotion {
             toggle_apple_music: ScalarTransition::settled(1.0, now),
             toggle_youtube_mirror: ScalarTransition::settled(1.0, now),
             toggle_backdrop: ScalarTransition::settled(0.0, now),
+            toggle_backdrop_shuffle: ScalarTransition::settled(1.0, now),
             toggle_pause: ScalarTransition::settled(1.0, now),
             toggle_liquid_glass: ScalarTransition::settled(1.0, now),
             toggle_centerline: ScalarTransition::settled(0.0, now),
@@ -260,6 +263,7 @@ impl UiMotion {
             self.toggle_apple_music = settled_toggle(st.glass.bg_apple_music_artwork_enabled, now);
             self.toggle_youtube_mirror = settled_toggle(st.glass.bg_youtube_mirror_enabled, now);
             self.toggle_backdrop = settled_toggle(st.glass.bg_image_enabled, now);
+            self.toggle_backdrop_shuffle = settled_toggle(st.glass.bg_image_shuffle, now);
             self.toggle_pause = settled_toggle(st.pause_animation_when_inactive, now);
             self.toggle_liquid_glass = settled_toggle(st.style == UiStyle::LiquidGlass, now);
             self.toggle_centerline = settled_toggle(st.show_centerline, now);
@@ -345,6 +349,11 @@ impl UiMotion {
                 now,
             );
             set_toggle_target(&mut self.toggle_backdrop, st.glass.bg_image_enabled, now);
+            set_toggle_target(
+                &mut self.toggle_backdrop_shuffle,
+                st.glass.bg_image_shuffle,
+                now,
+            );
             set_toggle_target(&mut self.toggle_pause, st.pause_animation_when_inactive, now);
             set_toggle_target(
                 &mut self.toggle_liquid_glass,
@@ -444,6 +453,7 @@ impl UiMotion {
             || self.toggle_apple_music.is_active(now)
             || self.toggle_youtube_mirror.is_active(now)
             || self.toggle_backdrop.is_active(now)
+            || self.toggle_backdrop_shuffle.is_active(now)
             || self.toggle_pause.is_active(now)
             || self.toggle_liquid_glass.is_active(now)
             || self.toggle_centerline.is_active(now)
@@ -465,6 +475,7 @@ impl UiMotion {
             toggle_apple_music_progress: self.toggle_apple_music.value(now),
             toggle_youtube_mirror_progress: self.toggle_youtube_mirror.value(now),
             toggle_backdrop_progress: self.toggle_backdrop.value(now),
+            toggle_backdrop_shuffle_progress: self.toggle_backdrop_shuffle.value(now),
             toggle_pause_progress: self.toggle_pause.value(now),
             toggle_liquid_glass_progress: self.toggle_liquid_glass.value(now),
             toggle_centerline_progress: self.toggle_centerline.value(now),

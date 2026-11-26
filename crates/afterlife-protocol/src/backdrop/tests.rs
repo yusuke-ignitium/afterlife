@@ -33,6 +33,7 @@ fn make_temp_dir(tag: &str) -> PathBuf {
 fn clamped_sanitizes_nan_infinity_and_out_of_range_values() {
     let tuning = BackdropTuning {
         image_enabled: true,
+        image_shuffle: false,
         apple_music_artwork_enabled: false,
         youtube_mirror_enabled: false,
         tile_size_px: f32::NAN,
@@ -44,6 +45,7 @@ fn clamped_sanitizes_nan_infinity_and_out_of_range_values() {
     }
     .clamped();
     assert!(tuning.image_enabled);
+    assert!(!tuning.image_shuffle);
     assert!(!tuning.apple_music_artwork_enabled);
     assert!(!tuning.youtube_mirror_enabled);
     assert_eq!(tuning.tile_size_px, DEFAULT_TILE_SIZE_PX);
@@ -99,6 +101,7 @@ fn partial_json_deserializes_with_defaults_and_clamping() {
 
     let cfg = store.load().unwrap();
     assert!(!cfg.tuning.image_enabled);
+    assert!(cfg.tuning.image_shuffle);
     assert!(cfg.tuning.apple_music_artwork_enabled);
     assert!(cfg.tuning.youtube_mirror_enabled);
     assert_eq!(cfg.tuning.tile_size_px, 24.0);

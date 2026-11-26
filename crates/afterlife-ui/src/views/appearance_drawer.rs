@@ -520,6 +520,23 @@ pub fn render_appearance_drawer(
                     },
                     cx,
                 ))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .when(!st.glass.bg_image_enabled, |d| d.opacity(0.35))
+                        .child(render_toggle_row(
+                            st,
+                            "toggle-backdrop-shuffle",
+                            "Shuffle Images",
+                            st.glass.bg_image_shuffle,
+                            motion.toggle_backdrop_shuffle_progress,
+                            |st| {
+                                st.glass.bg_image_shuffle = !st.glass.bg_image_shuffle;
+                                st.persist_appearance();
+                            },
+                            cx,
+                        )),
+                )
                 .children(
                     app.slider_bounds
                         .iter()

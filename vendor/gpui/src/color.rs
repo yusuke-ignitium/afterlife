@@ -833,6 +833,8 @@ pub fn liquid_glass_styled(
 pub struct ParticleWaveTuning {
     /// Whether the backdrop image dissolve layer is enabled (false skips all image GPU work).
     pub image_enabled: bool,
+    /// Whether custom backdrop images advance in shuffled (non-repeating random) order.
+    pub image_shuffle: bool,
     /// Whether live Apple Music artwork takes priority over custom backdrop images while playing.
     pub apple_music_artwork_enabled: bool,
     /// Whether live YouTube video mirroring is enabled when Apple Music artwork is not active.
@@ -853,6 +855,7 @@ impl Default for ParticleWaveTuning {
     fn default() -> Self {
         Self {
             image_enabled: false,
+            image_shuffle: true,
             apple_music_artwork_enabled: true,
             youtube_mirror_enabled: true,
             tile_size_px: 6.0,
@@ -878,6 +881,7 @@ impl ParticleWaveTuning {
         let def = Self::default();
         Self {
             image_enabled: self.image_enabled,
+            image_shuffle: self.image_shuffle,
             apple_music_artwork_enabled: self.apple_music_artwork_enabled,
             youtube_mirror_enabled: self.youtube_mirror_enabled,
             tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px).round(),

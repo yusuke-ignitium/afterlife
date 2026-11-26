@@ -31,7 +31,7 @@ use std::{
     mem, ptr,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -331,6 +331,151 @@ struct FacetLutCacheKey {
     col_blue_bits: [u32; 3],
     col_violet_bits: [u32; 3],
     col_cyan_bits: [u32; 3],
+}
+
+struct BackdropShuffleBag {
+    rng_state: u64,
+    deck: Vec<usize>,
+    cursor: usize,
+}
+
+impl BackdropShuffleBag {
+    fn new() -> Self {
+        static SEED_SEQ: AtomicU64 = AtomicU64::new(1);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E37_79B9_7F4A_7C15);
+        let seq = SEED_SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id() as u64;
+        let seed = nanos ^ seq.rotate_left(17) ^ pid.rotate_left(33) ^ 0xA076_1D64_78BD_642F;
+        Self::with_seed(seed)
+    }
+
+    fn with_seed(seed: u64) -> Self {
+        Self {
+            rng_state: if seed == 0 {
+                0x9E37_79B9_7F4A_7C15
+            } else {
+                seed
+            },
+            deck: Vec::new(),
+            cursor: 0,
+        }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.rng_state = self.rng_state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.rng_state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn next_usize(&mut self, upper_exclusive: usize) -> usize {
+        if upper_exclusive <= 1 {
+            return 0;
+        }
+        (self.next_u64() as usize) % upper_exclusive
+    }
+
+    fn matches_count(&self, count: usize) -> bool {
+        self.deck.len() == count && self.cursor < count
+    }
+
+    fn reset(&mut self) {
+        self.deck.clear();
+        self.cursor = 0;
+    }
+
+    fn rebuild(&mut self, count: usize, avoid_first: Option<usize>, pin_first: Option<usize>) {
+        self.deck.clear();
+        self.cursor = 0;
+        if count == 0 {
+            return;
+        }
+        self.deck.extend(0..count);
+        for i in (1..count).rev() {
+            let j = self.next_usize(i + 1);
+            self.deck.swap(i, j);
+        }
+        if let Some(pin) = pin_first.filter(|&idx| idx < count) {
+            if let Some(pos) = self.deck.iter().position(|&v| v == pin) {
+                self.deck.swap(0, pos);
+            }
+        } else if count >= 2
+            && let Some(avoid) = avoid_first
+            && self.deck[0] == avoid
+        {
+            let swap_pos = 1 + self.next_usize(count - 1);
+            self.deck.swap(0, swap_pos);
+        }
+    }
+
+    fn start(&mut self, count: usize) -> usize {
+        if count == 0 {
+            self.reset();
+            return 0;
+        }
+        self.rebuild(count, None, None);
+        self.deck[0]
+    }
+
+    fn sync_with_current(&mut self, count: usize, current: usize) -> usize {
+        if count == 0 {
+            self.reset();
+            return 0;
+        }
+        let clamped = current % count;
+        if !self.matches_count(count) {
+            self.rebuild(count, None, Some(clamped));
+        }
+        self.deck[self.cursor]
+    }
+
+    fn current_or_start(&mut self, count: usize) -> usize {
+        if count == 0 {
+            self.reset();
+            return 0;
+        }
+        if !self.matches_count(count) {
+            return self.start(count);
+        }
+        self.deck[self.cursor]
+    }
+
+    fn advance(&mut self, count: usize, prev_index: Option<usize>) -> usize {
+        if count == 0 {
+            self.reset();
+            return 0;
+        }
+        if count == 1 {
+            self.deck.clear();
+            self.deck.push(0);
+            self.cursor = 0;
+            return 0;
+        }
+        if !self.matches_count(count) {
+            self.rebuild(count, prev_index, None);
+            return self.deck[0];
+        }
+        let last = prev_index.or_else(|| self.deck.get(self.cursor).copied());
+        self.cursor += 1;
+        if self.cursor >= count {
+            self.rebuild(count, last, None);
+        } else if let Some(prev) = last
+            && self.deck[self.cursor] == prev
+        {
+            let remaining = count - self.cursor;
+            if remaining > 1 {
+                let offset = 1 + self.next_usize(remaining - 1);
+                self.deck.swap(self.cursor, self.cursor + offset);
+            } else {
+                self.rebuild(count, Some(prev), None);
+            }
+        }
+        self.deck[self.cursor]
+    }
 }
 
 fn inactive_particle_uniforms(
@@ -820,6 +965,7 @@ pub(crate) struct MetalRenderer {
     backdrop_phase_elapsed: f32,
     backdrop_phase_last_tick: Instant,
     backdrop_image_index: usize,
+    backdrop_shuffle_bag: BackdropShuffleBag,
     particle_tile_scatter_pipeline: metal::ComputePipelineState,
     particle_tile_hold_pipeline: metal::ComputePipelineState,
     particle_tile_unpack_pipeline: metal::ComputePipelineState,
@@ -1221,6 +1367,7 @@ impl MetalRenderer {
             backdrop_phase_elapsed: 0.0,
             backdrop_phase_last_tick: Instant::now(),
             backdrop_image_index: 0,
+            backdrop_shuffle_bag: BackdropShuffleBag::new(),
             particle_tile_scatter_pipeline,
             particle_tile_hold_pipeline,
             particle_tile_unpack_pipeline,
@@ -2996,6 +3143,7 @@ impl MetalRenderer {
         }
         self.backdrop_images_loaded = false;
         self.backdrop_config_mtime = None;
+        self.backdrop_shuffle_bag.reset();
     }
 
     fn sync_override_image(&mut self, enabled: bool) {
@@ -3135,6 +3283,7 @@ impl MetalRenderer {
         self.backdrop_image_textures = textures;
         self.backdrop_image_sizes = sizes;
         self.backdrop_loaded_entries = next_entries;
+        self.backdrop_shuffle_bag.reset();
         self.backdrop_custom_version = self.backdrop_custom_version.wrapping_add(1);
         self.particle_tile_grid_cache_key = None;
     }
@@ -3190,7 +3339,23 @@ impl MetalRenderer {
         } else if let Some(ref lv) = self.backdrop_live_video {
             ActiveBackdropSource::LiveVideo(lv.generation)
         } else if custom_count > 0 {
-            self.backdrop_image_index %= custom_count;
+            if tuning.image_shuffle {
+                if !self.backdrop_shuffle_bag.matches_count(custom_count) {
+                    if let ActiveBackdropSource::Custom(cur) = self.backdrop_active_source
+                        && cur < custom_count
+                    {
+                        self.backdrop_image_index =
+                            self.backdrop_shuffle_bag.sync_with_current(custom_count, cur);
+                    } else {
+                        self.backdrop_image_index = self.backdrop_shuffle_bag.start(custom_count);
+                    }
+                } else {
+                    self.backdrop_image_index %= custom_count;
+                }
+            } else {
+                self.backdrop_shuffle_bag.reset();
+                self.backdrop_image_index %= custom_count;
+            }
             ActiveBackdropSource::Custom(self.backdrop_image_index)
         } else {
             ActiveBackdropSource::None
@@ -3337,8 +3502,15 @@ impl MetalRenderer {
                         }
                         ActiveBackdropSource::Custom(_) if custom_count > 0 => {
                             if was_custom {
+                                self.backdrop_image_index = if tuning.image_shuffle {
+                                    self.backdrop_shuffle_bag
+                                        .advance(custom_count, Some(self.backdrop_image_index))
+                                } else {
+                                    (self.backdrop_image_index + 1) % custom_count
+                                };
+                            } else if tuning.image_shuffle {
                                 self.backdrop_image_index =
-                                    (self.backdrop_image_index + 1) % custom_count;
+                                    self.backdrop_shuffle_bag.current_or_start(custom_count);
                             } else {
                                 self.backdrop_image_index %= custom_count;
                             }
@@ -5548,6 +5720,7 @@ mod offscreen_gpu_bench {
         let viewport = size(DevicePixels(vw as i32), DevicePixels(vh as i32));
         crate::set_particle_wave_tuning(ParticleWaveTuning {
             image_enabled: true,
+            image_shuffle: true,
             apple_music_artwork_enabled: false,
             youtube_mirror_enabled: false,
             tile_size_px: 3.0,
@@ -5781,6 +5954,7 @@ mod offscreen_gpu_bench {
 
         crate::set_particle_wave_tuning(ParticleWaveTuning {
             image_enabled: true,
+            image_shuffle: true,
             apple_music_artwork_enabled: false,
             youtube_mirror_enabled: true,
             tile_size_px: 3.0,
@@ -6222,6 +6396,7 @@ mod offscreen_gpu_bench {
         for tile_px in [2u32, 3u32, 6u32] {
             crate::set_particle_wave_tuning(ParticleWaveTuning {
                 image_enabled: true,
+                image_shuffle: true,
                 apple_music_artwork_enabled: false,
                 youtube_mirror_enabled: true,
                 tile_size_px: tile_px as f32,
@@ -6325,6 +6500,7 @@ mod offscreen_gpu_bench {
 
         crate::set_particle_wave_tuning(ParticleWaveTuning {
             image_enabled: true,
+            image_shuffle: true,
             apple_music_artwork_enabled: false,
             youtube_mirror_enabled: true,
             tile_size_px: 2.0,
@@ -6564,6 +6740,81 @@ mod offscreen_gpu_bench {
                 "shadow clipped harshly at bottom edge (alpha={alpha_u8}, y={outer_y}): luma={}",
                 luma(cx, outer_y)
             );
+        }
+    }
+
+    #[test]
+    fn test_backdrop_shuffle_bag_visits_every_image_without_back_to_back_repeats() {
+        let count = 15usize;
+        let mut bag = BackdropShuffleBag::with_seed(0xCAFE_BABE_1234_5678);
+        let mut cur = bag.start(count);
+        let mut seen = vec![0usize; count];
+        seen[cur] += 1;
+        let mut sequence = vec![cur];
+        for _ in 1..count {
+            let next = bag.advance(count, Some(cur));
+            assert_ne!(next, cur, "shuffle bag must never repeat consecutive images");
+            assert!(next < count);
+            seen[next] += 1;
+            sequence.push(next);
+            cur = next;
+        }
+        assert!(
+            seen.iter().all(|&c| c == 1),
+            "every image must appear exactly once per deck: {seen:?}"
+        );
+        let sequential: Vec<usize> = (0..count).collect();
+        assert_ne!(
+            sequence, sequential,
+            "shuffled order should not stay strictly sequential"
+        );
+
+        for round in 0..8 {
+            let mut round_seen = vec![0usize; count];
+            for _ in 0..count {
+                let next = bag.advance(count, Some(cur));
+                assert_ne!(
+                    next, cur,
+                    "deck boundary/round {round} must never repeat consecutive images"
+                );
+                round_seen[next] += 1;
+                cur = next;
+            }
+            assert!(
+                round_seen.iter().all(|&c| c == 1),
+                "round {round} must visit every image once: {round_seen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_backdrop_shuffle_bag_handles_edge_counts_and_sync_with_current() {
+        let mut bag = BackdropShuffleBag::with_seed(42);
+        assert_eq!(bag.start(0), 0);
+        assert_eq!(bag.advance(0, None), 0);
+        assert_eq!(bag.start(1), 0);
+        assert_eq!(bag.advance(1, Some(0)), 0);
+
+        bag.reset();
+        let pinned = bag.sync_with_current(5, 3);
+        assert_eq!(pinned, 3);
+        let mut visited = vec![pinned];
+        let mut cur = pinned;
+        for _ in 1..5 {
+            let next = bag.advance(5, Some(cur));
+            assert_ne!(next, cur);
+            visited.push(next);
+            cur = next;
+        }
+        visited.sort_unstable();
+        assert_eq!(visited, vec![0, 1, 2, 3, 4]);
+
+        let mut two_bag = BackdropShuffleBag::with_seed(99);
+        let mut prev = two_bag.start(2);
+        for _ in 0..20 {
+            let next = two_bag.advance(2, Some(prev));
+            assert_ne!(next, prev, "2-image deck must strictly alternate without repeats");
+            prev = next;
         }
     }
 }

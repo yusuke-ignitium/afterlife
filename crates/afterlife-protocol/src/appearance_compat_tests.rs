@@ -54,6 +54,7 @@ fn legacy_backdrop_json_without_notification_flag_loads_cleanly() {
 
     let store = BackdropStore::open(&dir);
     let loaded: BackdropConfig = store.load().unwrap();
+    assert!(loaded.tuning.image_shuffle);
     let glass = loaded.glass.expect("glass section should load");
     assert!(glass.pause_animation_when_inactive);
     assert_eq!(glass.fade_ui_after_secs, 12.0);

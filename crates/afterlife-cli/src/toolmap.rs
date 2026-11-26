@@ -592,6 +592,8 @@ pub const TOOLMAP: &[ToolSpec] = &[
         flags: &[
             FlagSpec::opt("--enable-images", "enable_images", FlagKind::Bool),
             FlagSpec::opt("--disable-images", "disable_images", FlagKind::Bool),
+            FlagSpec::opt("--enable-shuffle", "enable_shuffle", FlagKind::Bool),
+            FlagSpec::opt("--disable-shuffle", "disable_shuffle", FlagKind::Bool),
             FlagSpec::opt(
                 "--enable-apple-music",
                 "enable_apple_music",

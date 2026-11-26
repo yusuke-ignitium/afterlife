@@ -20,6 +20,7 @@ impl EdgeAccent {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlassSettings {
     pub bg_image_enabled: bool,
+    pub bg_image_shuffle: bool,
     pub bg_apple_music_artwork_enabled: bool,
     pub bg_youtube_mirror_enabled: bool,
     pub bg_brightness: f32,
@@ -44,6 +45,7 @@ impl Default for GlassSettings {
     fn default() -> Self {
         Self {
             bg_image_enabled: false,
+            bg_image_shuffle: true,
             bg_apple_music_artwork_enabled: true,
             bg_youtube_mirror_enabled: true,
             bg_brightness: 1.5,
@@ -60,7 +62,7 @@ impl Default for GlassSettings {
             rim_width: 1.3,
             blur_std_dev: 0.0,
             bg_alpha: 0.04,
-            radius: 6.6,
+            radius: 7.5,
             tint_rgb: [7, 9, 14],
         }
     }
@@ -70,6 +72,7 @@ impl GlassSettings {
     pub fn overworld_exact_defaults() -> Self {
         Self {
             bg_image_enabled: false,
+            bg_image_shuffle: true,
             bg_apple_music_artwork_enabled: true,
             bg_youtube_mirror_enabled: true,
             bg_brightness: 1.0,
@@ -94,6 +97,7 @@ impl GlassSettings {
     pub fn particle_wave_tuning(&self) -> ParticleWaveTuning {
         ParticleWaveTuning {
             image_enabled: self.bg_image_enabled,
+            image_shuffle: self.bg_image_shuffle,
             apple_music_artwork_enabled: self.bg_apple_music_artwork_enabled,
             youtube_mirror_enabled: self.bg_youtube_mirror_enabled,
             tile_size_px: self.bg_tile_size_px,

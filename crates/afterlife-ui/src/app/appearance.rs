@@ -34,6 +34,7 @@ pub(crate) fn apply_backdrop_config(
 ) {
     let tuning = cfg.tuning.clamped();
     glass.bg_image_enabled = tuning.image_enabled;
+    glass.bg_image_shuffle = tuning.image_shuffle;
     glass.bg_apple_music_artwork_enabled = tuning.apple_music_artwork_enabled;
     glass.bg_youtube_mirror_enabled = tuning.youtube_mirror_enabled;
     glass.bg_brightness = tuning.master_brightness;
@@ -64,6 +65,7 @@ pub(crate) fn apply_backdrop_config(
 pub(crate) fn snapshot_tuning(glass: &GlassSettings) -> BackdropTuning {
     BackdropTuning {
         image_enabled: glass.bg_image_enabled,
+        image_shuffle: glass.bg_image_shuffle,
         apple_music_artwork_enabled: glass.bg_apple_music_artwork_enabled,
         youtube_mirror_enabled: glass.bg_youtube_mirror_enabled,
         tile_size_px: glass.bg_tile_size_px,
@@ -301,6 +303,7 @@ mod tests {
     fn backdrop_config_round_trip_preserves_every_appearance_field() {
         let original = GlassSettings {
             bg_image_enabled: true,
+            bg_image_shuffle: false,
             bg_apple_music_artwork_enabled: false,
             bg_youtube_mirror_enabled: false,
             bg_brightness: 1.25,

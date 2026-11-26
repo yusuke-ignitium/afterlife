@@ -118,6 +118,13 @@ pub fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<V
                 "--enable-images",
                 "--disable-images",
             )?;
+            let image_shuffle = parse_toggle_pair(
+                payload,
+                "enable_shuffle",
+                "disable_shuffle",
+                "--enable-shuffle",
+                "--disable-shuffle",
+            )?;
             let apple_music_artwork_enabled = parse_toggle_pair(
                 payload,
                 "enable_apple_music",
@@ -139,6 +146,7 @@ pub fn run_backdrop_command(sub: &str, payload: &Map<String, Value>) -> Result<V
             let cfg = store
                 .update_tuning(BackdropTuningPatch {
                     image_enabled,
+                    image_shuffle,
                     apple_music_artwork_enabled,
                     youtube_mirror_enabled,
                     tile_size_px: opt_f32(payload, "tile_size_px"),

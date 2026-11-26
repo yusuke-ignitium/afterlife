@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub use store::{BackdropStore, default_backdrop_data_dir};
 
 pub const DEFAULT_IMAGE_ENABLED: bool = false;
+pub const DEFAULT_IMAGE_SHUFFLE: bool = true;
 pub const DEFAULT_APPLE_MUSIC_ARTWORK_ENABLED: bool = true;
 pub const DEFAULT_YOUTUBE_MIRROR_ENABLED: bool = true;
 pub const DEFAULT_TILE_SIZE_PX: f32 = 6.0;
@@ -48,6 +49,7 @@ pub fn sanitize_fade_ui_transparency_pct(val: f32) -> f32 {
 #[serde(default)]
 pub struct BackdropTuning {
     pub image_enabled: bool,
+    pub image_shuffle: bool,
     pub apple_music_artwork_enabled: bool,
     pub youtube_mirror_enabled: bool,
     pub tile_size_px: f32,
@@ -62,6 +64,7 @@ impl Default for BackdropTuning {
     fn default() -> Self {
         Self {
             image_enabled: DEFAULT_IMAGE_ENABLED,
+            image_shuffle: DEFAULT_IMAGE_SHUFFLE,
             apple_music_artwork_enabled: DEFAULT_APPLE_MUSIC_ARTWORK_ENABLED,
             youtube_mirror_enabled: DEFAULT_YOUTUBE_MIRROR_ENABLED,
             tile_size_px: DEFAULT_TILE_SIZE_PX,
@@ -79,6 +82,7 @@ impl BackdropTuning {
         let def = Self::default();
         Self {
             image_enabled: self.image_enabled,
+            image_shuffle: self.image_shuffle,
             apple_music_artwork_enabled: self.apple_music_artwork_enabled,
             youtube_mirror_enabled: self.youtube_mirror_enabled,
             tile_size_px: finite_clamp(self.tile_size_px, 2.0, 24.0, def.tile_size_px).round(),
@@ -104,6 +108,7 @@ impl BackdropTuning {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BackdropTuningPatch {
     pub image_enabled: Option<bool>,
+    pub image_shuffle: Option<bool>,
     pub apple_music_artwork_enabled: Option<bool>,
     pub youtube_mirror_enabled: Option<bool>,
     pub tile_size_px: Option<f32>,
@@ -146,7 +151,7 @@ impl Default for BackdropGlassAppearance {
             rim_width: 1.3,
             blur_std_dev: 0.0,
             bg_alpha: 0.04,
-            radius: 6.6,
+            radius: 7.5,
             tint_rgb: [7, 9, 14],
             pause_animation_when_inactive: false,
             fade_ui_after_secs: 0.0,
