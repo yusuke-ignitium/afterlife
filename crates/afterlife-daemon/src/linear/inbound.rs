@@ -9,7 +9,7 @@ use afterlife_protocol::{
 
 use crate::linear::{
     client::{LinearComment, LinearIssue},
-    links::canonical_linear_url,
+    links::{canonical_linear_url, spawn_followup_job_for_issue},
     sync::{LINEAR_SYNC_CLIENT_ID, LinearSyncContext},
 };
 
@@ -129,7 +129,7 @@ fn release_lease_best_effort(
 pub fn apply_agent_signal(
     ctx: &LinearSyncContext,
     owner_id: &OwnerId,
-    link: &LinearIssueLink,
+    link: &mut LinearIssueLink,
     issue: &LinearIssue,
     comment: &LinearComment,
     parsed: &ParsedLinearComment,
@@ -143,7 +143,7 @@ pub fn apply_agent_signal(
     let Some(job) = snapshot.engine.find_job(&link.job_id).cloned() else {
         return SignalApplyOutcome::Error(format!("linked job {} not found", link.job_id));
     };
-    if job.stopped {
+    if job.stopped && !matches!(job.location, JobLocation::Archived) {
         return SignalApplyOutcome::Error(
             "job is currently stopped by human governance; wait for a resumed signal".into(),
         );
@@ -175,9 +175,11 @@ pub fn apply_agent_signal(
     match parsed.signal.action {
         SignalAction::EnterDistrict => apply_enter_district(
             ctx,
+            owner_id,
             &actor,
             &job,
-            &link.job_id,
+            link,
+            issue,
             &comment.id,
             parsed,
             default_district_id,
@@ -227,30 +229,40 @@ pub fn apply_agent_signal(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn apply_enter_district(
-    ctx: &LinearSyncContext,
-    actor: &Actor,
-    job: &Job,
-    job_id: &JobId,
-    comment_id: &str,
+fn resolve_target_district(
     parsed: &ParsedLinearComment,
     default_district_id: Option<&str>,
-    now: TimestampMs,
-) -> SignalApplyOutcome {
-    let Some(district_raw) = parsed
+) -> Option<DistrictId> {
+    parsed
         .signal
         .district_id
         .as_deref()
         .or(default_district_id)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-    else {
+        .map(|s| DistrictId::from(s.to_string()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_enter_district(
+    ctx: &LinearSyncContext,
+    owner_id: &OwnerId,
+    actor: &Actor,
+    job: &Job,
+    link: &mut LinearIssueLink,
+    issue: &LinearIssue,
+    comment_id: &str,
+    parsed: &ParsedLinearComment,
+    default_district_id: Option<&str>,
+    now: TimestampMs,
+) -> SignalApplyOutcome {
+    let Some(target_district) = resolve_target_district(parsed, default_district_id) else {
         return SignalApplyOutcome::Error("enter_district signal requires district_id".into());
     };
-    let target_district = DistrictId::from(district_raw.to_string());
     match &job.location {
-        JobLocation::InDistrict { district_id, .. } if district_id == &target_district => {
+        JobLocation::InDistrict { district_id, .. } | JobLocation::Completed { district_id, .. }
+            if district_id == &target_district =>
+        {
             SignalApplyOutcome::Applied
         }
         JobLocation::Queue => match dispatch_and_publish(
@@ -258,7 +270,7 @@ fn apply_enter_district(
             format!("linear:cmt:{comment_id}:enter"),
             actor.clone(),
             EngineCommand::AssignJobToDistrict {
-                job_id: job_id.clone(),
+                job_id: link.job_id.clone(),
                 district_id: target_district,
                 expected_revision: None,
                 at: now,
@@ -266,6 +278,20 @@ fn apply_enter_district(
         ) {
             Ok(_) => SignalApplyOutcome::Applied,
             Err(e) => SignalApplyOutcome::Error(e.to_string()),
+        },
+        JobLocation::Completed { .. } | JobLocation::Archived => match spawn_followup_job_for_issue(
+            ctx,
+            owner_id,
+            actor,
+            job,
+            link,
+            issue,
+            comment_id,
+            &target_district,
+            now,
+        ) {
+            Ok(_) => SignalApplyOutcome::Applied,
+            Err(e) => SignalApplyOutcome::Error(e),
         },
         other => SignalApplyOutcome::Error(format!(
             "cannot enter_district {target_district}: job is currently in {other:?}"
@@ -279,7 +305,7 @@ fn apply_advance_stage(
     owner_id: &OwnerId,
     actor: &Actor,
     job: &Job,
-    link: &LinearIssueLink,
+    link: &mut LinearIssueLink,
     issue: &LinearIssue,
     comment: &LinearComment,
     parsed: &ParsedLinearComment,
@@ -287,33 +313,58 @@ fn apply_advance_stage(
     default_district_id: Option<&str>,
     now: TimestampMs,
 ) -> SignalApplyOutcome {
-    if matches!(job.location, JobLocation::Queue) {
-        if let Some(district_raw) = parsed
-            .signal
-            .district_id
-            .as_deref()
-            .or(default_district_id)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
+    match &job.location {
+        JobLocation::Queue => {
+            let Some(target_district) = resolve_target_district(parsed, default_district_id) else {
+                return SignalApplyOutcome::Error(
+                    "job is still in Queue; specify district_id or post enter_district first"
+                        .into(),
+                );
+            };
             if let Err(e) = dispatch_and_publish(
                 ctx,
                 format!("linear:cmt:{}:auto-enter", comment.id),
                 actor.clone(),
                 EngineCommand::AssignJobToDistrict {
                     job_id: link.job_id.clone(),
-                    district_id: DistrictId::from(district_raw.to_string()),
+                    district_id: target_district,
                     expected_revision: None,
                     at: now,
                 },
             ) {
                 return SignalApplyOutcome::Error(e.to_string());
             }
-        } else {
-            return SignalApplyOutcome::Error(
-                "job is still in Queue; specify district_id or post enter_district first".into(),
-            );
         }
+        JobLocation::Completed { .. } | JobLocation::Archived => {
+            let Some(target_district) = resolve_target_district(parsed, default_district_id) else {
+                return SignalApplyOutcome::Error(format!(
+                    "job {} is not active; specify district_id or post enter_district to spawn a follow-up job",
+                    link.job_id
+                ));
+            };
+            if let JobLocation::Completed { district_id, .. } = &job.location
+                && district_id == &target_district
+            {
+                return SignalApplyOutcome::Error(format!(
+                    "job {} is already completed in {district_id}",
+                    link.job_id
+                ));
+            }
+            if let Err(e) = spawn_followup_job_for_issue(
+                ctx,
+                owner_id,
+                actor,
+                job,
+                link,
+                issue,
+                &comment.id,
+                &target_district,
+                now,
+            ) {
+                return SignalApplyOutcome::Error(e);
+            }
+        }
+        JobLocation::InDistrict { .. } => {}
     }
 
     let fresh_snapshot = match ctx.store.load_workspace(owner_id) {

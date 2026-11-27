@@ -16,7 +16,7 @@ pub fn handle_replay(
     human: &Actor,
     comments: Vec<String>,
 ) -> Result<Value, String> {
-    let job_id = queue_scratch_job(engine, agent, BASE_TS)?;
+    let mut job_id = queue_scratch_job(engine, agent, BASE_TS)?;
     let mut ts = BASE_TS + 100;
     let mut signals_seen = 0usize;
     let mut last_rework_reason: Option<String> = None;
@@ -31,37 +31,86 @@ pub fn handle_replay(
         let sig = &parsed.signal;
         match (sig.source, sig.action) {
             (SignalSource::Agent, SignalAction::EnterDistrict) => {
-                if let Some(did) = sig.district_id.as_deref()
-                    && engine
+                if let Some(did) = sig.district_id.as_deref() {
+                    let target = DistrictId::from(did.to_string());
+                    let needs_followup = match engine.find_job(&job_id).map(|j| &j.location) {
+                        Some(JobLocation::Completed { district_id, .. }) => district_id != &target,
+                        Some(JobLocation::Archived) => true,
+                        _ => false,
+                    };
+                    if needs_followup
+                        && engine.find_district(&target).is_some_and(|d| !d.archived)
+                        && let Ok(next_id) = queue_scratch_job(engine, agent, ts)
+                    {
+                        job_id = next_id;
+                    }
+                    if engine
                         .apply(
                             agent,
                             EngineCommand::AssignJobToDistrict {
                                 job_id: job_id.clone(),
-                                district_id: DistrictId::from(did.to_string()),
+                                district_id: target,
                                 expected_revision: None,
                                 at: ts,
                             },
                         )
                         .is_ok()
-                {
-                    last_sync_error = None;
+                    {
+                        last_sync_error = None;
+                    }
                 }
             }
             (SignalSource::Agent, SignalAction::AdvanceStage) => {
-                if matches!(
-                    engine.find_job(&job_id).map(|j| &j.location),
-                    Some(JobLocation::Queue)
-                ) && let Some(did) = sig.district_id.as_deref()
-                {
-                    let _ = engine.apply(
-                        agent,
-                        EngineCommand::AssignJobToDistrict {
-                            job_id: job_id.clone(),
-                            district_id: DistrictId::from(did.to_string()),
-                            expected_revision: None,
-                            at: ts,
-                        },
-                    );
+                if let Some(did) = sig.district_id.as_deref() {
+                    let target = DistrictId::from(did.to_string());
+                    match engine.find_job(&job_id).map(|j| &j.location) {
+                        Some(JobLocation::Queue) => {
+                            let _ = engine.apply(
+                                agent,
+                                EngineCommand::AssignJobToDistrict {
+                                    job_id: job_id.clone(),
+                                    district_id: target,
+                                    expected_revision: None,
+                                    at: ts,
+                                },
+                            );
+                        }
+                        Some(JobLocation::Completed { district_id, .. })
+                            if district_id != &target =>
+                        {
+                            if engine.find_district(&target).is_some_and(|d| !d.archived)
+                                && let Ok(next_id) = queue_scratch_job(engine, agent, ts)
+                            {
+                                job_id = next_id;
+                                let _ = engine.apply(
+                                    agent,
+                                    EngineCommand::AssignJobToDistrict {
+                                        job_id: job_id.clone(),
+                                        district_id: target,
+                                        expected_revision: None,
+                                        at: ts,
+                                    },
+                                );
+                            }
+                        }
+                        Some(JobLocation::Archived) => {
+                            if engine.find_district(&target).is_some_and(|d| !d.archived)
+                                && let Ok(next_id) = queue_scratch_job(engine, agent, ts)
+                            {
+                                job_id = next_id;
+                                let _ = engine.apply(
+                                    agent,
+                                    EngineCommand::AssignJobToDistrict {
+                                        job_id: job_id.clone(),
+                                        district_id: target,
+                                        expected_revision: None,
+                                        at: ts,
+                                    },
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 let runner = sig.runner_label.as_deref().unwrap_or("Cloud Agent");
                 if claim_and_advance_in_engine(

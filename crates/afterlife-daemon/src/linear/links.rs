@@ -1,6 +1,6 @@
 use afterlife_core::{
-    Actor, ArtifactKind, DistrictId, EngineCommand, JobEvent, JobId, JobLocation, OwnerId,
-    RunnerId, TimestampMs,
+    Actor, Artifact, ArtifactKind, DistrictId, EngineCommand, Job, JobEvent, JobId, JobLocation,
+    OwnerId, RunnerId, TimestampMs,
 };
 use afterlife_protocol::{
     LinearIssueLink, LinearOAuthToken, SignalSource, extract_linear_signal,
@@ -172,6 +172,12 @@ fn upgrade_existing_link_display(
     let Some(job) = snapshot.engine.find_job(&existing.job_id) else {
         return;
     };
+    if matches!(
+        job.location,
+        JobLocation::Completed { .. } | JobLocation::Archived
+    ) {
+        return;
+    }
 
     let expected_prefix = format!("[{}](", issue.identifier);
     let legacy_raw_prefix = format!("Linear: {} (", issue.identifier);
@@ -303,4 +309,179 @@ pub fn ensure_issue_linked(
         .upsert_link(&link)
         .map_err(|e| format!("insert linear link: {e}"))?;
     Ok((link, true))
+}
+
+fn attach_followup_artifacts_with_short_lease(
+    ctx: &LinearSyncContext,
+    actor: &Actor,
+    job_id: &JobId,
+    issue: &LinearIssue,
+    url: &str,
+    carry_specs: &[Artifact],
+    comment_id: &str,
+    now: TimestampMs,
+) {
+    if url.trim().is_empty() && carry_specs.is_empty() {
+        return;
+    }
+    let Ok(claim_events) = dispatch_and_publish(
+        ctx,
+        format!("linear:followup-art-claim:{comment_id}:{now}"),
+        actor.clone(),
+        EngineCommand::ClaimJob {
+            job_id: job_id.clone(),
+            runner_id: RunnerId::from(format!("linear-followup:{comment_id}")),
+            runner_label: "Linear Sync".into(),
+            ttl_ms: 30_000,
+            expected_revision: None,
+            at: now,
+        },
+    ) else {
+        return;
+    };
+    let Some(token) = claim_events.iter().find_map(|ev| match ev {
+        JobEvent::JobClaimed { fencing_token, .. } => Some(*fencing_token),
+        _ => None,
+    }) else {
+        return;
+    };
+
+    if !url.trim().is_empty() {
+        let _ = dispatch_and_publish(
+            ctx,
+            format!("linear:followup-issue-art:{comment_id}"),
+            actor.clone(),
+            EngineCommand::AttachArtifact {
+                job_id: job_id.clone(),
+                kind: ArtifactKind::Issue,
+                label: issue.identifier.clone(),
+                uri: url.to_string(),
+                sha256: None,
+                fencing_token: Some(token),
+                at: now,
+            },
+        );
+    }
+
+    for (idx, spec) in carry_specs.iter().enumerate() {
+        let _ = dispatch_and_publish(
+            ctx,
+            format!("linear:followup-spec-art:{comment_id}:{idx}"),
+            actor.clone(),
+            EngineCommand::AttachArtifact {
+                job_id: job_id.clone(),
+                kind: ArtifactKind::Spec,
+                label: spec.label.clone(),
+                uri: spec.uri.clone(),
+                sha256: spec.sha256.clone(),
+                fencing_token: Some(token),
+                at: now,
+            },
+        );
+    }
+
+    let _ = dispatch_and_publish(
+        ctx,
+        format!("linear:followup-art-release:{comment_id}:{now}"),
+        actor.clone(),
+        EngineCommand::ReleaseLease {
+            job_id: job_id.clone(),
+            fencing_token: token,
+            at: now,
+        },
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_followup_job_for_issue(
+    ctx: &LinearSyncContext,
+    owner_id: &OwnerId,
+    actor: &Actor,
+    previous_job: &Job,
+    link: &mut LinearIssueLink,
+    issue: &LinearIssue,
+    comment_id: &str,
+    target_district: &DistrictId,
+    now: TimestampMs,
+) -> Result<JobId, String> {
+    let snapshot = ctx
+        .store
+        .load_workspace(owner_id)
+        .map_err(|e| format!("load workspace failed: {e}"))?;
+    let Some(district) = snapshot.engine.find_district(target_district) else {
+        return Err(format!("district {target_district} not found"));
+    };
+    if district.archived {
+        return Err(format!("district {target_district} is archived"));
+    }
+
+    let url = canonical_linear_url(&issue.url);
+    let title = format_issue_title(issue, &url);
+    let raw_input = format_issue_raw_input(issue, &url);
+
+    let events = dispatch_and_publish(
+        ctx,
+        format!("linear:followup-queue:{}:{comment_id}", issue.id),
+        actor.clone(),
+        EngineCommand::QueueJob {
+            title,
+            raw_input,
+            target_district_hint: Some(target_district.clone()),
+            at: now,
+        },
+    )
+    .map_err(|e| format!("queue follow-up job for {}: {e}", issue.identifier))?;
+
+    let new_job_id = events
+        .iter()
+        .find_map(|ev| match ev {
+            JobEvent::JobQueued { job_id, .. } => Some(job_id.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            format!(
+                "follow-up queue produced no JobQueued event for {}",
+                issue.identifier
+            )
+        })?;
+
+    let carry_specs: Vec<Artifact> = previous_job
+        .artifacts
+        .iter()
+        .filter(|a| a.kind == ArtifactKind::Spec)
+        .cloned()
+        .collect();
+    attach_followup_artifacts_with_short_lease(
+        ctx,
+        actor,
+        &new_job_id,
+        issue,
+        &url,
+        &carry_specs,
+        comment_id,
+        now,
+    );
+
+    dispatch_and_publish(
+        ctx,
+        format!("linear:followup-enter:{}:{comment_id}", issue.id),
+        actor.clone(),
+        EngineCommand::AssignJobToDistrict {
+            job_id: new_job_id.clone(),
+            district_id: target_district.clone(),
+            expected_revision: None,
+            at: now,
+        },
+    )
+    .map_err(|e| format!("enter follow-up district {target_district}: {e}"))?;
+
+    link.job_id = new_job_id.clone();
+    link.linear_identifier = issue.identifier.clone();
+    link.linear_url = url;
+    link.last_synced_at_ms = now;
+    ctx.linear
+        .upsert_link(link)
+        .map_err(|e| format!("update linear link to follow-up job: {e}"))?;
+
+    Ok(new_job_id)
 }

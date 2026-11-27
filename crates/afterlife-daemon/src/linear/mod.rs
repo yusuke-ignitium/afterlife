@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod archive_tests;
 pub mod client;
+#[cfg(test)]
+mod followup_tests;
 pub mod inbound;
 pub mod links;
 pub mod oauth;

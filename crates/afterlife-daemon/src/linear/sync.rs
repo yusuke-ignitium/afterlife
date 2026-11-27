@@ -504,7 +504,7 @@ pub fn sync_owner_once(
         }
         open_issue_ids.insert(issue.id.clone());
         report.open_issues_seen += 1;
-        let (link, created) = ensure_issue_linked(ctx, owner_id, &token, issue, now)?;
+        let (mut link, created) = ensure_issue_linked(ctx, owner_id, &token, issue, now)?;
         if created {
             report.jobs_created += 1;
         }
@@ -550,16 +550,21 @@ pub fn sync_owner_once(
                             .map_err(|e| format!("mark afterlife comment: {e}"))?;
                         continue;
                     }
-                    match apply_agent_signal(
+                    let prev_job_id = link.job_id.clone();
+                    let outcome = apply_agent_signal(
                         ctx,
                         owner_id,
-                        &link,
+                        &mut link,
                         issue,
                         comment,
                         &parsed,
                         token.default_district_id.as_deref(),
                         now,
-                    ) {
+                    );
+                    if link.job_id != prev_job_id {
+                        report.jobs_created += 1;
+                    }
+                    match outcome {
                         SignalApplyOutcome::Applied => {
                             ctx.linear
                                 .mark_comment_processed(owner_id, &comment.id, "applied", now)

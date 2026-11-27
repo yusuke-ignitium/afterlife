@@ -563,6 +563,32 @@ mod tests {
         );
         assert_eq!(rep_out["current_context"]["hard_stop"].as_bool(), Some(false));
 
+        let mut handoff_comments = comments[..comments.len() - 1].to_vec();
+        let mut approved_sig =
+            LinearSignalV1::afterlife_event(SignalAction::Approved, "JOB-099", 51);
+        approved_sig.district_id = Some("DIST-002".into());
+        approved_sig.stage_id = Some("shaped".into());
+        handoff_comments.push(serde_json::json!({
+            "body": format_afterlife_comment("**Afterlife Approved** -> `shaped`", None, &approved_sig)
+        }));
+        let (ok_enter_d1, enter_d1_out) = run_sm(&["enter", "--district", "DIST-001"]);
+        assert!(ok_enter_d1, "enter DIST-001 failed: {enter_d1_out}");
+        handoff_comments.push(serde_json::json!({
+            "body": enter_d1_out["comment_markdown"].as_str().unwrap()
+        }));
+        let handoff_file = tmp.join("handoff-comments.json");
+        fs::write(
+            &handoff_file,
+            serde_json::to_vec_pretty(&handoff_comments).unwrap(),
+        )
+        .unwrap();
+        let (ok_handoff, handoff_out) =
+            run_sm(&["replay", "--file", handoff_file.to_str().unwrap()]);
+        assert!(ok_handoff, "handoff replay failed: {handoff_out}");
+        assert_eq!(handoff_out["location"]["state"].as_str(), Some("in_district"));
+        assert_eq!(handoff_out["location"]["district_id"].as_str(), Some("DIST-001"));
+        assert_eq!(handoff_out["location"]["stage_id"].as_str(), Some("discover"));
+
         let _ = fs::remove_dir_all(&tmp);
     }
 }
