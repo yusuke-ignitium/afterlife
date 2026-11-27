@@ -77,6 +77,7 @@ pub struct LinearSyncStatus {
 pub struct LinearSyncReport {
     pub open_issues_seen: usize,
     pub jobs_created: usize,
+    pub jobs_archived: usize,
     pub signals_applied: usize,
     pub signals_deferred_lease: usize,
     pub sync_errors_posted: usize,

@@ -1,9 +1,12 @@
 use std::{
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use afterlife_core::{JobEvent, JobId, JobLocation, OwnerId, StageKind, TimestampMs};
+use afterlife_core::{
+    Actor, EngineCommand, JobEvent, JobId, JobLocation, OwnerId, RunnerId, StageKind, TimestampMs,
+};
 use afterlife_protocol::{
     EventBus, LinearIssueLink, LinearOAuthToken, LinearSignalV1, LinearSyncCursor,
     LinearSyncReport, LinearSyncStore, SignalAction, SignalSource, WorkspaceSnapshot,
@@ -12,7 +15,7 @@ use afterlife_protocol::{
 
 use crate::linear::{
     client::{LinearApi, LinearApiError},
-    inbound::{SignalApplyOutcome, apply_agent_signal},
+    inbound::{SignalApplyOutcome, apply_agent_signal, dispatch_and_publish},
     links::ensure_issue_linked,
 };
 
@@ -323,6 +326,135 @@ fn is_closed_linear_state(state_type: &str, state_name: &str) -> bool {
         )
 }
 
+fn archive_closed_linked_issues(
+    ctx: &LinearSyncContext,
+    owner_id: &OwnerId,
+    access_token: &str,
+    open_issue_ids: &HashSet<String>,
+    now: TimestampMs,
+) -> Result<usize, String> {
+    let links = ctx
+        .linear
+        .list_links(owner_id)
+        .map_err(|e| format!("list linear links: {e}"))?;
+    let snapshot = ctx
+        .store
+        .load_workspace(owner_id)
+        .map_err(|e| format!("load workspace for auto-archive: {e}"))?;
+
+    let mut candidates: Vec<(LinearIssueLink, bool)> = Vec::new();
+    for link in links {
+        if open_issue_ids.contains(&link.linear_issue_id) {
+            continue;
+        }
+        let Some(job) = snapshot.engine.find_job(&link.job_id) else {
+            continue;
+        };
+        if job.stopped {
+            continue;
+        }
+        let needs_lease = match &job.location {
+            JobLocation::Queue => false,
+            JobLocation::InDistrict { .. } => {
+                if is_approval_gate_location(&snapshot, &job.location) {
+                    continue;
+                }
+                true
+            }
+            JobLocation::Completed { .. } | JobLocation::Archived => continue,
+        };
+        let foreign_lease = job.lease.as_ref().is_some_and(|l| {
+            l.is_active_at(now) && l.holder_client_id.as_deref() != Some(LINEAR_SYNC_CLIENT_ID)
+        });
+        if foreign_lease {
+            continue;
+        }
+        candidates.push((link, needs_lease));
+    }
+
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    let ids: Vec<String> = candidates
+        .iter()
+        .map(|(l, _)| l.linear_issue_id.clone())
+        .collect();
+    let states = ctx
+        .api
+        .fetch_issue_states(access_token, &ids)
+        .map_err(|e| e.to_string())?;
+    let state_by_id: HashMap<String, _> = states.into_iter().map(|s| (s.id.clone(), s)).collect();
+
+    let mut archived_count = 0usize;
+    for (link, needs_lease) in candidates {
+        let Some(st) = state_by_id.get(&link.linear_issue_id) else {
+            continue;
+        };
+        if !st.archived && !is_closed_linear_state(&st.state_type, &st.state_name) {
+            continue;
+        }
+
+        let actor = Actor::Agent {
+            owner_id: owner_id.clone(),
+            client_id: LINEAR_SYNC_CLIENT_ID.into(),
+            runner_label: "Linear Sync".into(),
+            token_jti: format!("linear-archive:{}", link.linear_issue_id),
+        };
+        let reason = if st.archived {
+            format!("Linear issue {} was archived/trashed", link.linear_identifier)
+        } else {
+            format!(
+                "Linear issue {} moved to {} ({})",
+                link.linear_identifier, st.state_name, st.state_type
+            )
+        };
+
+        let token = if needs_lease {
+            let Ok(claim_events) = dispatch_and_publish(
+                ctx,
+                format!("linear:archive-claim:{}:{now}", link.linear_issue_id),
+                actor.clone(),
+                EngineCommand::ClaimJob {
+                    job_id: link.job_id.clone(),
+                    runner_id: RunnerId::from(format!("linear-archive:{}", link.linear_issue_id)),
+                    runner_label: "Linear Sync".into(),
+                    ttl_ms: 30_000,
+                    expected_revision: None,
+                    at: now,
+                },
+            ) else {
+                continue;
+            };
+            claim_events.iter().find_map(|ev| match ev {
+                JobEvent::JobClaimed { fencing_token, .. } => Some(*fencing_token),
+                _ => None,
+            })
+        } else {
+            None
+        };
+
+        if dispatch_and_publish(
+            ctx,
+            format!("linear:auto-archive:{}:{}", link.linear_issue_id, st.state_type),
+            actor,
+            EngineCommand::ArchiveJob {
+                job_id: link.job_id.clone(),
+                reason: Some(reason),
+                expected_revision: None,
+                fencing_token: token,
+                at: now,
+            },
+        )
+        .is_ok()
+        {
+            archived_count += 1;
+        }
+    }
+
+    Ok(archived_count)
+}
+
 pub fn sync_owner_once(
     ctx: &LinearSyncContext,
     owner_id: &OwnerId,
@@ -364,11 +496,13 @@ pub fn sync_owner_once(
     }
 
     let mut report = LinearSyncReport::default();
+    let mut open_issue_ids = HashSet::new();
 
     for issue in &issues {
         if is_closed_linear_state(&issue.state_type, &issue.state_name) {
             continue;
         }
+        open_issue_ids.insert(issue.id.clone());
         report.open_issues_seen += 1;
         let (link, created) = ensure_issue_linked(ctx, owner_id, &token, issue, now)?;
         if created {
@@ -457,6 +591,8 @@ pub fn sync_owner_once(
         }
     }
 
+    report.jobs_archived =
+        archive_closed_linked_issues(ctx, owner_id, &token.access_token, &open_issue_ids, now)?;
     report.outbound_events_posted = sync_outbound_events_once(ctx, owner_id, now)?;
 
     let mut cursor = ctx

@@ -69,6 +69,14 @@ pub struct LinearIssue {
     pub comments: Vec<LinearComment>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinearIssueState {
+    pub id: String,
+    pub state_name: String,
+    pub state_type: String,
+    pub archived: bool,
+}
+
 pub trait LinearApi: Send + Sync {
     fn exchange_code(
         &self,
@@ -92,6 +100,12 @@ pub trait LinearApi: Send + Sync {
         &self,
         access_token: &str,
     ) -> Result<(LinearViewer, Vec<LinearIssue>), LinearApiError>;
+
+    fn fetch_issue_states(
+        &self,
+        access_token: &str,
+        issue_ids: &[String],
+    ) -> Result<Vec<LinearIssueState>, LinearApiError>;
 
     fn create_comment(
         &self,
@@ -252,6 +266,22 @@ query AfterlifeOpenAssignedIssues($after: String) {
             }
           }
         }
+      }
+    }
+  }
+}
+";
+
+const ISSUE_STATES_QUERY: &str = "
+query AfterlifeIssueStates($ids: [ID!]!) {
+  issues(first: 50, includeArchived: true, filter: { id: { in: $ids } }) {
+    nodes {
+      id
+      archivedAt
+      trashed
+      state {
+        name
+        type
       }
     }
   }
@@ -472,6 +502,62 @@ impl LinearApi for HttpLinearClient {
         let viewer =
             viewer_out.ok_or_else(|| LinearApiError::GraphQl("viewer missing".into()))?;
         Ok((viewer, issues))
+    }
+
+    fn fetch_issue_states(
+        &self,
+        access_token: &str,
+        issue_ids: &[String],
+    ) -> Result<Vec<LinearIssueState>, LinearApiError> {
+        let mut out = Vec::new();
+        for chunk in issue_ids.chunks(50) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let data = self.post_graphql(
+                access_token,
+                ISSUE_STATES_QUERY,
+                json!({ "ids": chunk }),
+            )?;
+            let nodes = data
+                .get("issues")
+                .and_then(|i| i.get("nodes"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for node in nodes {
+                let Some(id) = node.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let state_name = node
+                    .get("state")
+                    .and_then(|s| s.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let state_type = node
+                    .get("state")
+                    .and_then(|s| s.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let archived_at = node
+                    .get("archivedAt")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.trim().is_empty());
+                let trashed = node
+                    .get("trashed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                out.push(LinearIssueState {
+                    id: id.to_string(),
+                    state_name,
+                    state_type,
+                    archived: archived_at || trashed,
+                });
+            }
+        }
+        Ok(out)
     }
 
     fn create_comment(

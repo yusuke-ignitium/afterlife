@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod archive_tests;
 pub mod client;
 pub mod inbound;
 pub mod links;
