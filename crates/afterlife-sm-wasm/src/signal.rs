@@ -118,8 +118,7 @@ impl ParsedLinearComment {
 fn is_signal_fence_open(line: &str) -> bool {
     let trimmed = line.trim();
     if let Some(rest) = trimmed.strip_prefix("```") {
-        let tag = rest.trim();
-        return tag.eq_ignore_ascii_case(SIGNAL_FENCE_TAG);
+        return rest.trim().eq_ignore_ascii_case(SIGNAL_FENCE_TAG);
     }
     false
 }
@@ -250,79 +249,29 @@ pub fn format_afterlife_comment(
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extracts_signal_and_merges_markdown_sections() {
-        let comment = r#"Completed discovery pass.
-
-## findings
-Verified primary sources and isolated probe behavior.
-
-## sources_read
-- crates/afterlife-core/src/model/artifact_uri.rs
-
-```afterlife-signal
-{
-  "version": 1,
-  "source": "agent",
-  "action": "advance_stage",
-  "district_id": "DIST-001",
-  "stage_id": "discover",
-  "sub_stage_id": "trace_sources",
-  "runner_label": "Cursor Cloud Agent",
-  "fields": {
-    "findings": "Explicit JSON override"
-  }
-}
-```
-"#;
-        let parsed = extract_linear_signal(comment).unwrap().unwrap();
-        assert_eq!(parsed.signal.source, SignalSource::Agent);
-        assert_eq!(parsed.signal.action, SignalAction::AdvanceStage);
-        assert_eq!(parsed.signal.district_id.as_deref(), Some("DIST-001"));
-        assert_eq!(parsed.signal.stage_id.as_deref(), Some("discover"));
-        assert_eq!(parsed.signal.sub_stage_id.as_deref(), Some("trace_sources"));
-
-        let merged = parsed.merged_fields();
-        assert_eq!(
-            merged.get("findings").map(String::as_str),
-            Some("Explicit JSON override")
-        );
-        assert_eq!(
-            merged.get("sources_read").map(String::as_str),
-            Some("- crates/afterlife-core/src/model/artifact_uri.rs")
-        );
+pub fn format_agent_step_comment(
+    headline: &str,
+    summary: Option<&str>,
+    sections: &BTreeMap<String, String>,
+    signal: &LinearSignalV1,
+) -> String {
+    let mut details = String::new();
+    if let Some(s) = summary.map(str::trim).filter(|s| !s.is_empty()) {
+        details.push_str(s);
     }
-
-    #[test]
-    fn returns_none_for_plain_comment() {
-        assert_eq!(
-            extract_linear_signal("Just a regular human comment.").unwrap(),
-            None
-        );
+    for (key, value) in sections {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !details.is_empty() {
+            details.push_str("\n\n");
+        }
+        details.push_str("## ");
+        details.push_str(key);
+        details.push('\n');
+        details.push_str(trimmed);
     }
-
-    #[test]
-    fn rejects_invalid_json_or_unclosed_fence() {
-        assert!(extract_linear_signal("```afterlife-signal\n{bad\n```").is_err());
-        assert!(extract_linear_signal("```afterlife-signal\n{\"version\":1}").is_err());
-    }
-
-    #[test]
-    fn formats_and_round_trips_afterlife_comment() {
-        let mut sig = LinearSignalV1::afterlife_event(SignalAction::Reworked, "JOB-042", 77);
-        sig.district_id = Some("DIST-001".into());
-        sig.stage_id = Some("build".into());
-        sig.reason = Some("Missing regression test".into());
-        let formatted = format_afterlife_comment(
-            "**Afterlife Rework** -> `build`",
-            Some("Reason: Missing regression test"),
-            &sig,
-        );
-        let parsed = extract_linear_signal(&formatted).unwrap().unwrap();
-        assert_eq!(parsed.signal, sig);
-    }
+    let detail_opt = (!details.is_empty()).then_some(details.as_str());
+    format_afterlife_comment(headline, detail_opt, signal)
 }

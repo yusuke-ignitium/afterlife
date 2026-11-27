@@ -28,6 +28,10 @@ done
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
 
+echo "==> Building embedded WASM State Machine (afterlife-sm-wasm)..."
+cargo build --profile wasm-release --target wasm32-unknown-unknown -p afterlife-sm-wasm
+export AFTERLIFE_SM_WASM_PATH="$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/afterlife_sm_wasm.wasm"
+
 echo "==> Building release Afterlife & CLI..."
 cargo build --release -p afterlife-ui -p afterlife-cli
 
@@ -55,7 +59,7 @@ cp "$ROOT_DIR/crates/afterlife-ui/assets/Afterlife.icns" "$APP_DIR/Contents/Reso
 
 echo "==> Exporting District skills..."
 "$CARGO_TARGET_DIR/release/afterlife" skills export --source builtin --out "$APP_DIR/Contents/Resources/skills" >/dev/null
-"$CARGO_TARGET_DIR/release/afterlife" skills export --source auto --out "$SKILLS_DIST_DIR" >/dev/null
+"$CARGO_TARGET_DIR/release/afterlife" skills export --source builtin --out "$SKILLS_DIST_DIR" >/dev/null
 echo "==> Skills exported: $SKILLS_DIST_DIR & $APP_DIR/Contents/Resources/skills"
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'

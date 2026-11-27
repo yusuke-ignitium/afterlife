@@ -10,6 +10,7 @@ pub mod validate;
 pub mod validation;
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -28,11 +29,17 @@ pub use command::EngineCommand;
 pub use policy::{MAX_LEASE_TTL_MS, MIN_LEASE_TTL_MS};
 pub use validate::{validate_stages, validate_template, validate_workspace};
 
+#[cfg(not(target_arch = "wasm32"))]
 fn now_ms() -> TimestampMs {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> TimestampMs {
+    0
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

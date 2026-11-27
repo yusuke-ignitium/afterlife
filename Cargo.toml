@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/afterlife-core",
+    "crates/afterlife-sm-wasm",
     "crates/afterlife-protocol",
     "crates/afterlife-storage",
     "crates/afterlife-daemon",
@@ -12,6 +13,7 @@ members = [
 ]
 default-members = [
     "crates/afterlife-core",
+    "crates/afterlife-sm-wasm",
     "crates/afterlife-protocol",
     "crates/afterlife-storage",
     "crates/afterlife-daemon",
@@ -30,3 +32,11 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

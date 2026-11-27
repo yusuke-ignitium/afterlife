@@ -95,10 +95,21 @@ name = "afterlife-protocol"
 version = "0.1.0"
 dependencies = [
  "afterlife-core",
+ "afterlife-sm-wasm",
+ "base64",
  "serde",
  "serde_json",
  "tokio",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "afterlife-sm-wasm"
+version = "0.1.0"
+dependencies = [
+ "afterlife-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
