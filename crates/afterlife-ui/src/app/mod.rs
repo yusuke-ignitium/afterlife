@@ -1,5 +1,6 @@
 pub mod appearance;
 pub mod artifact_preview;
+pub mod confirm;
 pub mod governance;
 pub mod lifecycle;
 pub mod linear_actions;

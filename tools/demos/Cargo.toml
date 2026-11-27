@@ -44,6 +44,10 @@ path = "src/bin/district_compact_demo/main.rs"
 name = "detail-pr-demo"
 path = "src/bin/detail_pr_demo/main.rs"
 
+[[bin]]
+name = "confirm-button-demo"
+path = "src/bin/confirm_button_demo/main.rs"
+
 [dependencies]
 afterlife-design = { path = "../../crates/afterlife-design" }
 gpui = { path = "../../vendor/gpui", features = ["runtime_shaders"] }

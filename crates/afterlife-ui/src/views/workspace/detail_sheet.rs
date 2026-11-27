@@ -4,13 +4,18 @@ use afterlife_design::{
     single_line, with_alpha,
 };
 use gpui::{
-    AnyElement, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Rgba, SharedString, StatefulInteractiveElement, Styled, div,
-    prelude::FluentBuilder, px,
+    AnyElement, BoxShadow, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, ParentElement, Rgba, SharedString, StatefulInteractiveElement, Styled, div,
+    point, prelude::FluentBuilder, px,
 };
 
 use crate::{
-    app::{motion::MotionSnapshot, state::AppState, window_state::DEFAULT_DETAIL_HEIGHT_PX},
+    app::{
+        confirm::{ConfirmSnapshot, ConfirmTone},
+        motion::{MotionSnapshot, lerp_glass_rgba, lerp_rgba},
+        state::AppState,
+        window_state::DEFAULT_DETAIL_HEIGHT_PX,
+    },
     views::root::{AfterlifeApp, DetailResizeDrag},
 };
 
@@ -72,6 +77,7 @@ pub fn borderless_action_chip(
         .text_color(fg)
         .child(label)
         .on_click(cx.listener(move |this, _, _, cx| {
+            this.disarm_confirm(cx);
             this.state.update(cx, |st, _| {
                 on_click(st);
             });
@@ -81,36 +87,82 @@ pub fn borderless_action_chip(
         .into_any_element()
 }
 
-pub fn ghost_action_btn(
+pub fn two_step_action_chip(
     st: &AppState,
-    id: impl Into<SharedString>,
+    confirm: &ConfirmSnapshot,
+    key: impl Into<String>,
     label: &'static str,
-    on_click: impl Fn(&mut AppState) + 'static,
+    tone: ConfirmTone,
+    ghost_idle: bool,
+    on_confirm: impl Fn(&mut AppState) + 'static,
     cx: &mut Context<AfterlifeApp>,
 ) -> AnyElement {
     let p = st.palette;
+    let key = key.into();
+    let arm_t = confirm.weight(&key);
+
+    let (idle_bg, idle_fg, accent) = match tone {
+        ConfirmTone::Approve => (p.active_bg, p.accent, p.accent),
+        ConfirmTone::Rework => (p.btn_bg, p.text_secondary, p.amber),
+        ConfirmTone::Archive => (
+            Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            },
+            p.text_tertiary,
+            p.coral,
+        ),
+    };
+    let bg = lerp_glass_rgba(idle_bg, accent, arm_t);
+    let fg = lerp_rgba(idle_fg, p.window_backdrop, arm_t);
+    let glow = (arm_t > 1e-3).then(|| {
+        vec![BoxShadow {
+            color: with_alpha(accent, 0.28 * arm_t).into(),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(12.0 * arm_t),
+            spread_radius: px(0.0),
+        }]
+    });
+    let font_size = if ghost_idle {
+        FontPx::F11.px()
+    } else {
+        FontPx::F12.px()
+    };
+    let pad_x = if ghost_idle {
+        SpacePx::S8.px()
+    } else {
+        SpacePx::S12.px()
+    };
+    let click_key = key.clone();
+
     div()
-        .id(id.into())
+        .id(SharedString::from(key))
         .cursor_pointer()
         .h(RowHeightPx::H28.px())
-        .px(SpacePx::S8.px())
+        .px(pad_x)
         .flex()
         .items_center()
         .justify_center()
         .rounded(p.radius_f32(&st.glass, 0.75))
-        .hover(move |s| {
-            s.bg(with_alpha(p.text_primary, 0.08))
-                .text_color(p.text_primary)
+        .bg(bg)
+        .when_some(glow, |d, shadows| d.shadow(shadows))
+        .when(ghost_idle && arm_t < 0.05, move |d| {
+            d.hover(move |s| {
+                s.bg(with_alpha(p.text_primary, 0.08))
+                    .text_color(p.text_primary)
+            })
         })
-        .text_size(FontPx::F11.px())
-        .text_color(p.text_tertiary)
+        .when(!ghost_idle || arm_t >= 0.05, |d| {
+            d.hover(|s| s.opacity(0.90))
+        })
+        .text_size(font_size)
+        .text_color(fg)
         .child(label)
         .on_click(cx.listener(move |this, _, _, cx| {
-            this.state.update(cx, |st, _| {
-                on_click(st);
-            });
+            this.trigger_confirm_button(click_key.clone(), |st| on_confirm(st), cx);
             cx.stop_propagation();
-            cx.notify();
         }))
         .into_any_element()
 }

@@ -10,6 +10,7 @@ use gpui::{
 
 use crate::{
     app::{
+        confirm::{ConfirmSnapshot, ConfirmTone},
         motion::MotionSnapshot,
         state::{AppState, now_ms},
     },
@@ -19,7 +20,7 @@ use crate::{
         workspace::{
             detail_sheet::{
                 DETAIL_TOGGLE_WIDTH_PX, DetailSheetChrome, borderless_action_chip,
-                detail_footer_visible_for_job, ghost_action_btn, render_detail_sheet_frame,
+                detail_footer_visible_for_job, render_detail_sheet_frame, two_step_action_chip,
             },
             step_history::render_step_history,
         },
@@ -267,6 +268,7 @@ pub(super) fn render_job_detail_sheet(
     st: &AppState,
     job: Job,
     motion: &MotionSnapshot,
+    confirm: &ConfirmSnapshot,
     detail_target_h: f32,
     is_resizing_detail: bool,
     cx: &mut Context<AfterlifeApp>,
@@ -427,13 +429,14 @@ pub(super) fn render_job_detail_sheet(
             .items_center()
             .gap(SpacePx::S8.px())
             .when(in_district && at_approval_gate, |d| {
-                d.child(borderless_action_chip(
+                let key = format!("detail-approve-{}", jid_adv);
+                d.child(two_step_action_chip(
                     st,
-                    "detail-approve",
+                    confirm,
+                    key,
                     "Approve",
-                    p.active_bg,
-                    p.accent,
-                    None,
+                    ConfirmTone::Approve,
+                    false,
                     move |st| {
                         let _ = st.dispatch(EngineCommand::ApproveJob {
                             job_id: jid_adv.clone(),
@@ -446,6 +449,7 @@ pub(super) fn render_job_detail_sheet(
                 ))
             })
             .when(in_district, |d| {
+                let rework_key = format!("detail-rework-{}", jid_rew);
                 d.child(borderless_action_chip(
                     st,
                     "detail-stop-resume",
@@ -462,13 +466,13 @@ pub(super) fn render_job_detail_sheet(
                     },
                     cx,
                 ))
-                .child(borderless_action_chip(
+                .child(two_step_action_chip(
                     st,
-                    "detail-rework",
+                    confirm,
+                    rework_key,
                     "Rework",
-                    p.btn_bg,
-                    p.text_secondary,
-                    None,
+                    ConfirmTone::Rework,
+                    false,
                     move |st| {
                         let _ = st.dispatch(EngineCommand::ReworkJob {
                             job_id: jid_rew.clone(),
@@ -482,10 +486,14 @@ pub(super) fn render_job_detail_sheet(
                 ))
             });
 
-        let right_archive = ghost_action_btn(
+        let archive_key = format!("detail-archive-{}", jid_arch);
+        let right_archive = two_step_action_chip(
             st,
-            "detail-archive",
+            confirm,
+            archive_key,
             "Archive",
+            ConfirmTone::Archive,
+            true,
             move |st| {
                 if st
                     .dispatch(EngineCommand::ArchiveJob {

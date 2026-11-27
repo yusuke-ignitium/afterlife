@@ -7,13 +7,14 @@ use std::{
 use afterlife_design::{SpacePx, UiStyle};
 use gpui::{
     App, Background, Bounds, ClickEvent, Context, CursorStyle, Entity, InteractiveElement,
-    IntoElement, MouseButton, MouseMoveEvent, ParentElement, Pixels, Render,
+    IntoElement, KeyDownEvent, MouseButton, MouseMoveEvent, ParentElement, Pixels, Render,
     StatefulInteractiveElement, Styled, Subscription, Task, Window, div, particle_wave_with,
     prelude::FluentBuilder, px,
 };
 
 use crate::{
     app::{
+        confirm::{CONFIRM_AUTO_DISARM_MS, ConfirmPressOutcome, ConfirmState},
         lifecycle::CloseWindow,
         motion::UiMotion,
         state::{AppState, GlassParamKey, TabId},
@@ -43,6 +44,7 @@ pub struct AfterlifeApp {
     pub state: Entity<AppState>,
     pub perf: Option<PerfSession>,
     pub motion: UiMotion,
+    pub confirm: ConfirmState,
     pub active_slider: Option<(GlassParamKey, Rc<Cell<Bounds<Pixels>>>)>,
     pub slider_bounds: Vec<(GlassParamKey, Rc<Cell<Bounds<Pixels>>>)>,
     pub detail_resize: Option<DetailResizeDrag>,
@@ -119,6 +121,7 @@ impl AfterlifeApp {
             state,
             perf,
             motion: UiMotion::new(),
+            confirm: ConfirmState::new(),
             active_slider: None,
             slider_bounds,
             detail_resize: None,
@@ -212,6 +215,43 @@ impl AfterlifeApp {
             cx.notify();
         }
     }
+
+    pub fn disarm_confirm(&mut self, cx: &mut Context<Self>) {
+        if self.confirm.disarm(Instant::now()) {
+            cx.notify();
+        }
+    }
+
+    pub fn trigger_confirm_button(
+        &mut self,
+        key: String,
+        on_confirm: impl FnOnce(&mut AppState),
+        cx: &mut Context<Self>,
+    ) {
+        let now = Instant::now();
+        match self.confirm.press(key, now) {
+            ConfirmPressOutcome::Confirmed => {
+                self.state.update(cx, |st, _| {
+                    on_confirm(st);
+                });
+                cx.notify();
+            }
+            ConfirmPressOutcome::Armed { epoch } => {
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(CONFIRM_AUTO_DISARM_MS))
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.confirm.disarm_if_epoch(epoch, Instant::now()) {
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+                cx.notify();
+            }
+        }
+    }
 }
 
 impl Render for AfterlifeApp {
@@ -225,10 +265,10 @@ impl Render for AfterlifeApp {
 
         self.window_active = window.is_window_active();
         self.sync_inactive_fade_schedule(st.inactive_fade_delay_secs(), cx);
-        let motion = self
-            .motion
-            .sync(&st, self.inactive_dim_active, Instant::now());
-        if motion.animating {
+        let now = Instant::now();
+        let motion = self.motion.sync(&st, self.inactive_dim_active, now);
+        let confirm = self.confirm.snapshot(&st, now);
+        if motion.animating || confirm.animating {
             window.request_animation_frame();
         }
 
@@ -289,6 +329,14 @@ impl Render for AfterlifeApp {
             .on_action(|_: &CloseWindow, window, _| {
                 window.remove_window();
             })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.disarm_confirm(cx);
+            }))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                if ev.keystroke.key.as_str() == "escape" {
+                    this.disarm_confirm(cx);
+                }
+            }))
             .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
                 if ev.dragging() {
                     if let Some((key, cell)) = this.active_slider.clone() {
@@ -351,6 +399,7 @@ impl Render for AfterlifeApp {
                             .child(render_left_pane(
                                 &st,
                                 &motion,
+                                &confirm,
                                 left_pane_height,
                                 is_resizing_detail,
                                 cx,

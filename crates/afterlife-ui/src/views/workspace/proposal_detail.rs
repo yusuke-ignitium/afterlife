@@ -9,13 +9,17 @@ use gpui::{
 };
 
 use crate::{
-    app::{motion::MotionSnapshot, state::AppState},
+    app::{
+        confirm::{ConfirmSnapshot, ConfirmTone},
+        motion::MotionSnapshot,
+        state::AppState,
+    },
     views::{
         root::AfterlifeApp,
         templates_view::render_template_proposal_body,
         workspace::{
             detail_sheet::{
-                DetailSheetChrome, borderless_action_chip, render_detail_sheet_frame,
+                DetailSheetChrome, render_detail_sheet_frame, two_step_action_chip,
             },
             proposals_list::{
                 DiffMark, classify_principle_diff, classify_stage_diff, removed_stage_ids,
@@ -501,6 +505,7 @@ pub(super) fn render_proposal_detail_sheet(
     st: &AppState,
     proposal_id: ProposalId,
     motion: &MotionSnapshot,
+    confirm: &ConfirmSnapshot,
     detail_target_h: f32,
     is_resizing_detail: bool,
     cx: &mut Context<AfterlifeApp>,
@@ -582,13 +587,13 @@ pub(super) fn render_proposal_detail_sheet(
             .justify_between()
             .w_full()
             .gap(SpacePx::S8.px())
-            .child(borderless_action_chip(
+            .child(two_step_action_chip(
                 st,
-                "proposal-approve-btn",
+                confirm,
+                format!("proposal-approve-{proposal_id}"),
                 "Approve",
-                p.active_bg,
-                p.accent,
-                None,
+                ConfirmTone::Approve,
+                false,
                 move |st| {
                     let _ = st.approve_proposal(pid_approve.clone());
                 },

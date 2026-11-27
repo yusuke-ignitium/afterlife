@@ -10,18 +10,20 @@ use gpui::{
 
 use crate::{
     app::{
+        confirm::{ConfirmSnapshot, ConfirmTone},
         motion::{MotionSnapshot, lerp_glass_rgba, lerp_rgba},
         state::{AppState, now_ms},
         window_state::clamp_detail_height,
     },
     components::{
-        controls::{card_hover_sheen, chip_btn, status_dot_label},
+        controls::{card_hover_sheen, status_dot_label},
         drag::{DragPreview, DraggedJob},
         inline_text::linkified_text,
     },
     views::{
         root::AfterlifeApp,
         workspace::{
+            detail_sheet::two_step_action_chip,
             job_detail::render_job_detail_sheet,
             proposal_detail::render_proposal_detail_sheet,
             proposals_list::render_proposals_section,
@@ -32,6 +34,7 @@ use crate::{
 pub fn render_left_pane(
     st: &AppState,
     motion: &MotionSnapshot,
+    confirm: &ConfirmSnapshot,
     pane_height: f32,
     is_resizing_detail: bool,
     cx: &mut Context<AfterlifeApp>,
@@ -192,18 +195,14 @@ pub fn render_left_pane(
                                                     .flex()
                                                     .flex_row()
                                                     .gap(SpacePx::S8.px())
-                                                    .child(chip_btn(
+                                                    .child(two_step_action_chip(
                                                         st,
-                                                        SharedString::from(format!(
-                                                            "gate-approve-{}",
-                                                            job.id
-                                                        )),
+                                                        confirm,
+                                                        format!("gate-approve-{}", job.id),
                                                         "Approve",
-                                                        RowHeightPx::H28,
-                                                        SpacePx::S12,
-                                                        FontPx::F12,
-                                                        true,
-                                                        move |st, _, _| {
+                                                        ConfirmTone::Approve,
+                                                        false,
+                                                        move |st| {
                                                             let _ = st.dispatch(
                                                                 EngineCommand::ApproveJob {
                                                                     job_id: jid_approve.clone(),
@@ -215,18 +214,14 @@ pub fn render_left_pane(
                                                         },
                                                         cx,
                                                     ))
-                                                    .child(chip_btn(
+                                                    .child(two_step_action_chip(
                                                         st,
-                                                        SharedString::from(format!(
-                                                            "gate-rework-{}",
-                                                            job.id
-                                                        )),
+                                                        confirm,
+                                                        format!("gate-rework-{}", job.id),
                                                         "Rework",
-                                                        RowHeightPx::H28,
-                                                        SpacePx::S12,
-                                                        FontPx::F12,
+                                                        ConfirmTone::Rework,
                                                         false,
-                                                        move |st, _, _| {
+                                                        move |st| {
                                                             let _ = st.dispatch(
                                                                 EngineCommand::ReworkJob {
                                                                     job_id: jid_rework.clone(),
@@ -364,6 +359,7 @@ pub fn render_left_pane(
                             st,
                             pid,
                             motion,
+                            confirm,
                             detail_target_h,
                             is_resizing_detail,
                             cx,
@@ -376,6 +372,7 @@ pub fn render_left_pane(
                         st,
                         job,
                         motion,
+                        confirm,
                         detail_target_h,
                         is_resizing_detail,
                         cx,
