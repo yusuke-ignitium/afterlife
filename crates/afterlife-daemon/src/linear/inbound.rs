@@ -9,6 +9,7 @@ use afterlife_protocol::{
 
 use crate::linear::{
     client::{LinearComment, LinearIssue},
+    links::canonical_linear_url,
     sync::{LINEAR_SYNC_CLIENT_ID, LinearSyncContext},
 };
 
@@ -404,9 +405,9 @@ fn extract_attached_id(events: &[JobEvent]) -> Option<ArtifactId> {
 
 fn evidence_uri_for(comment: &LinearComment, issue: &LinearIssue) -> String {
     if !comment.url.trim().is_empty() {
-        comment.url.clone()
+        canonical_linear_url(&comment.url)
     } else {
-        issue.url.clone()
+        canonical_linear_url(&issue.url)
     }
 }
 

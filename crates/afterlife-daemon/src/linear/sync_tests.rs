@@ -489,8 +489,89 @@ fn active_local_lease_defers_linear_signal_and_token_rotates_when_expiring() {
 
     let snap = ctx.store.load_workspace(&owner_id).unwrap();
     let job = snap.engine.find_job(&link.job_id).unwrap();
+    assert!(
+        job.title
+            .starts_with("[ENG-202](https://linear.app/acme/issue/ENG-202)")
+    );
+    assert!(
+        job.raw_input
+            .starts_with("Linear: [ENG-202](https://linear.app/acme/issue/ENG-202)")
+    );
     assert!(matches!(
         &job.location,
         JobLocation::InDistrict { district_id, .. } if district_id.as_str() == "DIST-001"
     ));
+}
+
+#[test]
+fn canonical_linear_url_strips_japanese_slug_and_upgrades_legacy_queue_job_links() {
+    use afterlife_core::parse_inline_links;
+
+    let slugged = "https://linear.app/acme/issue/ENG-853/日本語のタイトル slug";
+    let issue = LinearIssue {
+        id: "iss-slug-1".into(),
+        identifier: "ENG-853".into(),
+        title: "Replace docs link".into(),
+        description: Some("Body text".into()),
+        url: slugged.into(),
+        state_name: "In Progress".into(),
+        state_type: "started".into(),
+        comments: vec![],
+    };
+
+    let now = 2_000_000_000_000u64;
+    let (ctx, _api, owner_id) = setup_ctx(vec![issue], None);
+
+    let legacy_out = ctx
+        .store
+        .execute_command(CommandEnvelope {
+            command_id: CommandId::from("legacy-queue"),
+            actor: Actor::local_human(owner_id.clone()),
+            command: EngineCommand::QueueJob {
+                title: "[ENG-853] Replace docs link".into(),
+                raw_input: format!("Linear: ENG-853 ({slugged})\nState: In Progress\n"),
+                target_district_hint: None,
+                at: now - 1_000,
+            },
+        })
+        .unwrap();
+    let legacy_job_id = legacy_out
+        .events
+        .iter()
+        .find_map(|e| match e {
+            afterlife_core::JobEvent::JobQueued { job_id, .. } => Some(job_id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    ctx.linear
+        .upsert_link(&afterlife_protocol::LinearIssueLink {
+            owner_id: owner_id.clone(),
+            linear_issue_id: "iss-slug-1".into(),
+            linear_identifier: "ENG-853".into(),
+            linear_url: slugged.into(),
+            job_id: legacy_job_id.clone(),
+            last_synced_at_ms: now - 1_000,
+        })
+        .unwrap();
+
+    sync_owner_once(&ctx, &owner_id, now).unwrap();
+
+    let snap = ctx.store.load_workspace(&owner_id).unwrap();
+    let job = snap.engine.find_job(&legacy_job_id).unwrap();
+    let title_links = parse_inline_links(&job.title);
+    assert_eq!(title_links.links.len(), 1);
+    assert_eq!(title_links.links[0].label, "ENG-853");
+    assert_eq!(
+        title_links.links[0].url,
+        "https://linear.app/acme/issue/ENG-853"
+    );
+    let body_links = parse_inline_links(&job.raw_input);
+    assert_eq!(body_links.links.len(), 1);
+    assert_eq!(
+        body_links.links[0].url,
+        "https://linear.app/acme/issue/ENG-853"
+    );
+    assert!(job.artifacts.iter().any(|a| {
+        a.kind == ArtifactKind::Issue && a.uri == "https://linear.app/acme/issue/ENG-853"
+    }));
 }
