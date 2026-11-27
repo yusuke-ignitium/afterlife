@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use afterlife_core::{DistrictId, EngineCommand, FeedbackId, Principle, ProposalId, StageDef};
-use afterlife_protocol::{Principal, Scope};
+use afterlife_protocol::{Principal, Scope, export_workspace_skills};
 use serde_json::{Value, json};
 
 use crate::AppDaemonState;
@@ -82,6 +82,45 @@ pub(super) fn handle_districts_list(
                     }),
                     false,
                 ),
+            )
+        }
+        Err(e) => rpc_ok(id, tool_text(json!({ "error": e.to_string() }), true)),
+    }
+}
+
+pub(super) fn handle_districts_export_skills(
+    state: &Arc<AppDaemonState>,
+    principal: &Principal,
+    id: Value,
+    args: Value,
+) -> Value {
+    if !principal.scopes.contains(&Scope::JobsRead) {
+        return rpc_ok(
+            id,
+            tool_text(json!({ "error": "insufficient_scope" }), true),
+        );
+    }
+    let district_filter = match parse_optional_str(&args, "district_id") {
+        Ok(v) => v,
+        Err(msg) => return invalid_arg(id, "district_id", &msg),
+    };
+    if let Some(did) = district_filter
+        && !principal.scopes.allows_district(&DistrictId::from(did))
+    {
+        return rpc_ok(
+            id,
+            tool_text(json!({ "error": "district_scope_denied" }), true),
+        );
+    }
+    match state.ports.store.load_workspace(&principal.owner_id) {
+        Ok(mut snap) => {
+            snap.engine
+                .districts
+                .retain(|d| principal.scopes.allows_district(&d.id));
+            let bundle = export_workspace_skills(&snap.engine, district_filter);
+            rpc_ok(
+                id,
+                tool_text(serde_json::to_value(&bundle).unwrap_or(Value::Null), false),
             )
         }
         Err(e) => rpc_ok(id, tool_text(json!({ "error": e.to_string() }), true)),

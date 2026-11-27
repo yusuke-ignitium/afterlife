@@ -17,6 +17,9 @@ pub(super) fn handle_tool_call(
     let now = now_ms();
     match name {
         "districts_list" => district_tools::handle_districts_list(state, principal, id, args),
+        "districts_export_skills" => {
+            district_tools::handle_districts_export_skills(state, principal, id, args)
+        }
         "districts_propose_create" => {
             district_tools::handle_districts_propose_create(state, principal, id, args, now)
         }

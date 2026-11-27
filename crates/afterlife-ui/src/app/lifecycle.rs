@@ -55,6 +55,7 @@ fn spawn_embedded_daemon(daemon: Arc<AppDaemonState>) {
                 eprintln!(
                     "[afterlife-ui] embedded afterlifed listening on {bind_addr} (MCP: {public_url}/mcp | Metrics: {public_url}/v1/metrics)"
                 );
+                afterlife_daemon::linear::spawn_background_services(daemon.clone());
                 let router = afterlife_daemon::build_router(daemon);
                 if let Err(e) = axum::serve(listener, router).await {
                     eprintln!("[afterlife-ui] embedded afterlifed stopped: {e}");

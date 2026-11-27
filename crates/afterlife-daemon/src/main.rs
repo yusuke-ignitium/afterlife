@@ -35,6 +35,7 @@ async fn main() {
         std::process::exit(1);
     });
 
+    afterlife_daemon::linear::spawn_background_services(state.clone());
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await

@@ -1,4 +1,5 @@
 pub mod factory;
+pub mod linear_store;
 pub mod local_adapters;
 pub mod sqlite;
 #[cfg(test)]
@@ -7,6 +8,7 @@ mod district_compat_tests;
 mod stop_resume_compat_tests;
 
 pub use factory::RuntimePorts;
+pub use linear_store::SqliteLinearStore;
 pub use local_adapters::{
     InMemoryEventBus, JsonlTelemetrySink, LocalFsBlobStore, NoopTelemetrySink,
 };

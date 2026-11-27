@@ -2,6 +2,7 @@ pub mod artifacts;
 pub mod auth;
 #[cfg(test)]
 mod governance_tests;
+pub mod linear;
 pub mod mcp;
 pub mod metrics;
 pub mod rest;
@@ -22,13 +23,21 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::{auth::AuthBroker, metrics::DaemonMetrics};
+use crate::{auth::AuthBroker, linear::LinearBridge, metrics::DaemonMetrics};
 
 pub struct AppDaemonState {
     pub config: AfterlifeConfig,
     pub ports: RuntimePorts,
     pub auth: AuthBroker,
+    pub linear: LinearBridge,
     pub metrics: Arc<DaemonMetrics>,
+}
+
+fn resolve_data_dir(config: &AfterlifeConfig) -> Option<PathBuf> {
+    match &config.storage {
+        StorageConfig::Sqlite { path } => Path::new(path).parent().map(Path::to_path_buf),
+        StorageConfig::Postgres { .. } => None,
+    }
 }
 
 fn resolve_log_dir(config: &AfterlifeConfig) -> Option<PathBuf> {
@@ -37,24 +46,27 @@ fn resolve_log_dir(config: &AfterlifeConfig) -> Option<PathBuf> {
             return Some(PathBuf::from(dir));
         }
     }
-    match &config.storage {
-        StorageConfig::Sqlite { path } => Path::new(path).parent().map(|p| p.join("logs")),
-        StorageConfig::Postgres { .. } => None,
-    }
+    resolve_data_dir(config).map(|p| p.join("logs"))
 }
 
 impl AppDaemonState {
     pub fn from_config(config: AfterlifeConfig) -> Result<Arc<Self>, String> {
         let ports = RuntimePorts::from_config(&config).map_err(|e| e.to_string())?;
         let auth = AuthBroker::new(config.auth.clone());
+        let linear = LinearBridge::default();
         let log_dir = resolve_log_dir(&config);
         let metrics = DaemonMetrics::new(log_dir.as_deref());
         Ok(Arc::new(Self {
             config,
             ports,
             auth,
+            linear,
             metrics,
         }))
+    }
+
+    pub fn skills_dir(&self) -> Option<PathBuf> {
+        resolve_data_dir(&self.config).map(|p| p.join("skills"))
     }
 }
 
@@ -96,6 +108,10 @@ pub fn build_router(state: Arc<AppDaemonState>) -> Router {
         .route("/oauth/authorize", get(auth::authorize_get))
         .route("/oauth/token", post(auth::token_post))
         .route("/oauth/revoke", post(auth::revoke_post))
+        .route(
+            "/oauth/linear/callback",
+            get(linear::oauth::linear_oauth_callback_get),
+        )
         .route("/v1/health", get(rest::health))
         .route("/v1/metrics", get(rest::get_metrics))
         .route("/v1/metrics/reset", post(rest::reset_metrics))
@@ -104,6 +120,24 @@ pub fn build_router(state: Arc<AppDaemonState>) -> Router {
         .route("/v1/jobs/{job_id}/context", get(rest::get_job_context))
         .route("/v1/commands", post(rest::post_command))
         .route("/v1/events", get(rest::sse_events))
+        .route("/v1/linear/status", get(linear::oauth::linear_status_get))
+        .route(
+            "/v1/linear/oauth/start",
+            post(linear::oauth::linear_oauth_start_post),
+        )
+        .route("/v1/linear/sync", post(linear::oauth::linear_sync_post))
+        .route(
+            "/v1/linear/disconnect",
+            post(linear::oauth::linear_disconnect_post),
+        )
+        .route(
+            "/v1/districts/skills",
+            get(linear::oauth::districts_skills_get),
+        )
+        .route(
+            "/v1/districts/skills/export",
+            post(linear::oauth::districts_skills_export_post),
+        )
         .route(
             "/mcp",
             post(mcp::mcp_post)

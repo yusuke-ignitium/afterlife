@@ -2,6 +2,7 @@ pub mod appearance;
 pub mod artifact_preview;
 pub mod governance;
 pub mod lifecycle;
+pub mod linear_actions;
 pub mod motion;
 pub mod notifications;
 pub mod state;

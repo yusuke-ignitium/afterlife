@@ -2,7 +2,10 @@ pub mod auth;
 pub mod backdrop;
 pub mod config;
 pub mod envelope;
+pub mod linear;
+pub mod linear_signal;
 pub mod ports;
+pub mod skill_export;
 
 pub use auth::{Principal, RegisteredClient, Scope, ScopeSet, StoredRefreshToken};
 pub use backdrop::{
@@ -19,7 +22,21 @@ pub use config::{
     StorageConfig, TelemetryConfig,
 };
 pub use envelope::{CommandEnvelope, CommandOutcome, EventRecord, WorkspaceSnapshot};
+pub use linear::{
+    LinearIssueLink, LinearOAuthToken, LinearSyncCursor, LinearSyncReport, LinearSyncStatus,
+    LinearSyncStore,
+};
+pub use linear_signal::{
+    LinearSignalV1, ParsedLinearComment, SIGNAL_FENCE_TAG, SIGNAL_SCHEMA_VERSION, SignalAction,
+    SignalArtifact, SignalGateReport, SignalSource, extract_linear_signal,
+    format_afterlife_comment,
+};
 pub use ports::{ArtifactBlobStore, BlobRef, EventBus, PortError, TelemetrySink, WorkspaceStore};
+pub use skill_export::{
+    ENTRY_SKILL_SLUG, ExportedSkillFile, SkillExportBundle, SkillManifest, SkillManifestEntry,
+    SkillWriteReport, district_skill_slug, export_builtin_skills, export_district_skill,
+    export_entry_skill, export_workspace_skills, write_skill_bundle_atomic,
+};
 
 #[cfg(test)]
 mod appearance_compat_tests;

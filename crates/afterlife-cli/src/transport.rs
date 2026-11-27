@@ -76,6 +76,32 @@ pub fn get_json(path: &str) -> Result<Value, CliError> {
     }
 }
 
+pub fn post_json(path: &str, payload: &Value) -> Result<Value, CliError> {
+    let url = format!("{}{}", base_url().trim_end_matches('/'), path);
+    let mut req = ureq::post(&url).set("Content-Type", "application/json");
+    if let Some(tok) = bearer_token() {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    let body = serde_json::to_string(payload)
+        .map_err(|e| CliError::local(format!("failed serializing payload: {e}")))?;
+    match req.send_string(&body) {
+        Ok(resp) => {
+            let raw = resp
+                .into_string()
+                .map_err(|e| CliError::transport(format!("failed reading {url}: {e}")))?;
+            serde_json::from_str::<Value>(&raw)
+                .map_err(|e| CliError::transport(format!("invalid JSON from {url}: {e}")))
+        }
+        Err(ureq::Error::Status(status, resp)) => {
+            let raw = resp.into_string().unwrap_or_default();
+            let parsed = serde_json::from_str::<Value>(&raw)
+                .unwrap_or_else(|_| json!({ "status": status, "error": raw }));
+            Err(CliError::remote(parsed))
+        }
+        Err(e) => Err(CliError::transport(format!("POST {url} failed: {e}"))),
+    }
+}
+
 pub fn open_sse_reader(
     since_seq: u64,
     read_timeout: Option<Duration>,

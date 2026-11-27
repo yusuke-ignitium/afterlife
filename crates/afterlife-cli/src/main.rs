@@ -2,7 +2,10 @@ mod args;
 mod backdrop;
 mod events;
 mod events_runner;
+mod linear;
+mod skills;
 mod toolmap;
+mod toolmap_types;
 mod transport;
 
 use std::{env, process::ExitCode};
@@ -13,6 +16,8 @@ use crate::{
     args::{build_toolmap, find_spec, parse_spec_args},
     backdrop::run_backdrop_command,
     events_runner::{run_wait_command, run_watch_command},
+    linear::run_linear_command,
+    skills::run_skills_command,
     toolmap::{CONCEPT, TOOLMAP},
     transport::{CliError, get_json, mcp_call_tool, mcp_rpc},
 };
@@ -77,6 +82,14 @@ fn run(args: &[String]) -> Result<CliOutput, CliError> {
         ["backdrop", sub] => {
             let (payload, _) = parse_spec_args(spec, rest)?;
             run_backdrop_command(sub, &payload).map(CliOutput::Json)
+        }
+        ["skills", sub] => {
+            let (payload, _) = parse_spec_args(spec, rest)?;
+            run_skills_command(sub, &payload).map(CliOutput::Json)
+        }
+        ["linear", sub] => {
+            let (payload, _) = parse_spec_args(spec, rest)?;
+            run_linear_command(sub, &payload).map(CliOutput::Json)
         }
         ["mcp", "call"] => {
             let (mut payload, _) = parse_spec_args(spec, rest)?;

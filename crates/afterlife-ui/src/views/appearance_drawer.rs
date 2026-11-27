@@ -15,7 +15,7 @@ use crate::{
         motion::{MotionSnapshot, lerp_rgba},
         state::{AppState, GlassParamKey, GlassParamSection},
     },
-    views::root::AfterlifeApp,
+    views::{linear_sync_section::render_linear_and_skills_section, root::AfterlifeApp},
 };
 
 const DRAWER_WIDTH_PX: f32 = 308.0;
@@ -602,7 +602,8 @@ pub fn render_appearance_drawer(
                         st.toggle_approval_notifications();
                     },
                     cx,
-                )),
+                ))
+                .child(render_linear_and_skills_section(st, cx)),
         )
         .into_any_element()
 }

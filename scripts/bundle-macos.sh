@@ -28,10 +28,11 @@ done
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
 
-echo "==> Building release Afterlife..."
-cargo build --release -p afterlife-ui
+echo "==> Building release Afterlife & CLI..."
+cargo build --release -p afterlife-ui -p afterlife-cli
 
 APP_DIR="$ROOT_DIR/dist/Afterlife.app"
+SKILLS_DIST_DIR="$ROOT_DIR/dist/skills"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 if [[ "$RELAUNCH" -eq 1 ]] && pgrep -x Afterlife >/dev/null 2>&1; then
@@ -45,9 +46,17 @@ if [[ "$RELAUNCH" -eq 1 ]] && pgrep -x Afterlife >/dev/null 2>&1; then
     done
 fi
 
+rm -f "$APP_DIR/Contents/MacOS/Afterlife" "$APP_DIR/Contents/MacOS/afterlife-cli"
 cp "$CARGO_TARGET_DIR/release/afterlife-desktop" "$APP_DIR/Contents/MacOS/Afterlife"
 chmod +x "$APP_DIR/Contents/MacOS/Afterlife"
+cp "$CARGO_TARGET_DIR/release/afterlife" "$APP_DIR/Contents/MacOS/afterlife-cli"
+chmod +x "$APP_DIR/Contents/MacOS/afterlife-cli"
 cp "$ROOT_DIR/crates/afterlife-ui/assets/Afterlife.icns" "$APP_DIR/Contents/Resources/Afterlife.icns"
+
+echo "==> Exporting District skills..."
+"$CARGO_TARGET_DIR/release/afterlife" skills export --source builtin --out "$APP_DIR/Contents/Resources/skills" >/dev/null
+"$CARGO_TARGET_DIR/release/afterlife" skills export --source auto --out "$SKILLS_DIST_DIR" >/dev/null
+echo "==> Skills exported: $SKILLS_DIST_DIR & $APP_DIR/Contents/Resources/skills"
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

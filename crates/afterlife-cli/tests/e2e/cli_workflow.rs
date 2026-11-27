@@ -77,7 +77,26 @@ async fn e2e_cli_subprocess_full_agent_workflow_and_approval_gate_guard() {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        assert_eq!(server_tool_names.len(), 23);
+        assert_eq!(server_tool_names.len(), 24);
+        assert!(server_tool_names.contains("districts_export_skills"));
+
+        let (ok, exported_skills) = run_cli(&url_clone, &["skills", "export", "--print"]);
+        assert!(ok, "skills export --print failed: {exported_skills}");
+        assert_eq!(exported_skills["source"], "live");
+        assert!(
+            exported_skills["skills"]
+                .as_array()
+                .is_some_and(|arr| arr.iter().any(|s| s["slug"] == "afterlife"))
+        );
+
+        let (ok, linear_status) = run_cli(&url_clone, &["linear", "status"]);
+        assert!(ok, "linear status failed: {linear_status}");
+        assert_eq!(linear_status["connected"], false);
+        assert!(
+            linear_status["redirect_uri"]
+                .as_str()
+                .is_some_and(|u| u.ends_with("/oauth/linear/callback"))
+        );
 
         let (ok, toolmap) = run_cli(&url_clone, &["toolmap"]);
         assert!(ok, "toolmap failed: {toolmap}");

@@ -14,6 +14,17 @@ pub fn mcp_tool_definitions() -> Value {
             }
         },
         {
+            "name": "districts_export_skills",
+            "description": "Compile active Districts (Philosophy, embedded State Machine, Sub-Machines, Gate Rubrics, and Linear signal protocol) into portable Agent Skill markdown files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "district_id": { "type": "string" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "districts_propose_create",
             "description": "Propose creating a new District with an initial v1 Philosophy and ProcedureSpec (requires human sign-off to activate).",
             "inputSchema": {
