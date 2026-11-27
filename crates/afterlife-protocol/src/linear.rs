@@ -75,7 +75,7 @@ pub struct LinearSyncStatus {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinearSyncReport {
-    pub started_issues_seen: usize,
+    pub open_issues_seen: usize,
     pub jobs_created: usize,
     pub signals_applied: usize,
     pub signals_deferred_lease: usize,

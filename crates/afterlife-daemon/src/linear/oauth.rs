@@ -341,7 +341,7 @@ pub async fn linear_oauth_callback_get(
             callback_html(
                 "Linear Connected",
                 &format!(
-                    "Connected to Linear as {name}. Your started assigned tickets will now sync with Afterlife. You can close this tab."
+                    "Connected to Linear as {name}. Your open assigned tickets will now sync with Afterlife. You can close this tab."
                 ),
             ),
         )

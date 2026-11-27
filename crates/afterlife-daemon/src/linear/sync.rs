@@ -313,6 +313,16 @@ pub fn sync_outbound_events_once(
     Ok(posted)
 }
 
+fn is_closed_linear_state(state_type: &str, state_name: &str) -> bool {
+    let ty = state_type.trim().to_ascii_lowercase();
+    let name = state_name.trim().to_ascii_lowercase();
+    matches!(ty.as_str(), "completed" | "canceled" | "cancelled")
+        || matches!(
+            name.as_str(),
+            "done" | "completed" | "canceled" | "cancelled" | "duplicate"
+        )
+}
+
 pub fn sync_owner_once(
     ctx: &LinearSyncContext,
     owner_id: &OwnerId,
@@ -322,13 +332,13 @@ pub fn sync_owner_once(
         return Ok(LinearSyncReport::default());
     };
 
-    let (viewer, issues) = match ctx.api.fetch_started_assigned_issues(&token.access_token) {
+    let (viewer, issues) = match ctx.api.fetch_open_assigned_issues(&token.access_token) {
         Ok(res) => res,
         Err(LinearApiError::Unauthorized(_)) => {
             token = ensure_valid_access_token(ctx, owner_id, true, now)?
                 .ok_or_else(|| "linear disconnected during refresh".to_string())?;
             ctx.api
-                .fetch_started_assigned_issues(&token.access_token)
+                .fetch_open_assigned_issues(&token.access_token)
                 .map_err(|e| e.to_string())?
         }
         Err(e) => {
@@ -356,10 +366,10 @@ pub fn sync_owner_once(
     let mut report = LinearSyncReport::default();
 
     for issue in &issues {
-        if !issue.state_type.eq_ignore_ascii_case("started") {
+        if is_closed_linear_state(&issue.state_type, &issue.state_name) {
             continue;
         }
-        report.started_issues_seen += 1;
+        report.open_issues_seen += 1;
         let (link, created) = ensure_issue_linked(ctx, owner_id, &token, issue, now)?;
         if created {
             report.jobs_created += 1;

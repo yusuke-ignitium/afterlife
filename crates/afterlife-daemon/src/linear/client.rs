@@ -88,7 +88,7 @@ pub trait LinearApi: Send + Sync {
 
     fn fetch_viewer(&self, access_token: &str) -> Result<LinearViewer, LinearApiError>;
 
-    fn fetch_started_assigned_issues(
+    fn fetch_open_assigned_issues(
         &self,
         access_token: &str,
     ) -> Result<(LinearViewer, Vec<LinearIssue>), LinearApiError>;
@@ -216,16 +216,21 @@ query AfterlifeViewer {
 }
 ";
 
-const STARTED_ASSIGNED_ISSUES_QUERY: &str = "
-query AfterlifeStartedAssignedIssues {
+const OPEN_ASSIGNED_ISSUES_QUERY: &str = "
+query AfterlifeOpenAssignedIssues($after: String) {
   viewer {
     id
     name
     email
     assignedIssues(
       first: 50
-      filter: { state: { type: { eq: \"started\" } } }
+      after: $after
+      filter: { state: { type: { nin: [\"completed\", \"canceled\"] } } }
     ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
         identifier
@@ -363,80 +368,109 @@ impl LinearApi for HttpLinearClient {
         parse_viewer(viewer)
     }
 
-    fn fetch_started_assigned_issues(
+    fn fetch_open_assigned_issues(
         &self,
         access_token: &str,
     ) -> Result<(LinearViewer, Vec<LinearIssue>), LinearApiError> {
-        let data = self.post_graphql(access_token, STARTED_ASSIGNED_ISSUES_QUERY, json!({}))?;
-        let viewer_val = data
-            .get("viewer")
-            .ok_or_else(|| LinearApiError::GraphQl("viewer missing".into()))?;
-        let viewer = parse_viewer(viewer_val)?;
-        let nodes = viewer_val
-            .get("assignedIssues")
-            .and_then(|a| a.get("nodes"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let mut cursor: Option<String> = None;
+        let mut viewer_out: Option<LinearViewer> = None;
+        let mut issues = Vec::new();
 
-        let mut issues = Vec::with_capacity(nodes.len());
-        for node in nodes {
-            let Some(id) = node.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            let identifier = node
-                .get("identifier")
-                .and_then(Value::as_str)
-                .unwrap_or(id)
-                .to_string();
-            let title = node
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let description = node
-                .get("description")
+        for _ in 0..10 {
+            let data = self.post_graphql(
+                access_token,
+                OPEN_ASSIGNED_ISSUES_QUERY,
+                json!({ "after": cursor }),
+            )?;
+            let viewer_val = data
+                .get("viewer")
+                .ok_or_else(|| LinearApiError::GraphQl("viewer missing".into()))?;
+            if viewer_out.is_none() {
+                viewer_out = Some(parse_viewer(viewer_val)?);
+            }
+            let assigned = viewer_val.get("assignedIssues");
+            let nodes = assigned
+                .and_then(|a| a.get("nodes"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+
+            for node in nodes {
+                let Some(id) = node.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let identifier = node
+                    .get("identifier")
+                    .and_then(Value::as_str)
+                    .unwrap_or(id)
+                    .to_string();
+                let title = node
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let description = node
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                let url = node
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let state_name = node
+                    .get("state")
+                    .and_then(|s| s.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("Open")
+                    .to_string();
+                let state_type = node
+                    .get("state")
+                    .and_then(|s| s.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unstarted")
+                    .to_string();
+                let mut comments: Vec<LinearComment> = node
+                    .get("comments")
+                    .and_then(|c| c.get("nodes"))
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|c| parse_comment(c, &url))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                comments.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+                issues.push(LinearIssue {
+                    id: id.to_string(),
+                    identifier,
+                    title,
+                    description,
+                    url,
+                    state_name,
+                    state_type,
+                    comments,
+                });
+            }
+
+            let has_next = assigned
+                .and_then(|a| a.get("pageInfo"))
+                .and_then(|p| p.get("hasNextPage"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let next_cursor = assigned
+                .and_then(|a| a.get("pageInfo"))
+                .and_then(|p| p.get("endCursor"))
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
-            let url = node
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let state_name = node
-                .get("state")
-                .and_then(|s| s.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("Started")
-                .to_string();
-            let state_type = node
-                .get("state")
-                .and_then(|s| s.get("type"))
-                .and_then(Value::as_str)
-                .unwrap_or("started")
-                .to_string();
-            let mut comments: Vec<LinearComment> = node
-                .get("comments")
-                .and_then(|c| c.get("nodes"))
-                .and_then(Value::as_array)
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|c| parse_comment(c, &url))
-                        .collect()
-                })
-                .unwrap_or_default();
-            comments.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
-            issues.push(LinearIssue {
-                id: id.to_string(),
-                identifier,
-                title,
-                description,
-                url,
-                state_name,
-                state_type,
-                comments,
-            });
+            if !has_next || next_cursor.is_none() {
+                break;
+            }
+            cursor = next_cursor;
         }
+
+        let viewer =
+            viewer_out.ok_or_else(|| LinearApiError::GraphQl("viewer missing".into()))?;
         Ok((viewer, issues))
     }
 

@@ -97,7 +97,7 @@ impl LinearApi for MockLinearApi {
         })
     }
 
-    fn fetch_started_assigned_issues(
+    fn fetch_open_assigned_issues(
         &self,
         _access_token: &str,
     ) -> Result<(LinearViewer, Vec<LinearIssue>), LinearApiError> {
@@ -204,23 +204,62 @@ fn started_issue_syncs_through_required_artifact_gate_blocks_approval_bypass_and
             author_name: Some("Cursor".into()),
         }],
     };
-    let issue_backlog = LinearIssue {
-        id: "iss-backlog-2".into(),
+    let issue_todo = LinearIssue {
+        id: "iss-todo-2".into(),
         identifier: "ENG-102".into(),
-        title: "Not started yet".into(),
+        title: "Open todo ticket".into(),
         description: None,
         url: "https://linear.app/acme/issue/ENG-102".into(),
         state_name: "Todo".into(),
         state_type: "unstarted".into(),
         comments: vec![],
     };
+    let issue_done = LinearIssue {
+        id: "iss-done-3".into(),
+        identifier: "ENG-103".into(),
+        title: "Already completed".into(),
+        description: None,
+        url: "https://linear.app/acme/issue/ENG-103".into(),
+        state_name: "Done".into(),
+        state_type: "completed".into(),
+        comments: vec![],
+    };
+    let issue_canceled = LinearIssue {
+        id: "iss-canceled-4".into(),
+        identifier: "ENG-104".into(),
+        title: "Canceled task".into(),
+        description: None,
+        url: "https://linear.app/acme/issue/ENG-104".into(),
+        state_name: "Canceled".into(),
+        state_type: "canceled".into(),
+        comments: vec![],
+    };
+    let issue_duplicate = LinearIssue {
+        id: "iss-dup-5".into(),
+        identifier: "ENG-105".into(),
+        title: "Duplicate task".into(),
+        description: None,
+        url: "https://linear.app/acme/issue/ENG-105".into(),
+        state_name: "Duplicate".into(),
+        state_type: "canceled".into(),
+        comments: vec![],
+    };
 
-    let (ctx, api, owner_id) = setup_ctx(vec![issue_started, issue_backlog], None);
+    let (ctx, api, owner_id) = setup_ctx(
+        vec![
+            issue_started,
+            issue_todo,
+            issue_done,
+            issue_canceled,
+            issue_duplicate,
+        ],
+        None,
+    );
     let now = 2_000_000_000_000u64;
 
     let r1 = sync_owner_once(&ctx, &owner_id, now).unwrap();
-    assert_eq!(r1.started_issues_seen, 1);
-    assert_eq!(r1.jobs_created, 1);
+    assert_eq!(r1.open_issues_seen, 2);
+    assert_eq!(r1.jobs_created, 2);
     assert_eq!(r1.signals_applied, 1);
 
     let link = ctx
@@ -230,7 +269,25 @@ fn started_issue_syncs_through_required_artifact_gate_blocks_approval_bypass_and
         .unwrap();
     assert!(
         ctx.linear
-            .find_link_by_issue(&owner_id, "iss-backlog-2")
+            .find_link_by_issue(&owner_id, "iss-todo-2")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        ctx.linear
+            .find_link_by_issue(&owner_id, "iss-done-3")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        ctx.linear
+            .find_link_by_issue(&owner_id, "iss-canceled-4")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        ctx.linear
+            .find_link_by_issue(&owner_id, "iss-dup-5")
             .unwrap()
             .is_none()
     );

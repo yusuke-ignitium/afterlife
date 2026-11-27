@@ -65,7 +65,7 @@ pub fn render_linear_and_skills_section(
                 .or(s.viewer_email.as_deref())
                 .unwrap_or("Linear");
             format!(
-                "Connected as {who} · {} started issues linked",
+                "Connected as {who} · {} open issues linked",
                 s.linked_issues.len()
             )
         }
