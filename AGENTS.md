@@ -50,7 +50,7 @@
 - **Sweat daily ergonomics and state continuity**
   - Preserve operator state seamlessly across restarts (window geometry, panel sizing, visual preferences) and integrate cleanly with external tools via safe deep links.
 - **Keep interactive demos first-class and committed**
-  - Build every UI, visual, or interaction demo as a runnable binary under `tools/demos/` (`./scripts/run-demo.sh`) and commit it alongside the change it validates rather than leaving throwaway scratch outside the repository.
+  - Build every UI, visual, or interaction demo as a runnable binary under `tools/demos/` (`./scripts/run-demo.sh`), commit it alongside the change it validates rather than leaving throwaway scratch outside the repository, and terminate running demo processes once the change lands.
 
 ---
 
@@ -110,6 +110,7 @@ These properties must hold continuously on every commit and release:
 
 - Always place interactive prototypes, visual studies, and behavior-comparison demos under `tools/demos/`, registered in `tools/demos/Cargo.toml` and launchable via `./scripts/run-demo.sh <name>`.
 - Always include demos created during design or verification in git commits alongside their corresponding changes; never leave demos as untracked scratch files, discarded local scripts, or standalone external artifacts.
+- Terminate any running demo processes launched for the task once the decision is finalized and changes are committed or pushed so demo windows are never left lingering in the background.
 - Because demos live under `tools/`, they follow the same zero-comments, zero-warning, and portability standards as all first-party crates.
 
 ---
