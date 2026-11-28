@@ -79,18 +79,51 @@ vertex SolidQuadVertexOutput solid_quad_vertex(
     [[buffer(QuadInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
+  float4 bw = float4(quad.border_widths.top, quad.border_widths.right,
+                     quad.border_widths.bottom, quad.border_widths.left);
+  Bounds_ScaledPixels bounds = quad.bounds;
+  half4 color;
+  float4 corner_radii;
+  if (bw.x > 0.0f || bw.y > 0.0f || bw.z > 0.0f || bw.w > 0.0f) {
+    color = half4(hsla_to_rgba(quad.border_color));
+    corner_radii = float4(0.0f);
+    if (bw.w > 0.0f) {
+      bounds.size.width = min(bounds.size.width, bw.w);
+    } else if (bw.y > 0.0f) {
+      float w = min(bounds.size.width, bw.y);
+      bounds.origin.x += bounds.size.width - w;
+      bounds.size.width = w;
+    } else if (bw.x > 0.0f) {
+      bounds.size.height = min(bounds.size.height, bw.x);
+    } else {
+      float h = min(bounds.size.height, bw.z);
+      bounds.origin.y += bounds.size.height - h;
+      bounds.size.height = h;
+    }
+  } else {
+    color = half4(hsla_to_rgba(quad.background.solid));
+    corner_radii = float4(
+        quad.corner_radii.top_left,
+        quad.corner_radii.top_right,
+        quad.corner_radii.bottom_right,
+        quad.corner_radii.bottom_left);
+  }
+  if (color.a <= 0.0h || bounds.size.width <= 0.0f || bounds.size.height <= 0.0f) {
+    return SolidQuadVertexOutput{
+        float4(2.0f, 2.0f, 0.0f, 1.0f),
+        half4(0.0h),
+        float2(0.0f),
+        float2(0.0f),
+        float4(0.0f),
+        float2(0.0f),
+        {-1.0f, -1.0f, -1.0f, -1.0f}};
+  }
   float4 device_position =
-      to_device_position(unit_vertex, quad.bounds, viewport_size);
-  float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
+      to_device_position(unit_vertex, bounds, viewport_size);
+  float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds,
                                                  quad.content_mask.bounds);
-  half4 color = half4(hsla_to_rgba(quad.background.solid));
-  float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) * 0.5;
-  float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
-  float4 corner_radii = float4(
-      quad.corner_radii.top_left,
-      quad.corner_radii.top_right,
-      quad.corner_radii.bottom_right,
-      quad.corner_radii.bottom_left);
+  float2 half_size = float2(bounds.size.width, bounds.size.height) * 0.5;
+  float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
   float mask_bottom_y =
       quad.content_mask.bounds.origin.y + quad.content_mask.bounds.size.height;
 
@@ -610,14 +643,13 @@ static inline half2 erf_fast_vec2_half(half2 x) {
   return copysign(r, x);
 }
 
-static inline half blur_along_x_fast_half(float abs_x, float y, float inv_sqrt2_sigma,
-                                          float corner, float2 half_size) {
-  float delta = min(half_size.y - corner - abs(y), 0.0f);
-  float curved =
-      half_size.x - corner + sqrt(max(0.0f, corner * corner - delta * delta));
-  half2 e = erf_fast_vec2_half(half2((abs_x - curved) * inv_sqrt2_sigma,
-                                     (abs_x + curved) * inv_sqrt2_sigma));
-  return 0.5h * (e.y - e.x);
+static inline half4 erf_fast_vec4_half(half4 x) {
+  half4 ax = min(abs(x), half4(4.0h));
+  half4 p = fma(ax, fma(ax, fma(ax, fma(ax, 0.078108h, 0.000972h), 0.230389h), 0.278393h), 1.0h);
+  half4 inv_p = 1.0h / p;
+  half4 inv_p2 = inv_p * inv_p;
+  half4 r = 1.0h - (inv_p2 * inv_p2);
+  return copysign(r, x);
 }
 
 fragment half4 shadow_fragment(ShadowFragmentInput input [[stage_in]]) {
@@ -655,7 +687,19 @@ fragment half4 shadow_fragment(ShadowFragmentInput input [[stage_in]]) {
       float end = clamp(cutoff, abs_p.y - half_size.y, abs_p.y + half_size.y);
       half2 ey = erf_fast_vec2_half(half2(end * inv_sqrt2_sigma, start * inv_sqrt2_sigma));
       alpha = 0.5h * (ey.x - ey.y);
+    } else if (corner_radius * corner_radius * float(input.color.a) <= 0.08f * sigma * sigma) {
+      half4 e = erf_fast_vec4_half(half4(
+          (abs_p.x - half_size.x) * inv_sqrt2_sigma,
+          (abs_p.x + half_size.x) * inv_sqrt2_sigma,
+          (abs_p.y - half_size.y) * inv_sqrt2_sigma,
+          (abs_p.y + half_size.y) * inv_sqrt2_sigma));
+      alpha = 0.25h * (e.y - e.x) * (e.w - e.z);
     } else {
+      float2 cq = abs_p - half_size + corner_radius;
+      float outer_r = cutoff + corner_radius;
+      if (cq.x > 0.0f && cq.y > 0.0f && dot(cq, cq) > outer_r * outer_r) {
+        discard_fragment();
+      }
       float low = abs_p.y - half_size.y;
       float high = abs_p.y + half_size.y;
       float start = clamp(-cutoff, low, high);
@@ -665,18 +709,23 @@ fragment half4 shadow_fragment(ShadowFragmentInput input [[stage_in]]) {
         alpha = 0.0h;
       } else {
         float step = span * 0.25f;
-        float y = start + step * 0.5f;
+        float4 y4 = start + step * float4(0.5f, 1.5f, 2.5f, 3.5f);
         float inv_2sigma2 = input.blur_params.w;
-        half weight_scale = half(input.mask_params.z * step);
-        half acc = 0.0h;
-        for (int i = 0; i < 4; i++) {
-          half w = half(fast::exp(-(y * y) * inv_2sigma2));
-          acc = fma(blur_along_x_fast_half(abs_p.x, abs_p.y - y, inv_sqrt2_sigma,
-                                           corner_radius, half_size),
-                    w, acc);
-          y += step;
+        half4 w4 = half4(fast::exp(-(y4 * y4) * inv_2sigma2));
+        float4 delta4 = min(
+            float4(half_size.y - corner_radius) - abs(float4(abs_p.y) - y4),
+            float4(0.0f));
+        float4 curved4 = float4(half_size.x - corner_radius)
+            + sqrt(max(float4(0.0f), float4(corner_radius * corner_radius) - delta4 * delta4));
+        half4 e_lo = erf_fast_vec4_half(half4((float4(abs_p.x) - curved4) * inv_sqrt2_sigma));
+        half4 bx4;
+        if (abs_p.x + (half_size.x - corner_radius) > 3.2f * sigma) {
+          bx4 = 0.5h * (1.0h - e_lo);
+        } else {
+          half4 e_hi = erf_fast_vec4_half(half4((float4(abs_p.x) + curved4) * inv_sqrt2_sigma));
+          bx4 = 0.5h * (e_hi - e_lo);
         }
-        alpha = acc * weight_scale;
+        alpha = dot(bx4, w4) * half(input.mask_params.z * step);
       }
     }
   }
@@ -728,6 +777,7 @@ static inline Bounds_ScaledPixels make_sub_bounds(float x0, float y0, float x1, 
 static inline void compute_shadow_9slice(
     Shadow shadow,
     float margin,
+    float shadow_alpha,
     thread float &ox0, thread float &oy0, thread float &ox1, thread float &oy1,
     thread float &ix0, thread float &iy0, thread float &ix1, thread float &iy1) {
   float2 orig = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
@@ -748,8 +798,11 @@ static inline void compute_shadow_9slice(
   float max_r = max(
       max(shadow.corner_radii.top_left, shadow.corner_radii.top_right),
       max(shadow.corner_radii.bottom_right, shadow.corner_radii.bottom_left));
-  float sx = max(half_size.x - max_r - margin, 0.0f);
-  float sy = max(half_size.y - max_r - margin, 0.0f);
+  float eff_r = (max_r * max_r * shadow_alpha <= 0.08f * shadow.blur_radius * shadow.blur_radius)
+      ? 0.0f
+      : max_r;
+  float sx = max(half_size.x - eff_r - margin, 0.0f);
+  float sy = max(half_size.y - eff_r - margin, 0.0f);
   ix0 = clamp(ceil(center.x - sx), ox0, ox1);
   ix1 = clamp(floor(center.x + sx), ix0, ox1);
   iy0 = clamp(ceil(center.y - sy), oy0, oy1);
@@ -769,7 +822,7 @@ vertex ShadowSolidVertexOutput shadow_solid_vertex(
   float margin = sigma_mult * sigma;
 
   float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
-  compute_shadow_9slice(shadow, margin, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+  compute_shadow_9slice(shadow, margin, rgba_color.a, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
 
   float mask_bottom_y =
       shadow.content_mask.bounds.origin.y + shadow.content_mask.bounds.size.height;
@@ -813,7 +866,7 @@ vertex ShadowEdgeVertexOutput shadow_edge_vertex(
   float margin = sigma_mult * sigma;
 
   float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
-  compute_shadow_9slice(shadow, margin, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+  compute_shadow_9slice(shadow, margin, rgba_color.a, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
 
   uint sub = vertex_id / 6u;
   float rx0, ry0, rx1, ry1;
@@ -887,7 +940,7 @@ vertex ShadowVertexOutput shadow_corner_vertex(
   float margin = sigma_mult * sigma;
 
   float ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1;
-  compute_shadow_9slice(shadow, margin, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
+  compute_shadow_9slice(shadow, margin, rgba_color.a, ox0, oy0, ox1, oy1, ix0, iy0, ix1, iy1);
 
   uint sub = vertex_id / 6u;
   float rx0, ry0, rx1, ry1;
@@ -1768,112 +1821,109 @@ static uint pw_pack_tile(float3 rgb, float alpha) {
   return (a << 24) | (r << 16) | (g << 8) | b;
 }
 
+kernel void particle_tile_scatter_prep_kernel(
+    texture2d<half, access::write> scatter_meta_tex [[texture(0)]],
+    texture2d<half, access::write> scatter_vel_tex [[texture(1)]],
+    constant ParticleWaveUniforms *uniforms [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= uniforms->grid_w || gid.y >= uniforms->grid_h) {
+    return;
+  }
+  float tileSize = max(round(uniforms->tile_size), 2.0f);
+  float2 src = float2(float(gid.x), float(gid.y));
+  float2 srcPx = (src + 0.5f) * tileSize;
+  float2 res = float2(uniforms->viewport_w, uniforms->viewport_h);
+  bool is_disintegrate = uniforms->phase_mode > 0.5f && uniforms->phase_mode < 1.5f;
+
+  float2 fineH = pw_hash22(src + (is_disintegrate ? float2(19.7f, 53.3f) : float2(29.1f, 47.9f)));
+  float chunkNoise = pw_fbm(srcPx * 0.0075f + (is_disintegrate ? float2(8.3f, 14.1f) : float2(15.7f, 6.9f)));
+  float threshold = pw_dissolve_threshold_px(srcPx, src, res, is_disintegrate);
+  float dur = 0.28f + chunkNoise * 0.21f + fineH.x * 0.13f;
+  float2 v1 = pw_wind_velocity_px(srcPx, is_disintegrate ? 1.0f : -1.0f);
+
+  scatter_meta_tex.write(half4(half(threshold), half(1.0f / dur), half(chunkNoise), half(fineH.x)), gid);
+  scatter_vel_tex.write(half4(half(v1.x), half(v1.y), half(fineH.y), 0.0h), gid);
+}
+
 kernel void particle_tile_scatter_kernel(
     device atomic_uint *tile_grid [[buffer(0)]],
     constant ParticleWaveUniforms *uniforms [[buffer(1)]],
     texture2d<float> backdrop_img [[texture(0)]],
+    texture2d<half, access::read> scatter_meta_tex [[texture(1)]],
+    texture2d<half, access::read> scatter_vel_tex [[texture(2)]],
     sampler backdrop_img_samp [[sampler(0)]],
     uint2 gid [[thread_position_in_grid]]) {
   if (gid.x >= uniforms->grid_w || gid.y >= uniforms->grid_h) {
     return;
   }
-  float tileSize = max(round(uniforms->tile_size), 2.0);
+  float mode = uniforms->phase_mode;
+  bool is_disintegrate = mode > 0.5f && mode < 1.5f;
+  bool is_reassemble = mode > 2.5f;
+  if (!is_disintegrate && !is_reassemble) {
+    return;
+  }
+
+  half4 meta = scatter_meta_tex.read(gid);
+  float front = uniforms->phase_progress * 1.64f;
+  float u = is_disintegrate
+      ? (front - float(meta.x)) * float(meta.y)
+      : (float(meta.x) - front) * float(meta.y) + 1.0f;
+  if (u <= 0.0f || u >= 1.0f) {
+    return;
+  }
+
+  float tileSize = max(round(uniforms->tile_size), 2.0f);
   float2 src = float2(float(gid.x), float(gid.y));
-  float2 srcPx = (src + 0.5) * tileSize;
+  float2 srcPx = (src + 0.5f) * tileSize;
   float2 res = float2(uniforms->viewport_w, uniforms->viewport_h);
   float2 imgSize = float2(uniforms->image_w, uniforms->image_h);
 
   float4 s = pw_sample_cell_image(srcPx, res, imgSize, uniforms->fit_cover, backdrop_img, backdrop_img_samp);
-  if (s.a <= 0.05) {
+  if (s.a <= 0.05f) {
     return;
   }
 
-  float mode = uniforms->phase_mode;
-  float prog = uniforms->phase_progress;
-
-  int2 dst = int2(int(gid.x), int(gid.y));
-  float3 outRgb = s.rgb;
-  float outAlpha = s.a;
-
-  if (mode > 0.5 && mode < 1.5) {
-    float2 fineH = pw_hash22(src + float2(19.7, 53.3));
-    float chunkNoise = pw_fbm(srcPx * 0.0075 + float2(8.3, 14.1));
-    float startT = pw_dissolve_threshold_px(srcPx, src, res, true);
-    float dur = 0.28 + chunkNoise * 0.21 + fineH.x * 0.13;
-    float front = prog * 1.64;
-    float u = (front - startT) / dur;
-
-    if (u >= 1.0) {
-      return;
-    }
-    if (u > 0.0) {
-      float travelPx = pow(u, 1.56) * (372.0 + chunkNoise * 240.0);
-      float2 v1 = pw_wind_velocity_px(srcPx, 1.0);
-      float2 midPx = srcPx + v1 * (travelPx * 0.45);
-      float2 v2 = pw_wind_velocity_px(midPx, 1.0);
-      float2 flowPx = midPx + v2 * (travelPx * 0.55);
-
-      float crumblePx = pow(u, 2.0) * (34.0 + chunkNoise * 42.0);
-      float2 grainOffsetPx = (fineH - 0.5) * 2.0 * crumblePx;
-      float2 posPx = flowPx + grainOffsetPx;
-      dst = int2(floor(posPx / tileSize));
-
-      float luma = dot(s.rgb, float3(0.299, 0.587, 0.114));
-      float3 ashCol = mix(s.rgb, float3(luma * 0.78 + 0.06), smoothstep(0.08, 0.72, u) * 0.72);
-      outRgb = ashCol;
-      outAlpha = s.a * smoothstep(1.0, 0.18, u);
-      if (outAlpha <= 0.03) {
-        return;
-      }
-    }
-  } else if (mode > 2.5) {
-    float2 fineH = pw_hash22(src + float2(29.1, 47.9));
-    float chunkNoise = pw_fbm(srcPx * 0.0075 + float2(15.7, 6.9));
-    float settleT = pw_dissolve_threshold_px(srcPx, src, res, false);
-    float dur = 0.28 + chunkNoise * 0.21 + fineH.x * 0.13;
-    float front = prog * 1.64;
-    float rem = (settleT + dur - front) / dur;
-
-    if (rem >= 1.0) {
-      return;
-    }
-    if (rem > 0.0) {
-      float travelPx = pow(rem, 1.56) * (372.0 + chunkNoise * 240.0);
-      float2 v1 = pw_wind_velocity_px(srcPx, -1.0);
-      float2 midPx = srcPx + v1 * (travelPx * 0.45);
-      float2 v2 = pw_wind_velocity_px(midPx, -1.0);
-      float2 flowPx = midPx + v2 * (travelPx * 0.55);
-
-      float crumblePx = pow(rem, 2.0) * (34.0 + chunkNoise * 42.0);
-      float2 grainOffsetPx = (fineH - 0.5) * 2.0 * crumblePx;
-      float2 posPx = flowPx + grainOffsetPx;
-      dst = int2(floor(posPx / tileSize));
-
-      float luma = dot(s.rgb, float3(0.299, 0.587, 0.114));
-      float3 ashCol = mix(s.rgb, float3(luma * 0.78 + 0.08), smoothstep(0.08, 0.72, rem) * 0.65);
-      outRgb = ashCol;
-      outAlpha = s.a * smoothstep(1.0, 0.14, rem);
-      if (outAlpha <= 0.03) {
-        return;
-      }
-    }
+  float peakCap = clamp(uniforms->image_peak_luminance, 0.0f, 1.0f);
+  if (peakCap <= 0.001f) {
+    return;
   }
+
+  half4 vel = scatter_vel_tex.read(gid);
+  float chunkNoise = float(meta.z);
+  float2 fineH = float2(float(meta.w), float(vel.z));
+  float2 v1 = float2(float(vel.x), float(vel.y));
+  float dirSign = is_disintegrate ? 1.0f : -1.0f;
+
+  float travelPx = pow(u, 1.56f) * (372.0f + chunkNoise * 240.0f);
+  float2 midPx = srcPx + v1 * (travelPx * 0.45f);
+  float2 v2 = pw_wind_velocity_px(midPx, dirSign);
+  float2 flowPx = midPx + v2 * (travelPx * 0.55f);
+
+  float crumblePx = (u * u) * (34.0f + chunkNoise * 42.0f);
+  float2 grainOffsetPx = (fineH - 0.5f) * 2.0f * crumblePx;
+  float2 posPx = flowPx + grainOffsetPx;
+  int2 dst = int2(floor(posPx / tileSize));
 
   if (dst.x < 0 || dst.y < 0 || uint(dst.x) >= uniforms->grid_w || uint(dst.y) >= uniforms->grid_h) {
     return;
   }
 
-  float peakCap = clamp(uniforms->image_peak_luminance, 0.0, 1.0);
-  if (peakCap <= 0.001) {
+  float luma = dot(s.rgb, float3(0.299f, 0.587f, 0.114f));
+  float ashLift = is_disintegrate ? 0.06f : 0.08f;
+  float ashAmt = is_disintegrate ? 0.72f : 0.65f;
+  float3 outRgb = mix(s.rgb, float3(luma * 0.78f + ashLift), smoothstep(0.08f, 0.72f, u) * ashAmt);
+  float outAlpha = s.a * smoothstep(1.0f, is_disintegrate ? 0.18f : 0.14f, u);
+  if (outAlpha <= 0.03f) {
     return;
   }
-  float imgLuma = dot(outRgb, float3(0.299, 0.587, 0.114));
-  float imgSat = clamp(uniforms->image_saturation, 0.0, 1.5);
-  float3 imgAdj = max(mix(float3(imgLuma), outRgb, imgSat), float3(0.0));
-  imgAdj *= max(uniforms->image_brightness, 0.0);
+
+  float imgLuma = dot(outRgb, float3(0.299f, 0.587f, 0.114f));
+  float imgSat = clamp(uniforms->image_saturation, 0.0f, 1.5f);
+  float3 imgAdj = max(mix(float3(imgLuma), outRgb, imgSat), float3(0.0f));
+  imgAdj *= max(uniforms->image_brightness, 0.0f);
   float imgPeak = max(imgAdj.r, max(imgAdj.g, imgAdj.b));
-  if (imgPeak > 1e-4) {
-    float mapped = peakCap * (1.0 - exp(-imgPeak / peakCap));
+  if (imgPeak > 1e-4f) {
+    float mapped = peakCap * (1.0f - fast::exp(-imgPeak / peakCap));
     imgAdj *= (mapped / imgPeak);
   }
   float3 normRgb = imgAdj / peakCap;
@@ -2057,6 +2107,8 @@ kernel void particle_tile_unpack_shade_kernel(
     device uint *tile_grid [[buffer(0)]],
     texture2d<half, access::read> facet_lut_tex [[texture(0)]],
     texture2d<half, access::write> tile_lit_tex [[texture(1)]],
+    texture2d<half, access::read> scatter_meta_tex [[texture(2)]],
+    texture2d<half, access::read> tile_img_tex [[texture(3)]],
     constant ParticleWaveUniforms *uniforms [[buffer(1)]],
     uint2 gid [[thread_position_in_grid]]) {
   if (gid.x >= uniforms->grid_w || gid.y >= uniforms->grid_h) {
@@ -2072,6 +2124,18 @@ kernel void particle_tile_unpack_shade_kernel(
         half((packed >> 8) & 0xFFu),
         half(packed & 0xFFu),
         half((packed >> 24) & 0xFFu)) * (1.0h / 255.0h);
+  }
+  half4 meta = scatter_meta_tex.read(gid);
+  float front = uniforms->phase_progress * 1.64f;
+  bool is_disintegrate = uniforms->phase_mode > 0.5f && uniforms->phase_mode < 1.5f;
+  float u = is_disintegrate
+      ? (front - float(meta.x)) * float(meta.y)
+      : (float(meta.x) - front) * float(meta.y) + 1.0f;
+  if (u <= 0.0f) {
+    half4 static_img = tile_img_tex.read(gid);
+    if (static_img.a > img.a || (static_img.a == img.a && static_img.r > img.r)) {
+      img = static_img;
+    }
   }
   half4 facet = facet_lut_tex.read(gid);
   tile_lit_tex.write(compute_shaded_tile(gid, uniforms, facet, true, img), gid);
@@ -2570,39 +2634,23 @@ static inline half4 sample_backdrop_frost_half(
     float blurPx,
     float2 invRes,
     half glassMask) {
-  if (!kGlassHasBlur || blurPx <= 0.5) {
-    return backdrop_tex.sample(backdrop_samp, uvCoord, level(0.0));
+  if (!kGlassHasBlur || blurPx <= 0.5f) {
+    return backdrop_tex.sample(backdrop_samp, uvCoord, level(0.0f));
   }
   float radiusPx = blurPx * float(glassMask);
-  float maxLod = max(float(backdrop_tex.get_num_mip_levels()) - 1.0, 0.0);
-  float lod = clamp(log2(max(radiusPx * 0.55, 1.0)), 0.0, maxLod);
-  float2 bOff = radiusPx * invRes;
-  float2 innerOff = bOff * 0.45;
-  float2 diagOff = bOff * 0.70710678;
-  float2 uvMin = float2(0.0005);
-  float2 uvMax = float2(0.9995);
+  float maxLod = max(float(backdrop_tex.get_num_mip_levels()) - 1.0f, 0.0f);
+  float lod = clamp(log2(max(radiusPx * 0.68f, 1.0f)), 0.0f, maxLod);
+  float2 diagOff = (radiusPx * 0.62f) * invRes;
+  float2 uvMin = float2(0.0005f);
+  float2 uvMax = float2(0.9995f);
 
   half4 c0 = backdrop_tex.sample(backdrop_samp, uvCoord, level(lod));
-
-  half4 i0 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(innerOff.x, innerOff.y), uvMin, uvMax), level(lod));
-  half4 i1 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(-innerOff.x, innerOff.y), uvMin, uvMax), level(lod));
-  half4 i2 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(innerOff.x, -innerOff.y), uvMin, uvMax), level(lod));
-  half4 i3 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(-innerOff.x, -innerOff.y), uvMin, uvMax), level(lod));
-
-  half4 o0 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(bOff.x, 0.0), uvMin, uvMax), level(lod));
-  half4 o1 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord - float2(bOff.x, 0.0), uvMin, uvMax), level(lod));
-  half4 o2 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(0.0, bOff.y), uvMin, uvMax), level(lod));
-  half4 o3 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord - float2(0.0, bOff.y), uvMin, uvMax), level(lod));
-
   half4 d0 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(diagOff.x, diagOff.y), uvMin, uvMax), level(lod));
   half4 d1 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(-diagOff.x, diagOff.y), uvMin, uvMax), level(lod));
   half4 d2 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(diagOff.x, -diagOff.y), uvMin, uvMax), level(lod));
   half4 d3 = backdrop_tex.sample(backdrop_samp, clamp(uvCoord + float2(-diagOff.x, -diagOff.y), uvMin, uvMax), level(lod));
 
-  return c0 * 0.16h
-       + (i0 + i1 + i2 + i3) * 0.11h
-       + (o0 + o1 + o2 + o3) * 0.055h
-       + (d0 + d1 + d2 + d3) * 0.045h;
+  return c0 * 0.36h + (d0 + d1 + d2 + d3) * 0.16h;
 }
 
 struct LiquidGlassSyncedVertexOutput {
@@ -2868,13 +2916,21 @@ fragment half4 liquid_glass_synced_fragment(
   half4 bgSample = sample_backdrop_frost_half(backdrop_tex, backdrop_samp, refractUV, blurPx, invRes, glassMask);
 
   float chroma = input.extra_params.x;
-  if (chroma > 0.001 && chromaWeight > 0.0001) {
-    float k = chroma * 0.6;
+  float k = chroma * 0.6;
+  if (chroma > 0.001 && chromaWeight > 0.0001 && dot(dispPx, dispPx) * (k * k) > 0.0004) {
     float2 rUV = clamp((fragPx + dispPx * (1.0 - k)) * invRes, uvMin, uvMax);
     float2 bUV = clamp((fragPx + dispPx * (1.0 + k)) * invRes, uvMin, uvMax);
-    half rCh = sample_backdrop_frost_half(backdrop_tex, backdrop_samp, rUV, blurPx, invRes, glassMask).r;
-    half bCh = sample_backdrop_frost_half(backdrop_tex, backdrop_samp, bUV, blurPx, invRes, glassMask).b;
-    bgSample.rgb = half3(rCh, bgSample.g, bCh);
+    if (kGlassHasBlur && blurPx > 1.5) {
+      float maxLod = max(float(backdrop_tex.get_num_mip_levels()) - 1.0, 0.0);
+      float cLod = clamp(log2(max(blurPx * float(glassMask) * 0.85, 1.0)), 0.0, maxLod);
+      half rCh = backdrop_tex.sample(backdrop_samp, rUV, level(cLod)).r;
+      half bCh = backdrop_tex.sample(backdrop_samp, bUV, level(cLod)).b;
+      bgSample.rgb = half3(rCh, bgSample.g, bCh);
+    } else {
+      half rCh = sample_backdrop_frost_half(backdrop_tex, backdrop_samp, rUV, blurPx, invRes, glassMask).r;
+      half bCh = sample_backdrop_frost_half(backdrop_tex, backdrop_samp, bUV, blurPx, invRes, glassMask).b;
+      bgSample.rgb = half3(rCh, bgSample.g, bCh);
+    }
   }
 
   half4 tint = input.tint;
@@ -3339,12 +3395,12 @@ fragment half4 liquid_glass_synced_rim_fragment(
   half4 bgSample = backdrop_tex.sample(backdrop_samp, refractUV, level(0.0));
 
   float chroma = input.extra_params.x;
-  if (chroma > 0.001f && chromaWeight > 0.0001f) {
-    float k = chroma * 0.6f;
+  float k = chroma * 0.6f;
+  if (chroma > 0.001f && chromaWeight > 0.0001f && dot(dispPx, dispPx) * (k * k) > 0.0004f) {
     float2 rUV = clamp((fragPx + dispPx * (1.0f - k)) * invRes, uvMin, uvMax);
     float2 bUV = clamp((fragPx + dispPx * (1.0f + k)) * invRes, uvMin, uvMax);
-    half rCh = backdrop_tex.sample(backdrop_samp, rUV, level(0.0)).r;
-    half bCh = backdrop_tex.sample(backdrop_samp, bUV, level(0.0)).b;
+    half rCh = backdrop_tex.sample(backdrop_samp, rUV, level(0.0f)).r;
+    half bCh = backdrop_tex.sample(backdrop_samp, bUV, level(0.0f)).b;
     bgSample.rgb = half3(rCh, bgSample.g, bCh);
   }
 
@@ -3425,6 +3481,11 @@ kernel void backdrop_downsample_rect_kernel(
   uint dx = u.dst_ox + gid.x;
   uint dy = u.dst_oy + gid.y;
   float2 uv = float2(float(dx * 2u + 1u) * u.inv_src_w, float(dy * 2u + 1u) * u.inv_src_h);
-  half4 c = src_tex.sample(linear_samp, uv, level(0.0));
+  float2 off = float2(u.inv_src_w, u.inv_src_h);
+  half4 c = src_tex.sample(linear_samp, uv, level(0.0f)) * 0.5h
+          + src_tex.sample(linear_samp, uv + float2(-off.x, -off.y), level(0.0f)) * 0.125h
+          + src_tex.sample(linear_samp, uv + float2(off.x, -off.y), level(0.0f)) * 0.125h
+          + src_tex.sample(linear_samp, uv + float2(-off.x, off.y), level(0.0f)) * 0.125h
+          + src_tex.sample(linear_samp, uv + float2(off.x, off.y), level(0.0f)) * 0.125h;
   dst_tex.write(c, uint2(dx, dy));
 }

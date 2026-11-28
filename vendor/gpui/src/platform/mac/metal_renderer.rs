@@ -238,10 +238,20 @@ fn snapshot_backdrop_entry_keys(paths: &[String]) -> Vec<BackdropImageEntryKey> 
         .collect()
 }
 
-fn load_single_backdrop_image(
-    device: &metal::Device,
-    path: &str,
-) -> Option<(metal::Texture, [f32; 3])> {
+struct DecodedBackdropImage {
+    width: u32,
+    height: u32,
+    fit_cover: f32,
+    rgba: Vec<u8>,
+}
+
+struct PrefetchedBackdrop {
+    entry_idx: usize,
+    version: u64,
+    decoded: DecodedBackdropImage,
+}
+
+fn decode_backdrop_image(path: &str) -> Option<DecodedBackdropImage> {
     let img = image::open(path).ok()?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
@@ -257,32 +267,33 @@ fn load_single_backdrop_image(
     .into_iter()
     .all(|a| a >= 250);
     let fit_cover = if corners_opaque { 1.0 } else { 0.0 };
-    Some((
-        create_rgba8_texture(device, w, h, rgba.as_raw()),
-        [w as f32, h as f32, fit_cover],
-    ))
+    Some(DecodedBackdropImage {
+        width: w,
+        height: h,
+        fit_cover,
+        rgba: rgba.into_raw(),
+    })
 }
 
-fn load_backdrop_images_from_entries(
+fn upload_backdrop_image(
     device: &metal::Device,
-    entries: &[BackdropImageEntryKey],
-) -> (Vec<metal::Texture>, Vec<[f32; 3]>) {
-    let mut textures = Vec::new();
-    let mut sizes = Vec::new();
-    for (entry, _) in entries {
-        if let Some((tex, dims)) = load_single_backdrop_image(device, entry) {
-            textures.push(tex);
-            sizes.push(dims);
-        }
-    }
-    (textures, sizes)
+    decoded: &DecodedBackdropImage,
+) -> (metal::Texture, [f32; 3]) {
+    (
+        create_rgba8_texture(device, decoded.width, decoded.height, &decoded.rgba),
+        [decoded.width as f32, decoded.height as f32, decoded.fit_cover],
+    )
 }
 
-fn load_backdrop_images(
+fn load_single_backdrop_image(
     device: &metal::Device,
-) -> (
-    Vec<metal::Texture>,
-    Vec<[f32; 3]>,
+    path: &str,
+) -> Option<(metal::Texture, [f32; 3])> {
+    let decoded = decode_backdrop_image(path)?;
+    Some(upload_backdrop_image(device, &decoded))
+}
+
+fn load_backdrop_entries() -> (
     Vec<BackdropImageEntryKey>,
     Option<std::path::PathBuf>,
     Option<std::time::SystemTime>,
@@ -296,8 +307,7 @@ fn load_backdrop_images(
             .collect();
         if !paths.is_empty() {
             let entries = snapshot_backdrop_entry_keys(&paths);
-            let (textures, sizes) = load_backdrop_images_from_entries(device, &entries);
-            return (textures, sizes, entries, None, None);
+            return (entries, None, None);
         }
     }
     let config_path = resolve_backdrop_config_path();
@@ -309,8 +319,7 @@ fn load_backdrop_images(
         .map(read_backdrop_paths_from_config)
         .unwrap_or_default();
     let entries = snapshot_backdrop_entry_keys(&paths);
-    let (textures, sizes) = load_backdrop_images_from_entries(device, &entries);
-    (textures, sizes, entries, config_path, mtime)
+    (entries, config_path, mtime)
 }
 
 #[repr(C)]
@@ -442,6 +451,17 @@ impl BackdropShuffleBag {
             return self.start(count);
         }
         self.deck[self.cursor]
+    }
+
+    fn peek_next(&self, count: usize) -> Option<usize> {
+        if count <= 1 || !self.matches_count(count) {
+            return None;
+        }
+        if self.cursor + 1 < self.deck.len() {
+            Some(self.deck[self.cursor + 1])
+        } else {
+            None
+        }
     }
 
     fn advance(&mut self, count: usize, prev_index: Option<usize>) -> usize {
@@ -893,6 +913,16 @@ struct ParticleTileGridCacheKey {
     phase_stage: u8,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ScatterPrepCacheKey {
+    grid_w: u32,
+    grid_h: u32,
+    viewport_w_bits: u32,
+    viewport_h_bits: u32,
+    tile_size_bits: u32,
+    phase_stage: u8,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct LiveVideoBufferInfo {
@@ -949,6 +979,9 @@ pub(crate) struct MetalRenderer {
     backdrop_sampler: metal::SamplerState,
     backdrop_image_textures: Vec<metal::Texture>,
     backdrop_image_sizes: Vec<[f32; 3]>,
+    backdrop_active_custom: Option<(usize, metal::Texture, [f32; 3])>,
+    backdrop_prefetch_slot: Arc<Mutex<Option<PrefetchedBackdrop>>>,
+    backdrop_prefetch_in_flight: Option<(usize, u64)>,
     backdrop_loaded_entries: Vec<BackdropImageEntryKey>,
     backdrop_images_loaded: bool,
     backdrop_custom_version: u64,
@@ -966,6 +999,7 @@ pub(crate) struct MetalRenderer {
     backdrop_phase_last_tick: Instant,
     backdrop_image_index: usize,
     backdrop_shuffle_bag: BackdropShuffleBag,
+    particle_tile_scatter_prep_pipeline: metal::ComputePipelineState,
     particle_tile_scatter_pipeline: metal::ComputePipelineState,
     particle_tile_hold_pipeline: metal::ComputePipelineState,
     particle_tile_unpack_pipeline: metal::ComputePipelineState,
@@ -979,6 +1013,9 @@ pub(crate) struct MetalRenderer {
     particle_tile_grid_needs_clear: bool,
     particle_tile_img_texture: Option<metal::Texture>,
     particle_tile_lit_texture: Option<metal::Texture>,
+    particle_scatter_meta_texture: Option<metal::Texture>,
+    particle_scatter_vel_texture: Option<metal::Texture>,
+    particle_scatter_prep_cache_key: Option<ScatterPrepCacheKey>,
     particle_tile_grid_cache_key: Option<ParticleTileGridCacheKey>,
     particle_facet_lut_texture: Option<metal::Texture>,
     particle_facet_lut_cache_key: Option<FacetLutCacheKey>,
@@ -1225,25 +1262,22 @@ impl MetalRenderer {
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
         let image_enabled = crate::particle_wave_tuning().image_enabled;
         let (
-            backdrop_image_textures,
-            backdrop_image_sizes,
             backdrop_loaded_entries,
             backdrop_config_path,
             backdrop_config_mtime,
             backdrop_images_loaded,
         ) = if image_enabled {
-            let (textures, sizes, entries, cfg_path, mtime) = load_backdrop_images(&device);
-            (textures, sizes, entries, cfg_path, mtime, true)
+            let (entries, cfg_path, mtime) = load_backdrop_entries();
+            (entries, cfg_path, mtime, true)
         } else {
-            (
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                resolve_backdrop_config_path(),
-                None,
-                false,
-            )
+            (Vec::new(), resolve_backdrop_config_path(), None, false)
         };
+        let scatter_prep_fn = library
+            .get_function("particle_tile_scatter_prep_kernel", None)
+            .expect("could not find particle_tile_scatter_prep_kernel function");
+        let particle_tile_scatter_prep_pipeline = device
+            .new_compute_pipeline_state_with_function(&scatter_prep_fn)
+            .expect("could not create particle_tile_scatter_prep_pipeline");
         let scatter_fn = library
             .get_function("particle_tile_scatter_kernel", None)
             .expect("could not find particle_tile_scatter_kernel function");
@@ -1349,8 +1383,11 @@ impl MetalRenderer {
             backdrop_mip_enabled: false,
             backdrop_downsample_pipeline,
             backdrop_sampler,
-            backdrop_image_textures,
-            backdrop_image_sizes,
+            backdrop_image_textures: Vec::new(),
+            backdrop_image_sizes: Vec::new(),
+            backdrop_active_custom: None,
+            backdrop_prefetch_slot: Arc::new(Mutex::new(None)),
+            backdrop_prefetch_in_flight: None,
             backdrop_loaded_entries,
             backdrop_images_loaded,
             backdrop_custom_version: 0,
@@ -1368,6 +1405,7 @@ impl MetalRenderer {
             backdrop_phase_last_tick: Instant::now(),
             backdrop_image_index: 0,
             backdrop_shuffle_bag: BackdropShuffleBag::new(),
+            particle_tile_scatter_prep_pipeline,
             particle_tile_scatter_pipeline,
             particle_tile_hold_pipeline,
             particle_tile_unpack_pipeline,
@@ -1381,6 +1419,9 @@ impl MetalRenderer {
             particle_tile_grid_needs_clear: true,
             particle_tile_img_texture: None,
             particle_tile_lit_texture: None,
+            particle_scatter_meta_texture: None,
+            particle_scatter_vel_texture: None,
+            particle_scatter_prep_cache_key: None,
             particle_tile_grid_cache_key: None,
             particle_facet_lut_texture: None,
             particle_facet_lut_cache_key: None,
@@ -1743,17 +1784,18 @@ impl MetalRenderer {
         };
 
         let batches: Vec<PrimitiveBatch<'_>> = scene.batches().collect();
+        self.ensure_particle_facet_lut(
+            &batches,
+            viewport_size,
+            command_buffer,
+            gpu_prof.as_mut(),
+        );
         let mut already_shaded = false;
         let compute_dispatched = self.dispatch_particle_tile_scatter(
             command_buffer,
             viewport_size,
             gpu_prof.as_mut(),
             &mut already_shaded,
-        );
-        self.ensure_particle_facet_lut(
-            &batches,
-            command_buffer,
-            gpu_prof.as_mut(),
         );
         if !already_shaded {
             self.dispatch_particle_tile_shade(
@@ -1764,9 +1806,13 @@ impl MetalRenderer {
         }
         if let Some(p) = perf.as_mut() {
             p.compute_scatter_dispatched = compute_dispatched;
-            p.backdrop_images_loaded = (self.backdrop_image_textures.len()
-                + usize::from(self.backdrop_active_override.is_some()))
-                as u32;
+            let custom_loaded = if !self.backdrop_image_textures.is_empty() {
+                self.backdrop_image_textures.len()
+            } else {
+                self.backdrop_loaded_entries.len()
+            };
+            p.backdrop_images_loaded =
+                (custom_loaded + usize::from(self.backdrop_active_override.is_some())) as u32;
         }
 
         let scene_has_blur = batches.iter().any(|batch| {
@@ -1893,25 +1939,10 @@ impl MetalRenderer {
                         let chunk_needs_blur = !chunk_blur_rects.is_empty();
 
                         if !backdrop_seeded {
-                            let mut all_glass_rects: Vec<Bounds<ScaledPixels>> =
-                                Vec::with_capacity(64);
-                            for it in &items[item_idx..] {
-                                if let DrawItem::Quads { quads: qs, mode: m } = *it
-                                    && (m == 1 || m == 3)
-                                {
-                                    for q in qs {
-                                        push_glass_sample_rects(
-                                            q,
-                                            m,
-                                            vw_f,
-                                            vh_f,
-                                            true,
-                                            &mut all_glass_rects,
-                                        );
-                                    }
-                                }
-                            }
-                            let clusters = coalesce_copy_regions(&all_glass_rects, 4.0, 20);
+                            let (all_glass_rects, deferred_seed_rects) = collect_initial_seed_rects(
+                                &items, item_idx, chunk, mode, vw_f, vh_f,
+                            );
+                            let clusters = coalesce_copy_regions(&all_glass_rects, 4.0, 24);
                             if !clusters.is_empty() {
                                 if dump_detail && let Some(prof) = gpu_prof.as_mut() {
                                     prof.update_last_render_summary(std::mem::take(&mut rp_log));
@@ -1956,6 +1987,9 @@ impl MetalRenderer {
                             backdrop_seeded = true;
                             backdrop_mips_valid = chunk_needs_blur;
                             dirty_rects.clear();
+                            for r in deferred_seed_rects {
+                                push_dirty(&mut dirty_rects, r, 0.0);
+                            }
                         } else {
                             let mut needs_blit = false;
                             let mut hit_reason = String::new();
@@ -2020,7 +2054,7 @@ impl MetalRenderer {
                                         }
                                     }
                                 }
-                                let clusters = coalesce_copy_regions(&intersections, 4.0, 12);
+                                let clusters = coalesce_copy_regions(&intersections, 4.0, 16);
                                 if !clusters.is_empty() {
                                     if dump_detail && let Some(prof) = gpu_prof.as_mut() {
                                         prof.update_last_render_summary(std::mem::take(
@@ -2178,7 +2212,10 @@ impl MetalRenderer {
                         if dump_detail {
                             let px_sum: f64 = chunk
                                 .iter()
-                                .map(|q| (q.bounds.size.width.0 * q.bounds.size.height.0) as f64)
+                                .map(|q| {
+                                    let b = effective_quad_bounds(q);
+                                    (b.size.width.0 * b.size.height.0) as f64
+                                })
                                 .sum();
                             rp_log.push_str(&format!(
                                 "reg={}({:.2}Mpx",
@@ -2188,12 +2225,13 @@ impl MetalRenderer {
                             if px_sum > 500_000.0 {
                                 rp_log.push('[');
                                 for q in chunk {
-                                    let area = q.bounds.size.width.0 * q.bounds.size.height.0;
+                                    let b = effective_quad_bounds(q);
+                                    let area = b.size.width.0 * b.size.height.0;
                                     if area > 100_000.0 {
                                         rp_log.push_str(&format!(
                                             "{:.0}x{:.0}(bgA={:.2},bdA={:.2},bw={:.1}),",
-                                            q.bounds.size.width.0,
-                                            q.bounds.size.height.0,
+                                            b.size.width.0,
+                                            b.size.height.0,
                                             q.background.solid.a,
                                             q.border_color.a,
                                             q.border_widths.top.0,
@@ -2206,7 +2244,10 @@ impl MetalRenderer {
                         }
                         if track_dirty {
                             for q in chunk {
-                                push_dirty(&mut dirty_rects, q.bounds, 0.0);
+                                let b = effective_quad_bounds(q);
+                                if rect_non_empty(&b) {
+                                    push_dirty(&mut dirty_rects, b, 0.0);
+                                }
                             }
                         }
                         self.draw_quads(
@@ -2907,6 +2948,9 @@ impl MetalRenderer {
     fn release_particle_grid_buffer(&mut self) {
         self.particle_tile_grid_cache_key = None;
         self.particle_tile_img_texture = None;
+        self.particle_scatter_meta_texture = None;
+        self.particle_scatter_vel_texture = None;
+        self.particle_scatter_prep_cache_key = None;
         self.particle_tile_grid_needs_clear = true;
         if self.particle_tile_grid_capacity > 1 {
             self.particle_tile_grid_capacity = 1;
@@ -3047,6 +3091,7 @@ impl MetalRenderer {
     fn ensure_particle_facet_lut(
         &mut self,
         batches: &[PrimitiveBatch<'_>],
+        viewport_size: Size<DevicePixels>,
         command_buffer: &metal::CommandBufferRef,
         profiler: Option<&mut FrameGpuProfiler>,
     ) {
@@ -3061,8 +3106,12 @@ impl MetalRenderer {
             return;
         };
 
-        let grid_w = self.current_particle_uniforms.grid_w.max(1);
-        let grid_h = self.current_particle_uniforms.grid_h.max(1);
+        let vw = viewport_size.width.0.max(1) as f32;
+        let vh = viewport_size.height.0.max(1) as f32;
+        let tuning = crate::particle_wave_tuning().clamped();
+        let tile_size = tuning.tile_size_px.round().max(2.0);
+        let grid_w = (vw / tile_size).ceil().max(1.0) as u32;
+        let grid_h = (vh / tile_size).ceil().max(1.0) as u32;
         let (col_blue, col_violet, col_cyan) = if quad.background.colors[0].color.a > 0.01 {
             let c0: crate::Rgba = quad.background.colors[0].color.into();
             let c1: crate::Rgba = quad.background.colors[1].color.into();
@@ -3132,18 +3181,112 @@ impl MetalRenderer {
     }
 
     fn release_custom_backdrop_images(&mut self) {
-        if !self.backdrop_image_textures.is_empty() {
+        if !self.backdrop_image_textures.is_empty()
+            || self.backdrop_active_custom.is_some()
+            || !self.backdrop_loaded_entries.is_empty()
+        {
             self.backdrop_image_textures.clear();
             self.backdrop_image_sizes.clear();
+            self.backdrop_active_custom = None;
+            self.backdrop_prefetch_in_flight = None;
+            *self.backdrop_prefetch_slot.lock() = None;
+            self.backdrop_loaded_entries.clear();
             self.backdrop_custom_version = self.backdrop_custom_version.wrapping_add(1);
             self.particle_tile_grid_cache_key = None;
-        }
-        if !self.backdrop_loaded_entries.is_empty() {
-            self.backdrop_loaded_entries.clear();
         }
         self.backdrop_images_loaded = false;
         self.backdrop_config_mtime = None;
         self.backdrop_shuffle_bag.reset();
+    }
+
+    fn custom_backdrop_count(&self) -> usize {
+        if !self.backdrop_image_textures.is_empty() {
+            self.backdrop_image_textures.len()
+        } else {
+            self.backdrop_loaded_entries.len()
+        }
+    }
+
+    fn ensure_active_custom_texture(&mut self, idx: usize) {
+        if !self.backdrop_image_textures.is_empty() {
+            return;
+        }
+        if self
+            .backdrop_active_custom
+            .as_ref()
+            .is_some_and(|(cur_idx, _, _)| *cur_idx == idx)
+        {
+            return;
+        }
+        let version = self.backdrop_custom_version;
+        let prefetched = {
+            let mut slot = self.backdrop_prefetch_slot.lock();
+            if slot
+                .as_ref()
+                .is_some_and(|p| p.entry_idx == idx && p.version == version)
+            {
+                slot.take()
+            } else {
+                None
+            }
+        };
+        if let Some(p) = prefetched {
+            let (tex, dims) = upload_backdrop_image(&self.device, &p.decoded);
+            self.backdrop_active_custom = Some((idx, tex, dims));
+            if self.backdrop_prefetch_in_flight == Some((idx, version)) {
+                self.backdrop_prefetch_in_flight = None;
+            }
+            return;
+        }
+        let Some((path, _)) = self.backdrop_loaded_entries.get(idx) else {
+            self.backdrop_active_custom = None;
+            return;
+        };
+        if let Some((tex, dims)) = load_single_backdrop_image(&self.device, path) {
+            self.backdrop_active_custom = Some((idx, tex, dims));
+        } else {
+            self.backdrop_active_custom = None;
+        }
+    }
+
+    fn maybe_prefetch_custom_backdrop(&mut self, next_idx: usize) {
+        if !self.backdrop_image_textures.is_empty() {
+            return;
+        }
+        if self
+            .backdrop_active_custom
+            .as_ref()
+            .is_some_and(|(cur_idx, _, _)| *cur_idx == next_idx)
+        {
+            return;
+        }
+        let version = self.backdrop_custom_version;
+        if self.backdrop_prefetch_in_flight == Some((next_idx, version)) {
+            return;
+        }
+        if self
+            .backdrop_prefetch_slot
+            .lock()
+            .as_ref()
+            .is_some_and(|p| p.entry_idx == next_idx && p.version == version)
+        {
+            return;
+        }
+        let Some((path, _)) = self.backdrop_loaded_entries.get(next_idx) else {
+            return;
+        };
+        let path_owned = path.clone();
+        let slot = self.backdrop_prefetch_slot.clone();
+        self.backdrop_prefetch_in_flight = Some((next_idx, version));
+        std::thread::spawn(move || {
+            if let Some(decoded) = decode_backdrop_image(&path_owned) {
+                *slot.lock() = Some(PrefetchedBackdrop {
+                    entry_idx: next_idx,
+                    version,
+                    decoded,
+                });
+            }
+        });
     }
 
     fn sync_override_image(&mut self, enabled: bool) {
@@ -3251,9 +3394,7 @@ impl MetalRenderer {
 
     fn sync_backdrop_images(&mut self) {
         if !self.backdrop_images_loaded {
-            let (textures, sizes, entries, cfg_path, mtime) = load_backdrop_images(&self.device);
-            self.backdrop_image_textures = textures;
-            self.backdrop_image_sizes = sizes;
+            let (entries, cfg_path, mtime) = load_backdrop_entries();
             self.backdrop_loaded_entries = entries;
             self.backdrop_config_path = cfg_path;
             self.backdrop_config_mtime = mtime;
@@ -3279,9 +3420,11 @@ impl MetalRenderer {
         if next_entries == self.backdrop_loaded_entries {
             return;
         }
-        let (textures, sizes) = load_backdrop_images_from_entries(&self.device, &next_entries);
-        self.backdrop_image_textures = textures;
-        self.backdrop_image_sizes = sizes;
+        self.backdrop_image_textures.clear();
+        self.backdrop_image_sizes.clear();
+        self.backdrop_active_custom = None;
+        self.backdrop_prefetch_in_flight = None;
+        *self.backdrop_prefetch_slot.lock() = None;
         self.backdrop_loaded_entries = next_entries;
         self.backdrop_shuffle_bag.reset();
         self.backdrop_custom_version = self.backdrop_custom_version.wrapping_add(1);
@@ -3322,7 +3465,7 @@ impl MetalRenderer {
         }
 
         let custom_count = if tuning.image_enabled {
-            self.backdrop_image_textures.len()
+            self.custom_backdrop_count()
         } else {
             0
         };
@@ -3602,6 +3745,48 @@ impl MetalRenderer {
             return false;
         }
 
+        if let ActiveBackdropSource::Custom(idx) = self.backdrop_active_source {
+            if self.backdrop_phase_stage == 2 {
+                self.maybe_prefetch_custom_backdrop(idx);
+            } else {
+                self.ensure_active_custom_texture(idx);
+                if custom_count > 1 && (self.backdrop_phase_stage == 0 || self.backdrop_phase_stage == 1)
+                {
+                    let next_idx = if tuning.image_shuffle {
+                        self.backdrop_shuffle_bag.peek_next(custom_count)
+                    } else {
+                        Some((idx + 1) % custom_count)
+                    };
+                    if let Some(nidx) = next_idx {
+                        self.maybe_prefetch_custom_backdrop(nidx);
+                    }
+                }
+            }
+        }
+
+        let is_void_stage = self.backdrop_phase_stage == 2;
+        if is_void_stage {
+            self.current_particle_uniforms = ParticleWaveUniforms {
+                time_sec,
+                has_image: 0.0,
+                image_w: 1.0,
+                image_h: 1.0,
+                phase_mode: 2.0,
+                phase_progress: (self.backdrop_phase_elapsed / void_sec.max(0.001)).clamp(0.0, 1.0),
+                grid_w,
+                grid_h,
+                viewport_w: vw,
+                viewport_h: vh,
+                tile_size,
+                fit_cover: 0.0,
+                image_brightness: tuning.image_brightness,
+                image_peak_luminance: tuning.image_peak_luminance,
+                image_saturation: tuning.image_saturation,
+                _pad0: 0.0,
+            };
+            return false;
+        }
+
         let active_tex_and_dims: Option<(&metal::Texture, [f32; 3])> = match self
             .backdrop_active_source
         {
@@ -3615,6 +3800,11 @@ impl MetalRenderer {
                     self.backdrop_image_sizes[idx],
                 ))
             }
+            ActiveBackdropSource::Custom(idx) => self
+                .backdrop_active_custom
+                .as_ref()
+                .filter(|(cur_idx, _, _)| *cur_idx == idx)
+                .map(|(_, tex, dims)| (tex, *dims)),
             _ => None,
         };
 
@@ -3649,10 +3839,9 @@ impl MetalRenderer {
         } else {
             (self.backdrop_phase_elapsed / stage_dur.max(0.001)).clamp(0.0, 1.0)
         };
-        let is_void_phase = phase_mode > 1.5 && phase_mode < 2.5;
         let uniforms = ParticleWaveUniforms {
             time_sec,
-            has_image: if is_void_phase { 0.0 } else { 1.0 },
+            has_image: 1.0,
             image_w: dims[0],
             image_h: dims[1],
             phase_mode,
@@ -3670,8 +3859,7 @@ impl MetalRenderer {
         };
         self.current_particle_uniforms = uniforms;
 
-        let is_static_phase = self.backdrop_phase_stage == 0 || self.backdrop_phase_stage == 2;
-        let cache_key = is_static_phase.then_some(ParticleTileGridCacheKey {
+        let static_img_cache_key = ParticleTileGridCacheKey {
             source: self.backdrop_active_source,
             custom_textures_version: self.backdrop_custom_version,
             grid_w,
@@ -3685,24 +3873,19 @@ impl MetalRenderer {
             image_brightness_bits: tuning.image_brightness.to_bits(),
             image_peak_luminance_bits: tuning.image_peak_luminance.to_bits(),
             image_saturation_bits: tuning.image_saturation.to_bits(),
-            phase_stage: self.backdrop_phase_stage,
-        });
-        if cache_key.is_some() && self.particle_tile_grid_cache_key == cache_key {
-            return false;
-        }
-
-        if is_void_phase {
-            self.particle_tile_grid_cache_key = cache_key;
-            return false;
-        }
-
-        let Some(ref tile_img_tex) = self.particle_tile_img_texture else {
-            return false;
+            phase_stage: 0,
         };
-        let tg = metal::MTLSize::new(16, 16, 1);
-        let grid = metal::MTLSize::new(grid_w as u64, grid_h as u64, 1);
+        let static_img_ready = self.particle_tile_grid_cache_key == Some(static_img_cache_key);
 
         if self.backdrop_phase_stage == 0 {
+            if static_img_ready {
+                return false;
+            }
+            let Some(ref tile_img_tex) = self.particle_tile_img_texture else {
+                return false;
+            };
+            let tg = metal::MTLSize::new(16, 16, 1);
+            let grid = metal::MTLSize::new(grid_w as u64, grid_h as u64, 1);
             let compute = unsafe { attach_compute_timestamps(command_buffer, profiler) };
             compute.set_compute_pipeline_state(&self.particle_tile_hold_pipeline);
             compute.set_texture(0, Some(tile_img_tex));
@@ -3715,9 +3898,36 @@ impl MetalRenderer {
             );
             compute.dispatch_threads(grid, tg);
             compute.end_encoding();
-            self.particle_tile_grid_cache_key = cache_key;
+            self.particle_tile_grid_cache_key = Some(static_img_cache_key);
             return true;
         }
+
+        let meta_realloc = Self::ensure_particle_2d_texture_with_format(
+            &self.device,
+            &mut self.particle_scatter_meta_texture,
+            grid_w,
+            grid_h,
+            MTLPixelFormat::RGBA16Float,
+        );
+        let vel_realloc = Self::ensure_particle_2d_texture_with_format(
+            &self.device,
+            &mut self.particle_scatter_vel_texture,
+            grid_w,
+            grid_h,
+            MTLPixelFormat::RGBA16Float,
+        );
+        if meta_realloc || vel_realloc {
+            self.particle_scatter_prep_cache_key = None;
+        }
+        let prep_key = ScatterPrepCacheKey {
+            grid_w,
+            grid_h,
+            viewport_w_bits: vw.to_bits(),
+            viewport_h_bits: vh.to_bits(),
+            tile_size_bits: tile_size.to_bits(),
+            phase_stage: self.backdrop_phase_stage,
+        };
+        let needs_prep = self.particle_scatter_prep_cache_key != Some(prep_key);
 
         if needed > self.particle_tile_grid_capacity {
             self.particle_tile_grid_capacity = needed;
@@ -3740,20 +3950,6 @@ impl MetalRenderer {
             self.particle_tile_grid_needs_clear = false;
         }
 
-        let compute = unsafe { attach_compute_timestamps(command_buffer, profiler) };
-        compute.set_compute_pipeline_state(&self.particle_tile_scatter_pipeline);
-        compute.set_buffer(0, Some(&self.particle_tile_grid_buffer), 0);
-        compute.set_bytes(
-            1,
-            mem::size_of::<ParticleWaveUniforms>() as u64,
-            &uniforms as *const ParticleWaveUniforms as *const _,
-        );
-        compute.set_texture(0, Some(active_tex));
-        compute.set_sampler_state(0, Some(&self.backdrop_sampler));
-        compute.dispatch_threads(grid, tg);
-
-        compute.memory_barrier_with_resources(&[&self.particle_tile_grid_buffer]);
-
         let can_fuse_shade = self
             .particle_facet_lut_texture
             .as_ref()
@@ -3767,6 +3963,71 @@ impl MetalRenderer {
                 MTLPixelFormat::RGBA16Float,
             );
         }
+
+        let Some(ref tile_img_tex) = self.particle_tile_img_texture else {
+            return false;
+        };
+        let Some(ref scatter_meta_tex) = self.particle_scatter_meta_texture else {
+            return false;
+        };
+        let Some(ref scatter_vel_tex) = self.particle_scatter_vel_texture else {
+            return false;
+        };
+
+        let tg = metal::MTLSize::new(16, 16, 1);
+        let grid = metal::MTLSize::new(grid_w as u64, grid_h as u64, 1);
+        let compute = unsafe { attach_compute_timestamps(command_buffer, profiler) };
+
+        if !static_img_ready {
+            compute.set_compute_pipeline_state(&self.particle_tile_hold_pipeline);
+            compute.set_texture(0, Some(tile_img_tex));
+            compute.set_texture(1, Some(active_tex));
+            compute.set_sampler_state(0, Some(&self.backdrop_sampler));
+            compute.set_bytes(
+                0,
+                mem::size_of::<ParticleWaveUniforms>() as u64,
+                &uniforms as *const ParticleWaveUniforms as *const _,
+            );
+            compute.dispatch_threads(grid, tg);
+            self.particle_tile_grid_cache_key = Some(static_img_cache_key);
+        }
+
+        if needs_prep {
+            compute.set_compute_pipeline_state(&self.particle_tile_scatter_prep_pipeline);
+            compute.set_texture(0, Some(scatter_meta_tex));
+            compute.set_texture(1, Some(scatter_vel_tex));
+            compute.set_bytes(
+                0,
+                mem::size_of::<ParticleWaveUniforms>() as u64,
+                &uniforms as *const ParticleWaveUniforms as *const _,
+            );
+            compute.dispatch_threads(grid, tg);
+            self.particle_scatter_prep_cache_key = Some(prep_key);
+        }
+
+        if !static_img_ready || needs_prep {
+            compute.memory_barrier_with_resources(&[
+                tile_img_tex.as_ref(),
+                scatter_meta_tex.as_ref(),
+                scatter_vel_tex.as_ref(),
+            ]);
+        }
+
+        compute.set_compute_pipeline_state(&self.particle_tile_scatter_pipeline);
+        compute.set_buffer(0, Some(&self.particle_tile_grid_buffer), 0);
+        compute.set_bytes(
+            1,
+            mem::size_of::<ParticleWaveUniforms>() as u64,
+            &uniforms as *const ParticleWaveUniforms as *const _,
+        );
+        compute.set_texture(0, Some(active_tex));
+        compute.set_texture(1, Some(scatter_meta_tex));
+        compute.set_texture(2, Some(scatter_vel_tex));
+        compute.set_sampler_state(0, Some(&self.backdrop_sampler));
+        compute.dispatch_threads(grid, tg);
+
+        compute.memory_barrier_with_resources(&[&self.particle_tile_grid_buffer]);
+
         if can_fuse_shade
             && let Some(ref lut_tex) = self.particle_facet_lut_texture
             && let Some(ref lit_tex) = self.particle_tile_lit_texture
@@ -3775,6 +4036,8 @@ impl MetalRenderer {
             compute.set_buffer(0, Some(&self.particle_tile_grid_buffer), 0);
             compute.set_texture(0, Some(lut_tex));
             compute.set_texture(1, Some(lit_tex));
+            compute.set_texture(2, Some(scatter_meta_tex));
+            compute.set_texture(3, Some(tile_img_tex));
             compute.set_bytes(
                 1,
                 mem::size_of::<ParticleWaveUniforms>() as u64,
@@ -3782,7 +4045,6 @@ impl MetalRenderer {
             );
             compute.dispatch_threads(grid, tg);
             compute.end_encoding();
-            self.particle_tile_grid_cache_key = cache_key;
             *already_shaded = true;
             return true;
         }
@@ -3797,7 +4059,6 @@ impl MetalRenderer {
         );
         compute.dispatch_threads(grid, tg);
         compute.end_encoding();
-        self.particle_tile_grid_cache_key = cache_key;
         true
     }
 
@@ -4331,9 +4592,9 @@ fn push_glass_sample_rects(
     let hole_x1 = (ox + pw - hole_inset).min(vw - vp_guard_x).floor();
     let hole_y1 = (oy + ph - hole_inset).min(vh - vp_guard_y).floor();
 
-    if hole_x1 - hole_x0 < 48.0
-        || hole_y1 - hole_y0 < 48.0
-        || (hole_x1 - hole_x0) * (hole_y1 - hole_y0) < 40_000.0
+    if hole_x1 - hole_x0 < 120.0
+        || hole_y1 - hole_y0 < 120.0
+        || (hole_x1 - hole_x0) * (hole_y1 - hole_y0) < 240_000.0
     {
         out.push(full);
         return;
@@ -4547,7 +4808,7 @@ fn coalesce_copy_regions(
                 let u_area = rect_area(&u);
                 let c_area = rect_area(c);
                 let waste = (u_area - c_area - d_area).max(0.0);
-                if waste <= MAX_MERGE_WASTE_PX || u_area <= (c_area + d_area) * 1.18 {
+                if waste <= MAX_MERGE_WASTE_PX || u_area <= (c_area + d_area) * 1.15 {
                     if best_merge.is_none_or(|(_, bw)| waste < bw) {
                         best_merge = Some((idx, waste));
                     }
@@ -4593,7 +4854,7 @@ fn coalesce_copy_regions(
                 let u_area = rect_area(&u);
                 let sum_area = rect_area(&clusters[i]) + rect_area(&clusters[j]);
                 let waste = (u_area - sum_area).max(0.0);
-                if waste <= MAX_MERGE_WASTE_PX || u_area <= sum_area * 1.18 {
+                if waste <= MAX_MERGE_WASTE_PX || u_area <= sum_area * 1.15 {
                     clusters[i] = u;
                     clusters.swap_remove(j);
                     continue;
@@ -4632,6 +4893,57 @@ impl<'a> DrawItem<'a> {
     }
 }
 
+fn is_single_edge_solid_border_quad(q: &Quad) -> bool {
+    if q.background.tag != BackgroundTag::Solid
+        || q.background.solid.a > 0.0
+        || q.border_style != crate::BorderStyle::Solid
+        || q.corner_radii.top_left.0 != 0.0
+        || q.corner_radii.top_right.0 != 0.0
+        || q.corner_radii.bottom_right.0 != 0.0
+        || q.corner_radii.bottom_left.0 != 0.0
+    {
+        return false;
+    }
+    let sides = usize::from(q.border_widths.top.0 > 0.0)
+        + usize::from(q.border_widths.right.0 > 0.0)
+        + usize::from(q.border_widths.bottom.0 > 0.0)
+        + usize::from(q.border_widths.left.0 > 0.0);
+    sides == 1
+}
+
+fn effective_quad_bounds(q: &Quad) -> Bounds<ScaledPixels> {
+    if q.background.tag == BackgroundTag::Solid && q.background.solid.a <= 0.0 {
+        let no_borders = q.border_widths.top.0 <= 0.0
+            && q.border_widths.right.0 <= 0.0
+            && q.border_widths.bottom.0 <= 0.0
+            && q.border_widths.left.0 <= 0.0;
+        if no_borders || q.border_color.a <= 0.0 {
+            return Bounds {
+                origin: q.bounds.origin,
+                size: size(ScaledPixels(0.0), ScaledPixels(0.0)),
+            };
+        }
+        if is_single_edge_solid_border_quad(q) {
+            let mut b = q.bounds;
+            if q.border_widths.left.0 > 0.0 {
+                b.size.width = ScaledPixels(b.size.width.0.min(q.border_widths.left.0));
+            } else if q.border_widths.right.0 > 0.0 {
+                let w = b.size.width.0.min(q.border_widths.right.0);
+                b.origin.x = ScaledPixels(b.origin.x.0 + b.size.width.0 - w);
+                b.size.width = ScaledPixels(w);
+            } else if q.border_widths.top.0 > 0.0 {
+                b.size.height = ScaledPixels(b.size.height.0.min(q.border_widths.top.0));
+            } else {
+                let h = b.size.height.0.min(q.border_widths.bottom.0);
+                b.origin.y = ScaledPixels(b.origin.y.0 + b.size.height.0 - h);
+                b.size.height = ScaledPixels(h);
+            }
+            return b;
+        }
+    }
+    q.bounds
+}
+
 fn classify_quad_mode(q: &Quad) -> u8 {
     match q.background.tag {
         BackgroundTag::LiquidGlass => {
@@ -4644,10 +4956,11 @@ fn classify_quad_mode(q: &Quad) -> u8 {
         }
         BackgroundTag::ParticleWave => 2u8,
         BackgroundTag::Solid
-            if q.border_widths.top.0 == 0.0
+            if (q.border_widths.top.0 == 0.0
                 && q.border_widths.right.0 == 0.0
                 && q.border_widths.bottom.0 == 0.0
-                && q.border_widths.left.0 == 0.0 =>
+                && q.border_widths.left.0 == 0.0)
+                || is_single_edge_solid_border_quad(q) =>
         {
             4u8
         }
@@ -4797,7 +5110,7 @@ fn build_item_spatial_mask(
                 }
             } else {
                 for q in *quads {
-                    push(q.bounds.intersect(&q.content_mask.bounds));
+                    push(effective_quad_bounds(q).intersect(&q.content_mask.bounds));
                 }
             }
         }
@@ -4891,7 +5204,7 @@ fn item_overlaps_glass_exact(
             } else {
                 quads
                     .iter()
-                    .any(|q| hits(&q.bounds.intersect(&q.content_mask.bounds)))
+                    .any(|q| hits(&effective_quad_bounds(q).intersect(&q.content_mask.bounds)))
             }
         }
         DrawItem::Paths(paths) => paths.iter().any(|p| hits(&p.bounds)),
@@ -5058,6 +5371,168 @@ fn schedule_draw_items<'a>(
     } else {
         items
     }
+}
+
+fn collect_initial_seed_rects(
+    items: &[DrawItem<'_>],
+    cur_item_idx: usize,
+    cur_chunk: &[Quad],
+    cur_mode: u8,
+    vw: f32,
+    vh: f32,
+) -> (Vec<Bounds<ScaledPixels>>, Vec<Bounds<ScaledPixels>>) {
+    let mut seed: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(cur_chunk.len() * 4 + 16);
+    let mut deferred: Vec<Bounds<ScaledPixels>> = Vec::new();
+    let inv_cell_w = 64.0 / vw.max(1.0);
+    let inv_cell_h = 64.0 / vh.max(1.0);
+    let mut future_dirty_mask = SpatialMask::empty();
+    let mut future_dirty_rects: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(64);
+    let mut tmp_rects: Vec<Bounds<ScaledPixels>> = Vec::with_capacity(4);
+
+    #[inline]
+    fn push_future(
+        mask: &mut SpatialMask,
+        rects: &mut Vec<Bounds<ScaledPixels>>,
+        b: Bounds<ScaledPixels>,
+        inv_cell_w: f32,
+        inv_cell_h: f32,
+    ) {
+        if rect_non_empty(&b) {
+            mask.add_rect(&b, inv_cell_w, inv_cell_h);
+            rects.push(b);
+        }
+    }
+
+    for q in cur_chunk {
+        push_glass_sample_rects(q, cur_mode, vw, vh, true, &mut seed);
+        push_future(
+            &mut future_dirty_mask,
+            &mut future_dirty_rects,
+            q.bounds,
+            inv_cell_w,
+            inv_cell_h,
+        );
+    }
+
+    for item in &items[(cur_item_idx + 1)..] {
+        match *item {
+            DrawItem::Quads { quads, mode } => {
+                if mode == 1 || mode == 3 {
+                    for q in quads {
+                        tmp_rects.clear();
+                        push_glass_sample_rects(q, mode, vw, vh, true, &mut tmp_rects);
+                        for &sr in &tmp_rects {
+                            let blocked =
+                                future_dirty_mask.intersects_rect(&sr, inv_cell_w, inv_cell_h)
+                                    && future_dirty_rects.iter().any(|fd| fd.intersects(&sr));
+                            if blocked {
+                                deferred.push(sr);
+                            } else {
+                                seed.push(sr);
+                            }
+                        }
+                        push_future(
+                            &mut future_dirty_mask,
+                            &mut future_dirty_rects,
+                            q.bounds,
+                            inv_cell_w,
+                            inv_cell_h,
+                        );
+                    }
+                } else {
+                    for q in quads {
+                        push_future(
+                            &mut future_dirty_mask,
+                            &mut future_dirty_rects,
+                            effective_quad_bounds(q),
+                            inv_cell_w,
+                            inv_cell_h,
+                        );
+                    }
+                }
+            }
+            DrawItem::Shadows(shadows) => {
+                for s in shadows {
+                    let margin = 3.0 * s.blur_radius.0;
+                    let expanded = Bounds {
+                        origin: point(
+                            ScaledPixels(s.bounds.origin.x.0 - margin),
+                            ScaledPixels(s.bounds.origin.y.0 - margin),
+                        ),
+                        size: size(
+                            ScaledPixels(s.bounds.size.width.0 + margin * 2.0),
+                            ScaledPixels(s.bounds.size.height.0 + margin * 2.0),
+                        ),
+                    }
+                    .intersect(&s.content_mask.bounds);
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        expanded,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
+                }
+            }
+            DrawItem::Paths(paths) => {
+                for p in paths {
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        p.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
+                }
+            }
+            DrawItem::Underlines(underlines) => {
+                for u in underlines {
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        u.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
+                }
+            }
+            DrawItem::MonochromeSprites { sprites, .. } => {
+                for s in sprites {
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        s.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
+                }
+            }
+            DrawItem::PolychromeSprites { sprites, .. } => {
+                for s in sprites {
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        s.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
+                }
+            }
+            DrawItem::Surfaces(surfaces) => {
+                for s in surfaces {
+                    push_future(
+                        &mut future_dirty_mask,
+                        &mut future_dirty_rects,
+                        s.bounds,
+                        inv_cell_w,
+                        inv_cell_h,
+                    );
+                }
+            }
+        }
+    }
+
+    (seed, deferred)
 }
 
 fn collect_lookahead_needs_items(
@@ -6830,6 +7305,146 @@ mod offscreen_gpu_bench {
             let next = two_bag.advance(2, Some(prev));
             assert_ne!(next, prev, "2-image deck must strictly alternate without repeats");
             prev = next;
+        }
+    }
+
+    #[test]
+    fn test_single_edge_border_quad_collapse_pixel_exact() {
+        let _guard = gpu_test_lock();
+        let vw = 640u32;
+        let vh = 320u32;
+        let mut renderer = MetalRenderer::new(Arc::new(Mutex::new(InstanceBufferPool::default())));
+        renderer.update_drawable_size(size(
+            DevicePixels(vw as i32),
+            DevicePixels(vh as i32),
+        ));
+        let target = make_offscreen_target(&renderer.device, vw, vh);
+        let viewport = size(DevicePixels(vw as i32), DevicePixels(vh as i32));
+        let full_mask = ContentMask {
+            bounds: Bounds {
+                origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(vw as f32), ScaledPixels(vh as f32)),
+            },
+            bottom_fade: ScaledPixels(0.0),
+        };
+        let border_col = crate::rgba(0x7c5cff8c);
+        let rect = Bounds {
+            origin: point(ScaledPixels(40.0), ScaledPixels(40.0)),
+            size: size(ScaledPixels(500.0), ScaledPixels(200.0)),
+        };
+
+        for (name, edges, expected_strip) in [
+            (
+                "left",
+                Edges {
+                    top: ScaledPixels(0.0),
+                    right: ScaledPixels(0.0),
+                    bottom: ScaledPixels(0.0),
+                    left: ScaledPixels(2.0),
+                },
+                Bounds {
+                    origin: point(ScaledPixels(40.0), ScaledPixels(40.0)),
+                    size: size(ScaledPixels(2.0), ScaledPixels(200.0)),
+                },
+            ),
+            (
+                "right",
+                Edges {
+                    top: ScaledPixels(0.0),
+                    right: ScaledPixels(3.0),
+                    bottom: ScaledPixels(0.0),
+                    left: ScaledPixels(0.0),
+                },
+                Bounds {
+                    origin: point(ScaledPixels(537.0), ScaledPixels(40.0)),
+                    size: size(ScaledPixels(3.0), ScaledPixels(200.0)),
+                },
+            ),
+            (
+                "top",
+                Edges {
+                    top: ScaledPixels(2.0),
+                    right: ScaledPixels(0.0),
+                    bottom: ScaledPixels(0.0),
+                    left: ScaledPixels(0.0),
+                },
+                Bounds {
+                    origin: point(ScaledPixels(40.0), ScaledPixels(40.0)),
+                    size: size(ScaledPixels(500.0), ScaledPixels(2.0)),
+                },
+            ),
+            (
+                "bottom",
+                Edges {
+                    top: ScaledPixels(0.0),
+                    right: ScaledPixels(0.0),
+                    bottom: ScaledPixels(2.0),
+                    left: ScaledPixels(0.0),
+                },
+                Bounds {
+                    origin: point(ScaledPixels(40.0), ScaledPixels(238.0)),
+                    size: size(ScaledPixels(500.0), ScaledPixels(2.0)),
+                },
+            ),
+        ] {
+            let border_q = Quad {
+                order: 1,
+                border_style: crate::BorderStyle::Solid,
+                bounds: rect,
+                content_mask: full_mask.clone(),
+                background: crate::Background::from(Hsla::transparent_black()),
+                border_color: border_col.into(),
+                corner_radii: Corners::all(ScaledPixels(0.0)),
+                border_widths: edges,
+            };
+            assert_eq!(classify_quad_mode(&border_q), 4);
+            assert_eq!(effective_quad_bounds(&border_q), expected_strip);
+
+            let mut scene_collapsed = Scene::default();
+            scene_collapsed.quads.push(Quad {
+                order: 0,
+                border_style: crate::BorderStyle::Solid,
+                bounds: full_mask.bounds,
+                content_mask: full_mask.clone(),
+                background: crate::Background::from(crate::rgba(0x10141cff)),
+                border_color: Hsla::transparent_black(),
+                corner_radii: Corners::all(ScaledPixels(0.0)),
+                border_widths: Edges::all(ScaledPixels(0.0)),
+            });
+            scene_collapsed.quads.push(border_q);
+            scene_collapsed.finish();
+            let _ = render_one_frame_sync(&mut renderer, &scene_collapsed, &target, viewport, Some(1.0));
+            let px_collapsed = readback_bgra(&target, vw, vh);
+
+            let mut scene_ref = Scene::default();
+            scene_ref.quads.push(Quad {
+                order: 0,
+                border_style: crate::BorderStyle::Solid,
+                bounds: full_mask.bounds,
+                content_mask: full_mask.clone(),
+                background: crate::Background::from(crate::rgba(0x10141cff)),
+                border_color: Hsla::transparent_black(),
+                corner_radii: Corners::all(ScaledPixels(0.0)),
+                border_widths: Edges::all(ScaledPixels(0.0)),
+            });
+            scene_ref.quads.push(Quad {
+                order: 1,
+                border_style: crate::BorderStyle::Solid,
+                bounds: expected_strip,
+                content_mask: full_mask.clone(),
+                background: crate::Background::from(border_col),
+                border_color: Hsla::transparent_black(),
+                corner_radii: Corners::all(ScaledPixels(0.0)),
+                border_widths: Edges::all(ScaledPixels(0.0)),
+            });
+            scene_ref.finish();
+            let _ = render_one_frame_sync(&mut renderer, &scene_ref, &target, viewport, Some(1.0));
+            let px_ref = readback_bgra(&target, vw, vh);
+
+            assert_eq!(
+                px_collapsed, px_ref,
+                "single-edge border collapse mismatch for {name} edge"
+            );
         }
     }
 }
