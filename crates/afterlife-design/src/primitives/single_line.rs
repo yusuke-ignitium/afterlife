@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Div, ParentElement, Pixels, Rgba, Styled, div, liquid_glass_styled, px};
+use gpui::{AnyElement, Div, ParentElement, Pixels, Rgba, Styled, div, liquid_glass_decoupled, px};
 
 use crate::tokens::{BORDER_PX, FontPx, GlassSettings, RadiusPx, RowHeightPx, SpacePx};
 
@@ -81,15 +81,15 @@ pub fn single_line_ex(
     }
     if let Some(g) = glass_opt {
         let tint = bg.unwrap_or_else(|| g.tint_rgba(1.0));
-        d = d.bg(liquid_glass_styled(
+        d = d.bg(liquid_glass_decoupled(
             tint,
             g.disp_scale * 0.75,
-            g.reach_px().min(14.0),
+            g.pull_reach_px().min(14.0),
+            g.edge_thickness_px().min(8.0),
             g.chroma,
             g.highlight_alpha,
             g.rim_width,
             g.blur_std_dev,
-            7,
             edge_tint_kind,
         ));
     } else if let Some(b) = bg {

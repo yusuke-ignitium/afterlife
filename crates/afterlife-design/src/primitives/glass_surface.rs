@@ -1,4 +1,4 @@
-use gpui::{BoxShadow, Div, Rgba, Styled, div, liquid_glass_styled, point, px, rgba};
+use gpui::{BoxShadow, Div, Rgba, Styled, div, liquid_glass_decoupled, point, px, rgba};
 
 use crate::{
     theme::{Palette, UiStyle},
@@ -249,15 +249,15 @@ fn glass_box_ex(
             ShadowPreset::Sheet => sheet_shadows(),
         };
         d = d
-            .bg(liquid_glass_styled(
+            .bg(liquid_glass_decoupled(
                 tint,
                 disp_scale,
-                glass.reach_px(),
+                glass.pull_reach_px(),
+                glass.edge_thickness_px(),
                 glass.chroma,
                 glass.highlight_alpha,
                 glass.rim_width,
                 blur_std_dev,
-                7,
                 edge_tint_kind,
             ))
             .shadow(shadows);

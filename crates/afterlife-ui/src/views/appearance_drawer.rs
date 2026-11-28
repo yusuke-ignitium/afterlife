@@ -106,18 +106,6 @@ fn render_drawer_header(
                         .child(render_text_action(
                             st,
                             motion,
-                            "glass-voxel-def",
-                            "Preset",
-                            true,
-                            |st| {
-                                st.reset_glass_settings(GlassSettings::overworld_exact_defaults());
-                                st.persist_appearance();
-                            },
-                            cx,
-                        ))
-                        .child(render_text_action(
-                            st,
-                            motion,
                             "glass-reset",
                             "Reset",
                             true,

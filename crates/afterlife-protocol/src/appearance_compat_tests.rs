@@ -61,7 +61,7 @@ fn legacy_backdrop_json_without_notification_flag_loads_cleanly() {
     assert_eq!(glass.fade_ui_transparency_pct, 76.0);
     assert!(glass.approval_notifications_enabled);
     assert!(!glass.compact_districts);
-    assert_eq!(glass.disp_scale, BackdropGlassAppearance::default().disp_scale);
+    assert_eq!(glass.disp_scale, 193.0);
 
     let mut updated_glass = glass;
     updated_glass.approval_notifications_enabled = false;

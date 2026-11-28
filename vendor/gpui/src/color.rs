@@ -828,6 +828,48 @@ pub fn liquid_glass_styled(
     }
 }
 
+/// Creates a backdrop-synced Liquid Glass background with independent edge bevel thickness
+/// (`edge_thickness_px`) and interior background pull-in reach (`pull_reach_px`).
+#[allow(clippy::too_many_arguments)]
+pub fn liquid_glass_decoupled(
+    tint: impl Into<Hsla>,
+    disp_scale: f32,
+    pull_reach_px: f32,
+    edge_thickness_px: f32,
+    chroma: f32,
+    highlight_alpha: f32,
+    rim_width: f32,
+    blur_px: f32,
+    edge_tint_kind: f32,
+) -> Background {
+    Background {
+        tag: BackgroundTag::LiquidGlass,
+        solid: tint.into(),
+        gradient_angle_or_pattern_height: disp_scale,
+        colors: [
+            LinearColorStop {
+                color: Hsla {
+                    h: 0.0,
+                    s: chroma.clamp(0.0, 1.0),
+                    l: edge_thickness_px.max(0.5),
+                    a: highlight_alpha,
+                },
+                percentage: pull_reach_px.max(0.5),
+            },
+            LinearColorStop {
+                color: Hsla {
+                    h: 7.0 * 0.25,
+                    s: edge_tint_kind.clamp(0.0, 1.0),
+                    l: 2.0,
+                    a: rim_width.max(0.1),
+                },
+                percentage: blur_px,
+            },
+        ],
+        ..Default::default()
+    }
+}
+
 /// Tuning parameters for the mirror-ball particle wave backdrop and optional demo image layer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParticleWaveTuning {

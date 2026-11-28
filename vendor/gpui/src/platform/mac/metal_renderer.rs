@@ -4263,16 +4263,31 @@ impl MetalRenderer {
     }
 }
 
+fn glass_effective_reach_px(q: &Quad, min_half: f32) -> f32 {
+    let pull_reach = (q.background.colors[0].percentage * 2.0).clamp(1.0, min_half.max(1.0));
+    if q.background.colors[1].color.l > 1.5 {
+        let edge_thick = (q.background.colors[0].color.l * 2.0).clamp(1.0, min_half.max(1.0));
+        pull_reach.max(edge_thick)
+    } else {
+        pull_reach
+    }
+}
+
 fn glass_max_sample_depth(q: &Quad) -> f32 {
     let pw = q.bounds.size.width.0;
     let ph = q.bounds.size.height.0;
     let min_half = (pw * 0.5).min(ph * 0.5);
-    let reach = (q.background.colors[0].percentage * 2.0).clamp(1.0, min_half.max(1.0));
+    let reach = glass_effective_reach_px(q, min_half);
     let reach_eff = reach.max(2.0);
     let disp_scale = (q.background.gradient_angle_or_pattern_height * 2.0).max(0.0);
     let chroma = q.background.colors[0].color.s.max(0.0);
     let max_disp = disp_scale * (1.0 + chroma * 0.6);
-    reach_eff.max(0.76 * max_disp + 0.14 * reach_eff)
+    if q.background.colors[1].color.l > 1.5 {
+        let edge_thick = (q.background.colors[0].color.l * 2.0).clamp(1.0, min_half.max(1.0));
+        reach_eff.max(0.85 * max_disp + 0.55 * edge_thick)
+    } else {
+        reach_eff.max(0.76 * max_disp + 0.14 * reach_eff)
+    }
 }
 
 fn push_glass_sample_rects(

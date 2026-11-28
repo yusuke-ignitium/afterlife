@@ -54,46 +54,21 @@ impl Default for GlassSettings {
             bg_image_brightness: 0.40,
             bg_peak_luminance: 0.55,
             bg_image_saturation: 0.64,
-            disp_scale: 193.0,
-            rim_thickness: 0.06,
-            refract_reach: 50.0,
-            chroma: 0.0,
-            highlight_alpha: 0.24,
-            rim_width: 1.3,
+            disp_scale: 5.0,
+            rim_thickness: 0.01,
+            refract_reach: 183.0,
+            chroma: 0.12,
+            highlight_alpha: 0.21,
+            rim_width: 1.66,
             blur_std_dev: 0.0,
-            bg_alpha: 0.04,
-            radius: 7.5,
+            bg_alpha: 0.06,
+            radius: 11.0,
             tint_rgb: [7, 9, 14],
         }
     }
 }
 
 impl GlassSettings {
-    pub fn overworld_exact_defaults() -> Self {
-        Self {
-            bg_image_enabled: false,
-            bg_image_shuffle: true,
-            bg_apple_music_artwork_enabled: true,
-            bg_youtube_mirror_enabled: true,
-            bg_brightness: 1.0,
-            bg_tile_size_px: 6.0,
-            bg_image_hold_secs: 10.0,
-            bg_image_brightness: 0.40,
-            bg_peak_luminance: 0.55,
-            bg_image_saturation: 0.64,
-            disp_scale: 111.5,
-            rim_thickness: 0.0956,
-            refract_reach: 392.9,
-            chroma: 0.0,
-            highlight_alpha: 0.1556,
-            rim_width: 1.275,
-            blur_std_dev: 0.0,
-            bg_alpha: 0.757,
-            radius: 2.7,
-            tint_rgb: [10, 10, 10],
-        }
-    }
-
     pub fn particle_wave_tuning(&self) -> ParticleWaveTuning {
         ParticleWaveTuning {
             image_enabled: self.bg_image_enabled,
@@ -109,8 +84,16 @@ impl GlassSettings {
         .clamped()
     }
 
+    pub fn edge_thickness_px(&self) -> f32 {
+        (self.rim_thickness * 40.0).max(0.5)
+    }
+
+    pub fn pull_reach_px(&self) -> f32 {
+        (self.refract_reach * 0.15).max(1.0)
+    }
+
     pub fn reach_px(&self) -> f32 {
-        (self.rim_thickness * self.refract_reach).max(0.5)
+        self.edge_thickness_px().max(self.pull_reach_px())
     }
 
     pub fn tint_rgba(&self, alpha_scale: f32) -> Rgba {

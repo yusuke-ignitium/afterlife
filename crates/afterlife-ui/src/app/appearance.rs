@@ -366,7 +366,7 @@ mod tests {
         st.toggle_compact_districts();
         assert!(st.compact_districts);
 
-        st.reset_glass_settings(GlassSettings::overworld_exact_defaults());
+        st.reset_glass_settings(GlassSettings::default());
         st.persist_appearance();
         assert!(st.compact_districts);
 

@@ -143,15 +143,15 @@ pub struct BackdropGlassAppearance {
 impl Default for BackdropGlassAppearance {
     fn default() -> Self {
         Self {
-            disp_scale: 193.0,
-            rim_thickness: 0.06,
-            refract_reach: 50.0,
-            chroma: 0.0,
-            highlight_alpha: 0.24,
-            rim_width: 1.3,
+            disp_scale: 5.0,
+            rim_thickness: 0.01,
+            refract_reach: 183.0,
+            chroma: 0.12,
+            highlight_alpha: 0.21,
+            rim_width: 1.66,
             blur_std_dev: 0.0,
-            bg_alpha: 0.04,
-            radius: 7.5,
+            bg_alpha: 0.06,
+            radius: 11.0,
             tint_rgb: [7, 9, 14],
             pause_animation_when_inactive: false,
             fade_ui_after_secs: 0.0,

@@ -2615,6 +2615,7 @@ struct LiquidGlassSyncedVertexOutput {
   float4 extra_params [[flat]];
   float4 mask_inv_res [[flat]];
   float4 inner_rect [[flat]];
+  float4 bevel_params [[flat]];
   half glass_opacity [[flat]];
   float clip_distance [[clip_distance]][4];
 };
@@ -2629,8 +2630,81 @@ struct LiquidGlassSyncedFragmentInput {
   float4 extra_params [[flat]];
   float4 mask_inv_res [[flat]];
   float4 inner_rect [[flat]];
+  float4 bevel_params [[flat]];
   half glass_opacity [[flat]];
 };
+
+static inline void compute_decoupled_glass_refraction(
+    float2 rel,
+    float2 q,
+    float d,
+    float dispScale,
+    float pullReach,
+    float invPullReach,
+    float edgeThick,
+    float invEdgeThick,
+    half glassMask,
+    thread float2 &outDispPx,
+    thread float &outBevelSheen,
+    thread float &outChromaWeight) {
+  float depth = -d;
+  float2 dispPx = float2(0.0f);
+  float bevelSheen = 0.0f;
+  float chromaWeight = 0.0f;
+
+  if (depth < edgeThick) {
+    float ex;
+    float ey;
+    if (q.x >= q.y) {
+      ex = 1.0f;
+      ey = fast::exp((q.y - q.x) * invEdgeThick);
+    } else {
+      ex = fast::exp((q.x - q.y) * invEdgeThick);
+      ey = 1.0f;
+    }
+    float2 edgeN = normalize(float2((rel.x >= 0.0f ? 1.0f : -1.0f) * ex,
+                                    (rel.y >= 0.0f ? 1.0f : -1.0f) * ey) + float2(1e-5f));
+    float xEdge = saturate(depth * invEdgeThick);
+    float omx = 1.0f - xEdge;
+    float omx3 = omx * omx * omx;
+    float omx4 = omx3 * omx;
+    float denom = max(1.0f - omx4, 1e-4f);
+    float inv_s = rsqrt(denom);
+    float slope = omx3 * inv_s * sqrt(inv_s);
+    float inv = rsqrt(fma(slope, slope, 1.0f));
+    float sinI = slope * inv;
+    float sinT = sinI * 0.6666667f;
+    float cosT = sqrt(max(1.0f - sinT * sinT, 0.0f));
+    float edgeBend = fma(sinI, cosT, -inv * sinT);
+    float edgeLip = edgeBend * (edgeThick * 0.55f);
+    dispPx += -edgeN * (edgeLip * float(glassMask));
+    bevelSheen = edgeBend;
+    chromaWeight = max(chromaWeight, edgeBend);
+  }
+
+  if (depth < pullReach && dispScale > 0.001f) {
+    float px;
+    float py;
+    if (q.x >= q.y) {
+      px = 1.0f;
+      py = fast::exp((q.y - q.x) * invPullReach);
+    } else {
+      px = fast::exp((q.x - q.y) * invPullReach);
+      py = 1.0f;
+    }
+    float2 pullN = normalize(float2((rel.x >= 0.0f ? 1.0f : -1.0f) * px,
+                                    (rel.y >= 0.0f ? 1.0f : -1.0f) * py) + float2(1e-5f));
+    float xPull = saturate(depth * invPullReach);
+    float smoothFalloff = 1.0f - smoothstep(0.0f, 1.0f, xPull);
+    float pullCurve = smoothFalloff * smoothFalloff;
+    dispPx += -pullN * (pullCurve * dispScale * 0.85f * float(glassMask));
+    chromaWeight = max(chromaWeight, pullCurve);
+  }
+
+  outDispPx = dispPx;
+  outBevelSheen = bevelSheen;
+  outChromaWeight = chromaWeight;
+}
 
 vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_vertex(
     uint unit_vertex_id [[vertex_id]], uint quad_id [[instance_id]],
@@ -2673,8 +2747,16 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_vertex(
   float mask_bottom_y =
       quad.content_mask.bounds.origin.y + quad.content_mask.bounds.size.height;
 
+  bool is_decoupled = quad.background.colors[1].color.l > 1.5;
+  float edge_thick = is_decoupled
+      ? clamp(quad.background.colors[0].color.l * 2.0, 1.0, max(min_half, 1.0))
+      : reach;
+  float rim_width = max(quad.background.colors[1].color.a, 0.2);
+  float4 bevel_params = float4(edge_thick, 1.0 / edge_thick, rim_width, is_decoupled ? 1.0 : 0.0);
+  float active_reach = max(reach, edge_thick);
+
   float max_r = max(max(corner_radii.x, corner_radii.y), max(corner_radii.z, corner_radii.w));
-  float safe_inset = max(reach, 1.5) + max_r + 1.0;
+  float safe_inset = max(active_reach, 1.5) + max_r + 1.0;
   float2 vp_guard = max(vp * 0.0005 + 1.0, float2(2.0));
   float2 origin = float2(quad.bounds.origin.x, quad.bounds.origin.y);
   float2 inner_min = max(origin + safe_inset, vp_guard);
@@ -2693,6 +2775,7 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_vertex(
       float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
       float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
       inner_rect,
+      bevel_params,
       glass_opacity,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
@@ -2743,8 +2826,14 @@ fragment half4 liquid_glass_synced_fragment(
   float blurPx = input.glass_params.w;
 
   float bend = 0.0;
+  float chromaWeight = 0.0;
   float2 dispPx = float2(0.0);
-  if (-d < reach && dispScale > 0.001) {
+  if (input.bevel_params.w > 0.5) {
+    compute_decoupled_glass_refraction(
+        rel, q, d, dispScale, reach, inv_reach,
+        input.bevel_params.x, input.bevel_params.y, glassMask,
+        dispPx, bend, chromaWeight);
+  } else if (-d < reach && dispScale > 0.001) {
     float ex;
     float ey;
     if (q.x >= q.y) {
@@ -2768,6 +2857,7 @@ fragment half4 liquid_glass_synced_fragment(
     float sinT = sinI * 0.6666667;
     float cosT = sqrt(max(1.0 - sinT * sinT, 0.0));
     bend = fma(sinI, cosT, -inv * sinT);
+    chromaWeight = bend;
     dispPx = -gradN * (bend * dispScale * float(glassMask));
   }
 
@@ -2778,7 +2868,7 @@ fragment half4 liquid_glass_synced_fragment(
   half4 bgSample = sample_backdrop_frost_half(backdrop_tex, backdrop_samp, refractUV, blurPx, invRes, glassMask);
 
   float chroma = input.extra_params.x;
-  if (chroma > 0.001 && bend > 0.0001) {
+  if (chroma > 0.001 && chromaWeight > 0.0001) {
     float k = chroma * 0.6;
     float2 rUV = clamp((fragPx + dispPx * (1.0 - k)) * invRes, uvMin, uvMax);
     float2 bUV = clamp((fragPx + dispPx * (1.0 + k)) * invRes, uvMin, uvMax);
@@ -2794,7 +2884,8 @@ fragment half4 liquid_glass_synced_fragment(
   col += half3(0.72h, 0.86h, 1.0h) * (half(bend) * 0.015h * glassMask);
 
   half edgeGlow = 0.0h;
-  half razor = half((1.0 - smoothstep(0.0, 1.25, -d)) * step(d, 0.0));
+  float razorW = input.bevel_params.w > 0.5 ? clamp(1.25 * input.bevel_params.z, 0.4, 6.0) : 1.25;
+  half razor = half((1.0 - smoothstep(0.0, razorW, -d)) * step(d, 0.0));
   if (razor > 0.001h) {
     float t = *time_sec;
     float p1 = fma(fragPx.x, 0.00185, fma(fragPx.y, 0.00105, t * -0.6139));
@@ -3008,7 +3099,10 @@ static inline void compute_glass_inner_bounds(
   float max_r = max(
       max(min(quad.corner_radii.top_left, min_half), min(quad.corner_radii.top_right, min_half)),
       max(min(quad.corner_radii.bottom_right, min_half), min(quad.corner_radii.bottom_left, min_half)));
-  float reach = clamp(quad.background.colors[0].percentage * 2.0f, 1.0f, max(min_half, 1.0f));
+  float pull_reach = clamp(quad.background.colors[0].percentage * 2.0f, 1.0f, max(min_half, 1.0f));
+  float reach = quad.background.colors[1].color.l > 1.5f
+      ? max(pull_reach, clamp(quad.background.colors[0].color.l * 2.0f, 1.0f, max(min_half, 1.0f)))
+      : pull_reach;
   float reach_eff = max(reach, 2.0f);
   float safe_inset = max(reach_eff, 0.29289322f * max_r + 0.70710678f * reach_eff) + 1.5f;
   float2 vp = max(float2((float)viewport_size->width, (float)viewport_size->height), float2(1.0f));
@@ -3135,6 +3229,13 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_rim_vertex(
     rx0 = ix1; ry0 = iy0; rx1 = ox1; ry1 = iy1;
   }
 
+  bool is_decoupled = quad.background.colors[1].color.l > 1.5f;
+  float edge_thick = is_decoupled
+      ? clamp(quad.background.colors[0].color.l * 2.0f, 1.0f, max(min_half, 1.0f))
+      : reach;
+  float rim_width = max(quad.background.colors[1].color.a, 0.2f);
+  float4 bevel_params = float4(edge_thick, 1.0f / edge_thick, rim_width, is_decoupled ? 1.0f : 0.0f);
+
   half glass_opacity = half(saturate(1.0f - quad.background.colors[0].color.h));
 
   if (rx1 <= rx0 || ry1 <= ry0) {
@@ -3148,6 +3249,7 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_rim_vertex(
         float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
         float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
         float4(0.0f),
+        bevel_params,
         glass_opacity,
         {-1.0f, -1.0f, -1.0f, -1.0f}};
   }
@@ -3167,6 +3269,7 @@ vertex LiquidGlassSyncedVertexOutput liquid_glass_synced_rim_vertex(
       float4(chroma, highlightAlpha, edgeTintKind, inv_psize_y_085),
       float4(quad.content_mask.bottom_fade, mask_bottom_y, inv_res.x, inv_res.y),
       float4(0.0f),
+      bevel_params,
       glass_opacity,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
@@ -3194,8 +3297,14 @@ fragment half4 liquid_glass_synced_rim_fragment(
   float inv_reach = input.glass_params.z;
 
   float bend = 0.0f;
+  float chromaWeight = 0.0f;
   float2 dispPx = float2(0.0f);
-  if (-d < reach && dispScale > 0.001f) {
+  if (input.bevel_params.w > 0.5f) {
+    compute_decoupled_glass_refraction(
+        rel, q, d, dispScale, reach, inv_reach,
+        input.bevel_params.x, input.bevel_params.y, glassMask,
+        dispPx, bend, chromaWeight);
+  } else if (-d < reach && dispScale > 0.001f) {
     float ex;
     float ey;
     if (q.x >= q.y) {
@@ -3219,6 +3328,7 @@ fragment half4 liquid_glass_synced_rim_fragment(
     float sinT = sinI * 0.6666667f;
     float cosT = sqrt(max(1.0f - sinT * sinT, 0.0f));
     bend = fma(sinI, cosT, -inv * sinT);
+    chromaWeight = bend;
     dispPx = -gradN * (bend * dispScale * float(glassMask));
   }
 
@@ -3229,7 +3339,7 @@ fragment half4 liquid_glass_synced_rim_fragment(
   half4 bgSample = backdrop_tex.sample(backdrop_samp, refractUV, level(0.0));
 
   float chroma = input.extra_params.x;
-  if (chroma > 0.001f && bend > 0.0001f) {
+  if (chroma > 0.001f && chromaWeight > 0.0001f) {
     float k = chroma * 0.6f;
     float2 rUV = clamp((fragPx + dispPx * (1.0f - k)) * invRes, uvMin, uvMax);
     float2 bUV = clamp((fragPx + dispPx * (1.0f + k)) * invRes, uvMin, uvMax);
@@ -3245,7 +3355,8 @@ fragment half4 liquid_glass_synced_rim_fragment(
   col += half3(0.72h, 0.86h, 1.0h) * (half(bend) * 0.015h * glassMask);
 
   half edgeGlow = 0.0h;
-  half razor = half((1.0f - smoothstep(0.0f, 1.25f, -d)) * step(d, 0.0f));
+  float razorW = input.bevel_params.w > 0.5f ? clamp(1.25f * input.bevel_params.z, 0.4f, 6.0f) : 1.25f;
+  half razor = half((1.0f - smoothstep(0.0f, razorW, -d)) * step(d, 0.0f));
   if (razor > 0.001h) {
     float t = *time_sec;
     float p1 = fma(fragPx.x, 0.00185f, fma(fragPx.y, 0.00105f, t * -0.6139f));
