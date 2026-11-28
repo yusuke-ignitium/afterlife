@@ -49,6 +49,8 @@
   - Back authorization boundaries, concurrency guarantees, visual token consistency, schema sync, and config sanitization with deterministic automated tests.
 - **Sweat daily ergonomics and state continuity**
   - Preserve operator state seamlessly across restarts (window geometry, panel sizing, visual preferences) and integrate cleanly with external tools via safe deep links.
+- **Keep interactive demos first-class and committed**
+  - Build every UI, visual, or interaction demo as a runnable binary under `tools/demos/` (`./scripts/run-demo.sh`) and commit it alongside the change it validates rather than leaving throwaway scratch outside the repository.
 
 ---
 
@@ -104,7 +106,15 @@ These properties must hold continuously on every commit and release:
 
 ---
 
-## 7. Commit Convention
+## 7. Interactive Demos
+
+- Always place interactive prototypes, visual studies, and behavior-comparison demos under `tools/demos/`, registered in `tools/demos/Cargo.toml` and launchable via `./scripts/run-demo.sh <name>`.
+- Always include demos created during design or verification in git commits alongside their corresponding changes; never leave demos as untracked scratch files, discarded local scripts, or standalone external artifacts.
+- Because demos live under `tools/`, they follow the same zero-comments, zero-warning, and portability standards as all first-party crates.
+
+---
+
+## 8. Commit Convention
 
 - Whenever creating a git commit in this repository (including chat requests, `/commit`, and diff-tab commit-and-push actions), always read and follow `.agents/skills/commit/SKILL.md`.
 - This project-level commit skill takes precedence over any global commit skill.
@@ -112,7 +122,7 @@ These properties must hold continuously on every commit and release:
 
 ---
 
-## 8. Pre-Delivery Approval PR Workflow
+## 9. Pre-Delivery Approval PR Workflow
 
 - Whenever advancing a codebase-changing Afterlife job into a **pre-delivery (merge/ship) `ApprovalGate`** (after implementation and verification are complete), always read and follow `.agents/skills/approval-pr/SKILL.md` before the final `afterlife jobs advance`.
 - Do **not** apply this for upstream/intermediate approval gates (such as design or spec sign-off in multi-gate Districts) or for non-code jobs.
