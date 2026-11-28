@@ -2424,9 +2424,14 @@ impl Interactivity {
                     let mut delta_y = Pixels::ZERO;
 
                     if restrict_scroll_to_axis {
-                        // Strict axis lock: ignore minor perpendicular trackpad jitter and never
-                        // translate Y wheel into X or X wheel into Y.
-                        let x_dominant = delta.x.abs() >= delta.y.abs();
+                        // Lock to the dominant axis of the active OS trackpad gesture (including
+                        // momentum) so perpendicular jitter never leaks into nested scroll views,
+                        // while a new touch (`Began`) unlocks immediately without waiting for stop.
+                        let x_dominant = match window.scroll_axis_lock() {
+                            Some(crate::ScrollAxisLock::Horizontal) => true,
+                            Some(crate::ScrollAxisLock::Vertical) => false,
+                            None => delta.x.abs() > delta.y.abs(),
+                        };
                         if overflow.x == Overflow::Scroll && overflow.y != Overflow::Scroll {
                             if x_dominant && !delta.x.is_zero() {
                                 delta_x = delta.x;

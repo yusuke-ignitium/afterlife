@@ -88,6 +88,24 @@ pub enum TouchPhase {
     Ended,
 }
 
+/// Physical gesture phase of a scroll-wheel event reported by the OS.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollGesturePhase {
+    /// Discrete mouse wheel or platform without gesture phase telemetry.
+    #[default]
+    Discrete,
+    /// Finger just touched down / gesture began (also interrupts any prior momentum).
+    Began,
+    /// Finger is actively dragging on the trackpad.
+    Changed,
+    /// Finger lifted off the trackpad (momentum may follow).
+    Ended,
+    /// OS-driven inertia / momentum after finger lift.
+    Momentum,
+    /// OS-driven momentum ended or was cancelled.
+    MomentumEnded,
+}
+
 /// A mouse down event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseDownEvent {
@@ -372,6 +390,9 @@ pub struct ScrollWheelEvent {
 
     /// The phase of the touch event.
     pub touch_phase: TouchPhase,
+
+    /// The OS-level gesture and momentum phase of the scroll event.
+    pub gesture_phase: ScrollGesturePhase,
 }
 
 impl Sealed for ScrollWheelEvent {}

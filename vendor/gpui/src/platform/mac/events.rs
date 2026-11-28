@@ -1,7 +1,7 @@
 use crate::{
     Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
-    PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    PlatformInput, ScrollDelta, ScrollGesturePhase, ScrollWheelEvent, TouchPhase,
     platform::mac::{
         LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource,
         TISGetInputSourceProperty, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
@@ -214,12 +214,33 @@ impl PlatformInput {
                     }
                 }
                 NSEventType::NSScrollWheel => window_height.map(|window_height| {
-                    let phase = match native_event.phase() {
+                    let raw_phase = native_event.phase();
+                    let raw_momentum: NSEventPhase = msg_send![native_event, momentumPhase];
+                    let phase = match raw_phase {
                         NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
                             TouchPhase::Started
                         }
                         NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
                         _ => TouchPhase::Moved,
+                    };
+                    let gesture_phase = match raw_phase {
+                        NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
+                            ScrollGesturePhase::Began
+                        }
+                        NSEventPhase::NSEventPhaseChanged
+                        | NSEventPhase::NSEventPhaseStationary => ScrollGesturePhase::Changed,
+                        NSEventPhase::NSEventPhaseEnded | NSEventPhase::NSEventPhaseCancelled => {
+                            ScrollGesturePhase::Ended
+                        }
+                        _ => match raw_momentum {
+                            NSEventPhase::NSEventPhaseBegan
+                            | NSEventPhase::NSEventPhaseChanged => ScrollGesturePhase::Momentum,
+                            NSEventPhase::NSEventPhaseEnded
+                            | NSEventPhase::NSEventPhaseCancelled => {
+                                ScrollGesturePhase::MomentumEnded
+                            }
+                            _ => ScrollGesturePhase::Discrete,
+                        },
                     };
 
                     let raw_data = point(
@@ -240,6 +261,7 @@ impl PlatformInput {
                         ),
                         delta,
                         touch_phase: phase,
+                        gesture_phase,
                         modifiers: read_modifiers(native_event),
                     })
                 }),

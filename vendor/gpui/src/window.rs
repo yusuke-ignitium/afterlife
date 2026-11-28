@@ -624,6 +624,42 @@ pub enum HitboxBehavior {
     BlockMouseExceptScroll,
 }
 
+/// Dominant axis locked for an active OS trackpad scroll gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScrollAxisLock {
+    Horizontal,
+    Vertical,
+}
+
+pub(crate) fn next_scroll_axis_lock(
+    current: Option<ScrollAxisLock>,
+    phase: crate::ScrollGesturePhase,
+    delta: Point<Pixels>,
+) -> Option<ScrollAxisLock> {
+    let mut locked = match phase {
+        crate::ScrollGesturePhase::Began => None,
+        crate::ScrollGesturePhase::MomentumEnded | crate::ScrollGesturePhase::Discrete => {
+            return None;
+        }
+        crate::ScrollGesturePhase::Changed
+        | crate::ScrollGesturePhase::Ended
+        | crate::ScrollGesturePhase::Momentum => current,
+    };
+
+    if locked.is_none() {
+        let ax = delta.x.abs();
+        let ay = delta.y.abs();
+        if ax > Pixels::ZERO || ay > Pixels::ZERO {
+            locked = Some(if ax > ay {
+                ScrollAxisLock::Horizontal
+            } else {
+                ScrollAxisLock::Vertical
+            });
+        }
+    }
+    locked
+}
+
 /// An identifier for a tooltip.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct TooltipId(usize);
@@ -866,6 +902,7 @@ pub struct Window {
     continuous_present_when_inactive: Rc<Cell<bool>>,
     last_present_timestamp: Rc<Cell<Instant>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+    scroll_axis_lock: Option<ScrollAxisLock>,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1264,6 +1301,7 @@ impl Window {
             continuous_present_when_inactive,
             last_present_timestamp,
             last_input_timestamp,
+            scroll_axis_lock: None,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -1697,6 +1735,10 @@ impl Window {
         self.continuous_present_interval.set(interval);
         self.continuous_present_when_inactive
             .set(present_when_inactive);
+    }
+
+    pub(crate) fn scroll_axis_lock(&self) -> Option<ScrollAxisLock> {
+        self.scroll_axis_lock
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -3683,6 +3725,12 @@ impl Window {
             PlatformInput::ScrollWheel(scroll_wheel) => {
                 self.mouse_position = scroll_wheel.position;
                 self.modifiers = scroll_wheel.modifiers;
+                let delta = scroll_wheel.delta.pixel_delta(self.line_height());
+                self.scroll_axis_lock = next_scroll_axis_lock(
+                    self.scroll_axis_lock,
+                    scroll_wheel.gesture_phase,
+                    delta,
+                );
                 PlatformInput::ScrollWheel(scroll_wheel)
             }
             // Translate dragging and dropping of external files from the operating system
@@ -5167,5 +5215,57 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod scroll_axis_lock_tests {
+    use super::{ScrollAxisLock, next_scroll_axis_lock};
+    use crate::{ScrollGesturePhase, point, px};
+
+    #[test]
+    fn locks_axis_for_gesture_and_momentum_and_unlocks_immediately_on_began() {
+        let mut lock = None;
+
+        lock = next_scroll_axis_lock(lock, ScrollGesturePhase::Began, point(px(0.0), px(0.0)));
+        assert_eq!(lock, None);
+
+        lock = next_scroll_axis_lock(lock, ScrollGesturePhase::Changed, point(px(1.5), px(-12.0)));
+        assert_eq!(lock, Some(ScrollAxisLock::Vertical));
+
+        lock = next_scroll_axis_lock(lock, ScrollGesturePhase::Changed, point(px(4.0), px(-1.0)));
+        assert_eq!(lock, Some(ScrollAxisLock::Vertical));
+
+        lock = next_scroll_axis_lock(lock, ScrollGesturePhase::Ended, point(px(0.0), px(0.0)));
+        assert_eq!(lock, Some(ScrollAxisLock::Vertical));
+
+        lock = next_scroll_axis_lock(lock, ScrollGesturePhase::Momentum, point(px(3.0), px(-0.5)));
+        assert_eq!(lock, Some(ScrollAxisLock::Vertical));
+
+        lock = next_scroll_axis_lock(lock, ScrollGesturePhase::Began, point(px(-8.0), px(1.0)));
+        assert_eq!(lock, Some(ScrollAxisLock::Horizontal));
+
+        lock = next_scroll_axis_lock(lock, ScrollGesturePhase::Momentum, point(px(-0.5), px(2.0)));
+        assert_eq!(lock, Some(ScrollAxisLock::Horizontal));
+
+        lock = next_scroll_axis_lock(
+            lock,
+            ScrollGesturePhase::MomentumEnded,
+            point(px(0.0), px(0.0)),
+        );
+        assert_eq!(lock, None);
+    }
+
+    #[test]
+    fn discrete_wheel_does_not_latch_and_equal_diagonal_prefers_vertical() {
+        let lock = next_scroll_axis_lock(
+            Some(ScrollAxisLock::Horizontal),
+            ScrollGesturePhase::Discrete,
+            point(px(0.0), px(-30.0)),
+        );
+        assert_eq!(lock, None);
+
+        let diag = next_scroll_axis_lock(None, ScrollGesturePhase::Began, point(px(5.0), px(5.0)));
+        assert_eq!(diag, Some(ScrollAxisLock::Vertical));
     }
 }
