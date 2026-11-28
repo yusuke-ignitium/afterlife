@@ -1,4 +1,8 @@
-use afterlife_core::{District, Job, JobLocation};
+use std::collections::HashMap;
+
+use afterlife_core::{
+    District, Job, JobLocation, StageDef, SubMachineTemplate, SubMachineTemplateId,
+};
 use afterlife_design::{
     BORDER_PX, EdgeAccent, FontPx, GlassSurface, RadiusPx, RowHeightPx, SpacePx, UiStyle,
     single_line, with_alpha,
@@ -22,6 +26,80 @@ use crate::{
 
 const CARD_TOGGLE_WIDTH_PX: f32 = 66.0;
 
+#[derive(Clone, Copy)]
+struct StandardStageLayout {
+    card_pad: SpacePx,
+    section_gap: SpacePx,
+    header_gap: SpacePx,
+    title_row: RowHeightPx,
+    meta_row: RowHeightPx,
+    sub_row: RowHeightPx,
+    sub_gap: SpacePx,
+    wireframe_header_pb: SpacePx,
+}
+
+const STAGE_LAYOUT: StandardStageLayout = StandardStageLayout {
+    card_pad: SpacePx::S12,
+    section_gap: SpacePx::S12,
+    header_gap: SpacePx::S4,
+    title_row: RowHeightPx::H24,
+    meta_row: RowHeightPx::H22,
+    sub_row: RowHeightPx::H22,
+    sub_gap: SpacePx::S4,
+    wireframe_header_pb: SpacePx::S8,
+};
+
+impl StandardStageLayout {
+    fn empty_stage_height_px(
+        self,
+        stage: &StageDef,
+        sub_stage_count: usize,
+        style: UiStyle,
+    ) -> f32 {
+        let card_border = GlassSurface::border_width_px(style, true) * 2.0;
+        let card_pad = self.card_pad.val() * 2.0;
+        let title_line = self.title_row.val().max(self.meta_row.val());
+        let sub_meta_line = if stage.supports_sub_machine() {
+            self.header_gap.val() + self.meta_row.val()
+        } else {
+            0.0
+        };
+        let header_divider = if style == UiStyle::Wireframe {
+            self.wireframe_header_pb.val() + BORDER_PX
+        } else {
+            0.0
+        };
+        let sub_list = if sub_stage_count > 0 {
+            self.section_gap.val()
+                + self.sub_row.val() * sub_stage_count as f32
+                + self.sub_gap.val() * sub_stage_count.saturating_sub(1) as f32
+        } else {
+            0.0
+        };
+        card_border + card_pad + title_line + sub_meta_line + header_divider + sub_list
+    }
+
+    fn district_base_height_px(
+        self,
+        district: &District,
+        templates: &HashMap<SubMachineTemplateId, SubMachineTemplate>,
+        style: UiStyle,
+    ) -> f32 {
+        district
+            .stages()
+            .iter()
+            .map(|stage| {
+                let sub_count = stage
+                    .sub_template_id
+                    .as_ref()
+                    .and_then(|tid| templates.get(tid))
+                    .map_or(0, |t| t.stages.len());
+                self.empty_stage_height_px(stage, sub_count, style)
+            })
+            .fold(0.0_f32, f32::max)
+    }
+}
+
 fn pause_glyph(color: gpui::Rgba) -> AnyElement {
     div()
         .flex()
@@ -44,6 +122,7 @@ pub(super) fn render_standard_district(
 ) -> AnyElement {
     let p = st.palette;
     let card_radius = p.radius_f32(&st.glass, 1.0);
+    let stage_min_h = STAGE_LAYOUT.district_base_height_px(district, &st.engine.templates, st.style);
     let version_badge = format!(
         "Philosophy v{} · Spec v{}",
         district.active_philosophy_version, district.active_spec_version
@@ -115,13 +194,16 @@ pub(super) fn render_standard_district(
                         .sub_template_id
                         .as_ref()
                         .and_then(|tid| st.engine.templates.get(tid));
+                    let visible_sub_stages = sub_tmpl
+                        .map(|t| t.stages.as_slice())
+                        .filter(|stages| !stages.is_empty());
 
                     let is_gate = stage.is_gate();
                     let is_terminal = stage.is_terminal();
 
                     GlassSurface::card(&p, &st.glass)
-                        .pad(SpacePx::S12)
-                        .gap(SpacePx::S12)
+                        .pad(STAGE_LAYOUT.card_pad)
+                        .gap(STAGE_LAYOUT.section_gap)
                         .radius_factor(1.25)
                         .border(Some(if is_gate {
                             p.amber
@@ -142,15 +224,15 @@ pub(super) fn render_standard_district(
                         .w(px(stage_w))
                         .min_w(px(stage_w))
                         .max_w(px(stage_w))
-                        .min_h(px(148.0))
+                        .min_h(px(stage_min_h))
                         .flex_shrink_0()
                         .child(
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(SpacePx::S4.px())
+                                .gap(STAGE_LAYOUT.header_gap.px())
                                 .when(st.style == UiStyle::Wireframe, |d| {
-                                    d.pb(SpacePx::S8.px())
+                                    d.pb(STAGE_LAYOUT.wireframe_header_pb.px())
                                         .border_b(px(BORDER_PX))
                                         .border_color(p.border_subtle)
                                 })
@@ -162,7 +244,7 @@ pub(super) fn render_standard_district(
                                         .justify_between()
                                         .gap(SpacePx::S8.px())
                                         .child(single_line(
-                                            RowHeightPx::H24,
+                                            STAGE_LAYOUT.title_row,
                                             SpacePx::S0,
                                             SpacePx::S4,
                                             FontPx::F13,
@@ -186,7 +268,7 @@ pub(super) fn render_standard_district(
                                             .into_any_element()],
                                         ))
                                         .child(single_line(
-                                            RowHeightPx::H22,
+                                            STAGE_LAYOUT.meta_row,
                                             SpacePx::S0,
                                             SpacePx::S4,
                                             FontPx::F11,
@@ -211,7 +293,7 @@ pub(super) fn render_standard_district(
                                         p.text_tertiary
                                     };
                                     d.child(single_line(
-                                        RowHeightPx::H22,
+                                        STAGE_LAYOUT.meta_row,
                                         SpacePx::S0,
                                         SpacePx::S4,
                                         FontPx::F11,
@@ -233,7 +315,7 @@ pub(super) fn render_standard_district(
                                     ))
                                 }),
                         )
-                        .when_some(sub_tmpl, |d, tmpl| {
+                        .when_some(visible_sub_stages, |d, sub_stages| {
                             d.child(
                                 div()
                                     .flex()
@@ -241,8 +323,8 @@ pub(super) fn render_standard_district(
                                     .pl(SpacePx::S8.px())
                                     .border_l(px(1.0))
                                     .border_color(with_alpha(p.purple_inactive, 0.55))
-                                    .gap(SpacePx::S4.px())
-                                    .children(tmpl.stages.iter().map(|sub| {
+                                    .gap(STAGE_LAYOUT.sub_gap.px())
+                                    .children(sub_stages.iter().map(|sub| {
                                         let active_here = stage_jobs.iter().any(|j| {
                                             matches!(
                                                 &j.location,
@@ -257,7 +339,7 @@ pub(super) fn render_standard_district(
                                             .justify_between()
                                             .gap(SpacePx::S8.px())
                                             .child(single_line(
-                                                RowHeightPx::H22,
+                                                STAGE_LAYOUT.sub_row,
                                                 SpacePx::S0,
                                                 SpacePx::S4,
                                                 FontPx::F11,
@@ -287,7 +369,7 @@ pub(super) fn render_standard_district(
                                                 ],
                                             ))
                                             .child(single_line(
-                                                RowHeightPx::H22,
+                                                STAGE_LAYOUT.sub_row,
                                                 SpacePx::S0,
                                                 SpacePx::S4,
                                                 FontPx::F11,
@@ -486,4 +568,78 @@ fn render_standard_job_card(
                 )),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use afterlife_core::StageKind;
+
+    use super::*;
+
+    #[test]
+    fn stage_base_height_derives_from_actual_district_stage_structure() {
+        let mut st = AppState::new_ephemeral();
+        let mut templates = st.engine.templates.clone();
+        let sample_tmpl = templates.values().next().unwrap().clone();
+        let empty_id: SubMachineTemplateId = "tmpl-empty".into();
+        let mut empty_tmpl = sample_tmpl.clone();
+        empty_tmpl.id = empty_id.clone();
+        empty_tmpl.stages.clear();
+        templates.insert(empty_id.clone(), empty_tmpl);
+
+        let three_id: SubMachineTemplateId = "tmpl-three".into();
+        let mut three_tmpl = sample_tmpl;
+        three_tmpl.id = three_id.clone();
+        while three_tmpl.stages.len() < 3 {
+            let extra = three_tmpl.stages[0].clone();
+            three_tmpl.stages.push(extra);
+        }
+        three_tmpl.stages.truncate(3);
+        templates.insert(three_id.clone(), three_tmpl);
+
+        let district = &mut st.engine_mut().districts[0];
+        let base_stage = district.stages()[0].clone();
+        let make_stage = |kind: StageKind, sub_template_id: Option<SubMachineTemplateId>| {
+            let mut s = base_stage.clone();
+            s.kind = kind;
+            s.sub_template_id = sub_template_id;
+            s
+        };
+
+        district.active_spec_mut().stages = vec![
+            make_stage(StageKind::Work, Some(three_id)),
+            make_stage(StageKind::Work, None),
+            make_stage(StageKind::Work, Some(empty_id.clone())),
+            make_stage(StageKind::ApprovalGate, None),
+        ];
+
+        let glass_h =
+            STAGE_LAYOUT.district_base_height_px(district, &templates, UiStyle::LiquidGlass);
+        assert_eq!(glass_h, 160.0);
+
+        let wireframe_h =
+            STAGE_LAYOUT.district_base_height_px(district, &templates, UiStyle::Wireframe);
+        let wireframe_delta = GlassSurface::border_width_px(UiStyle::Wireframe, true) * 2.0
+            + STAGE_LAYOUT.wireframe_header_pb.val()
+            + BORDER_PX;
+        assert_eq!(wireframe_h, glass_h + wireframe_delta);
+
+        district.active_spec_mut().stages = vec![
+            make_stage(StageKind::Work, None),
+            make_stage(StageKind::Work, Some(empty_id)),
+        ];
+        assert_eq!(
+            STAGE_LAYOUT.district_base_height_px(district, &templates, UiStyle::LiquidGlass),
+            74.0
+        );
+
+        district.active_spec_mut().stages = vec![
+            make_stage(StageKind::ApprovalGate, None),
+            make_stage(StageKind::Terminal, None),
+        ];
+        assert_eq!(
+            STAGE_LAYOUT.district_base_height_px(district, &templates, UiStyle::LiquidGlass),
+            48.0
+        );
+    }
 }

@@ -164,6 +164,14 @@ impl<'a> GlassSurface<'a> {
         self
     }
 
+    pub fn border_width_px(style: UiStyle, has_border: bool) -> f32 {
+        if style == UiStyle::Wireframe && has_border {
+            BORDER_PX
+        } else {
+            0.0
+        }
+    }
+
     pub fn build(self) -> Div {
         glass_box_ex(
             self.palette,
@@ -234,10 +242,11 @@ fn glass_box_ex(
         .gap(gap.px())
         .rounded(r);
 
-    if palette.style == UiStyle::Wireframe
+    let border_w = GlassSurface::border_width_px(palette.style, border_color.is_some());
+    if border_w > 0.0
         && let Some(bc) = border_color
     {
-        d = d.border(px(BORDER_PX)).border_color(bc);
+        d = d.border(px(border_w)).border_color(bc);
     }
 
     if palette.style == UiStyle::LiquidGlass && liquid_part {
